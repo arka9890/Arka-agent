@@ -531,7 +531,6 @@ private fun InputBar(
         Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .imePadding()
             .padding(horizontal = Space.md, vertical = Space.sm),
     ) {
         if (attachments.isNotEmpty()) {

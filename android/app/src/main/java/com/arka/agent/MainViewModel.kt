@@ -163,6 +163,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectSession(id: String) {
+        // Hentikan streaming di sesi lama saat pindah sesi supaya tombol kirim
+        // di sesi baru tidak tetap berupa tombol berhenti (_busy tetap true
+        // karena chatJob lama masih berjalan di latar belakang).
+        chatJob?.cancel()
+        repo.cancelChat()
+        chatJob = null
+        _busy.value = false
+        _streamingText.value = ""
+        streamBuffer = StringBuilder()
+
         _currentSessionId.value = id
         viewModelScope.launch {
             _messages.value = runCatching { repo.messages(id) }.getOrElse {
@@ -286,6 +296,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopChat() = viewModelScope.launch {
         repo.cancelChat()
         chatJob?.cancel()
+        chatJob = null
+        _busy.value = false
+        _streamingText.value = ""
+        streamBuffer = StringBuilder()
     }
 
     // --------------------------------------------------------- provider
