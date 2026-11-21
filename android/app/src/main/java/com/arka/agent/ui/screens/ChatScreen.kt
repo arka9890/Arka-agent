@@ -247,7 +247,11 @@ private fun ChatTopBar(
                 }
                 DropdownMenu(expanded = showModelMenu, onDismissRequest = { onToggleModels() }) {
                     if (models.isEmpty()) {
-                        DropdownMenuItem(text = { Text("Belum ada model") }, onClick = {})
+                        // Menu tetap bisa ditutup walau daftar kosong.
+                        DropdownMenuItem(
+                            text = { Text("Belum ada model") },
+                            onClick = { onToggleModels() },
+                        )
                     }
                     models.forEach { m ->
                         DropdownMenuItem(

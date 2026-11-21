@@ -103,7 +103,10 @@ fun TerminalScreen(vm: MainViewModel) {
                 }
                 DropdownMenu(expanded = showHistory, onDismissRequest = { showHistory = false }) {
                     if (history.isEmpty()) {
-                        DropdownMenuItem(text = { Text("Belum ada riwayat") }, onClick = {})
+                        DropdownMenuItem(
+                            text = { Text("Belum ada riwayat") },
+                            onClick = { showHistory = false },
+                        )
                     }
                     history.reversed().take(20).forEach { cmd ->
                         DropdownMenuItem(
@@ -229,7 +232,7 @@ fun TerminalScreen(vm: MainViewModel) {
                 ),
                 keyboardActions = KeyboardActions(onSend = {
                     when {
-                        running -> Unit
+                        running -> vm.notify("Tunggu perintah sebelumnya selesai.")
                         !distro.installed -> vm.notify("Pasang Ubuntu 24 dulu.")
                         else -> {
                             vm.runCommand(command)
@@ -244,6 +247,7 @@ fun TerminalScreen(vm: MainViewModel) {
                     when {
                         running -> vm.stopCommand()
                         !distro.installed -> vm.notify("Pasang Ubuntu 24 dulu.")
+                        command.isBlank() -> vm.notify("Ketik perintah dulu.")
                         else -> {
                             vm.runCommand(command)
                             command = ""
