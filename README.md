@@ -39,3 +39,29 @@ menjalankan perintah — lihat `android/app/src/main/jniLibs/README.md`.
 
 Rootfs disimpan di `files/distro/ubuntu/rootfs`, workspace di `files/workspace`
 (di dalam Ubuntu: `/root/storage`).
+
+## Update / install di atas versi lama
+
+APK dari CI dan build lokal memakai **kunci yang sama**, jadi cukup install
+APK baru di atas yang lama — tidak perlu uninstall (data chat & workspace tetap
+ada):
+
+- `android/app/ci-debug.keystore` adalah kunci *debug* bersama yang sengaja
+  di-commit dengan password publik (`arka1234`, alias `arkaci`). Ini bukan
+  kredensial rahasia; hanya dipakai supaya signature tiap build identik.
+- Kalau Anda punya keystore sendiri, taruh di `android/arkacode.keystore` dan
+  buat `android/keystore.properties` sesuai contoh di
+  `android/keystore.properties.example`. Kunci itu **tidak** di-commit dan
+  prioritasnya lebih tinggi dari kunci CI.
+
+Catatan: APK lama yang ditandatangani kunci *random* bawaan runner harus
+di-uninstall **satu kali** sebelum bisa menerima update dari build terbaru.
+Sesudah itu semua build berikutnya bisa di-update di tempat.
+
+## Perilaku chat
+
+Saat sesi chat dibuat, aplikasi menyisipkan pesan sistem yang menjelaskan bahwa
+model adalah "otak" Arka Agent: perintah dijalankan lewat tab **Terminal** di
+perangkat, bukan langsung oleh model. Jadi kalau Anda meminta "cek Ubuntu",
+asisten akan memberi perintah siap copy-paste dan siap menganalisis output yang
+Anda tempel di chat. Dropdown model di header chat bisa dicari dengan mengetik.
