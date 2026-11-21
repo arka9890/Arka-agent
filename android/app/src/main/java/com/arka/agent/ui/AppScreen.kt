@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -80,6 +81,12 @@ fun AppScreen(vm: MainViewModel) {
     }
 
     Scaffold(
+        // Naikkan seluruh Scaffold (konten + tab bar) di atas keyboard saat
+        // IME terbuka. Kalau imePadding hanya dipasang di InputBar, tab bar
+        // tetap keburu keyboard dan kolom input melayang setinggi tab bar
+        // di atas keyboard. Insets yang sudah dikonsumsi di sini otomatis
+        // dianggap 0 oleh imePadding anak-anak di dalamnya, jadi aman.
+        modifier = Modifier.imePadding(),
         containerColor = clay.background,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = { ClayTabBar(current = tab, onSelect = { tab = it }) },

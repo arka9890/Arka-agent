@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -529,11 +528,9 @@ private fun InputBar(
     Column(
         Modifier
             .fillMaxWidth()
-            // Naik di atas keyboard (IME) saat keyboard terbuka. Sisanya
-            // (navigation bar) sudah ditangani Scaffold lewat padding
-            // bottomBar, jadi jangan pakai navigationBarsPadding di sini
-            // — kalau dobel, kolom input melayang jauh di atas tab bar.
-            .imePadding()
+            // Keyboard (IME) sudah ditangani imePadding di Scaffold (AppScreen),
+            // jadi di sini cukup padding biasa — kalau ditambah imePadding lagi,
+            // kolom input melayang jauh di atas keyboard.
             .padding(horizontal = Space.md, vertical = Space.sm),
     ) {
         if (attachments.isNotEmpty()) {
