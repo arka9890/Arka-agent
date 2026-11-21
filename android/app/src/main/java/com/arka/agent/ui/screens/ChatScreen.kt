@@ -175,23 +175,34 @@ fun ChatScreen(vm: MainViewModel) {
             if (current == null) {
                 EmptyChat(onStart = { vm.newSession() })
             } else {
-                MessageList(
-                    messages = messages,
-                    streaming = streaming,
-                    busy = busy,
-                    autoScroll = settings["auto_scroll"] != "false",
-                    resolveFile = vm::workspaceFile,
-                    onOpenFile = { path ->
-                        // Lampiran diketuk → buka dialog pratinjau yang sama
-                        // dengan tab File (gambar, teks, PDF, video).
-                        vm.statFile(path) { result ->
-                            result.onSuccess { preview = it }
-                                .onFailure { vm.notify(it.message ?: trFor(lang, "File tidak ditemukan", "File not found", "ファイルが見つかりません")) }
-                        }
-                    },
-                    onCopy = onCopy,
-                    modifier = Modifier.weight(1f),
-                )
+                // Box dengan weight: tinggi daftar pesan dibatasi sisa ruang
+                // kolom, sehingga InputBar selalu terlihat di bawah. Jangan
+                // menaruh weight langsung di SelectionContainer — kalau dia
+                // tidak meneruskan parent data, daftar pesan tumbuh tanpa
+                // batas dan kolom input terdorong keluar layar.
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    MessageList(
+                        messages = messages,
+                        streaming = streaming,
+                        busy = busy,
+                        autoScroll = settings["auto_scroll"] != "false",
+                        resolveFile = vm::workspaceFile,
+                        onOpenFile = { path ->
+                            // Lampiran diketuk → buka dialog pratinjau yang sama
+                            // dengan tab File (gambar, teks, PDF, video).
+                            vm.statFile(path) { result ->
+                                result.onSuccess { preview = it }
+                                    .onFailure { vm.notify(it.message ?: trFor(lang, "File tidak ditemukan", "File not found", "ファイルが見つかりません")) }
+                            }
+                        },
+                        onCopy = onCopy,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 InputBar(
                     input = input,
                     attachments = attachments,
