@@ -42,6 +42,17 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
+      - name: Verifikasi signature APK
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          SIGNER=$(command -v apksigner || find /usr/local/lib/android/sdk \
+            -path '*/35.0.0/apksigner' -type f 2>/dev/null | head -1)
+          if [ -n "$SIGNER" ]; then
+            "$SIGNER" verify --print-certs "$APK" | tee apk-signature.txt
+          else
+            echo "apksigner tidak ditemukan; lewati verifikasi" >&2
+          fi
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
