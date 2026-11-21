@@ -137,7 +137,7 @@ class ArkaRepo(private val context: Context) {
         }
     }
 
-    suspend fun cancelChat() = io { Arka.cancelChat() }
+    suspend fun cancelChat(sessionId: String) = io { Arka.cancelChat(sessionId) }
 
     // ------------------------------------------------------------ file
 

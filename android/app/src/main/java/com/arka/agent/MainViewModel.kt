@@ -91,8 +91,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Pesan sekali-tampil (snackbar): error atau konfirmasi aksi. */
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
-    private var chatJob: Job? = null
-    private var streamBuffer = StringBuilder()
+    /**
+     * Job chat per sesi, bukan satu job global.
+     *
+     * Dulu satu `chatJob` dipakai bersama: memilih sesi lain membatalkan job
+     * itu, dan `send()` menolak pesan baru selama job lama masih hidup —
+     * akibatnya chat di sesi baru langsung "gagal"/terbatal. Sekarang tiap
+     * sesi punya job sendiri sehingga chat di sesi berbeda berjalan paralel
+     * tanpa saling mengganggu.
+     */
+    private val chatJobs = mutableMapOf<String, Job>()
+
+    /** Buffer stream per sesi (jawaban yang sedang dialirkan). */
+    private val streamBuffers = mutableMapOf<String, StringBuilder>()
 
     /** Penjaga [appendTerminal]; output datang dari thread native juga. */
     private val terminalLock = Any()
@@ -163,18 +174,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectSession(id: String) {
-        // Hentikan streaming di sesi lama saat pindah sesi supaya tombol kirim
-        // di sesi baru tidak tetap berupa tombol berhenti (_busy tetap true
-        // karena chatJob lama masih berjalan di latar belakang).
-        chatJob?.cancel()
-        chatJob = null
-        _busy.value = false
-        _streamingText.value = ""
-        streamBuffer = StringBuilder()
-
+        // Jangan batalkan chat sesi lama saat pindah sesi: streaming di sesi
+        // lama boleh lanjut di latar belakang dan jawabannya tetap disimpan
+        // ke sesinya sendiri. Yang kita lakukan hanya "lepas" dari tampilan
+        // streaming sesi lama supaya UI sesi baru bersih.
         _currentSessionId.value = id
+        // Sesi ini masih menerima jawaban di latar belakang? Tampilkan lagi
+        // streaming-nya dan kunci tombol kirim jadi tombol berhenti.
+        val running = chatJobs[id]?.isActive == true
+        _busy.value = running
+        _streamingText.value = if (running) {
+            streamBuffers[id]?.toString().orEmpty()
+        } else {
+            ""
+        }
         viewModelScope.launch {
-            repo.cancelChat()
             _messages.value = runCatching { repo.messages(id) }.getOrElse {
                 notify(it.message ?: "Gagal memuat pesan")
                 emptyList()
@@ -223,17 +237,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun send(text: String, attachments: List<AttachmentRef> = emptyList()) {
         val body = text.trim()
-        if (body.isEmpty() || _busy.value) return
+        if (body.isEmpty()) return
         val sessionId = _currentSessionId.value ?: run {
             notify("Buat sesi baru dulu.")
             return
         }
+        // Sesi yang sedang mengetik boleh mengirim lagi; sesi lain tidak
+        // terganggu. Cek job milik sesi ini saja.
+        if (chatJobs[sessionId]?.isActive == true) return
 
         _busy.value = true
-        streamBuffer = StringBuilder()
+        streamBuffers[sessionId] = StringBuilder()
         _streamingText.value = ""
 
-        chatJob = viewModelScope.launch {
+        val job = viewModelScope.launch {
             try {
                 val attachmentJson = attachments.joinToString(",", "[", "]") { it.toJson() }
                 val userMsg = repo.addMessage(sessionId, "user", body, attachmentJson)
@@ -270,8 +287,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     model = session?.model ?: provider?.model,
                     history = history,
                     onDelta = { delta ->
-                        streamBuffer.append(delta)
-                        _streamingText.value = streamBuffer.toString()
+                        val buffer = streamBuffers.getOrPut(sessionId) { StringBuilder() }
+                        buffer.append(delta)
+                        // Tampilkan hanya jika sesi ini masih yang terbuka;
+                        // kalau pengguna pindah sesi, jawaban tetap disimpan
+                        // ke sesinya tanpa mengganggu tampilan sesi aktif.
+                        if (_currentSessionId.value == sessionId) {
+                            _streamingText.value = buffer.toString()
+                        }
                     },
                     onTool = { command, output ->
                         // Perintah agent ditampilkan di Terminal supaya
@@ -282,24 +305,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
 
                 result.onFailure { notify(it.message ?: "Gagal menghubungi AI") }
-                _streamingText.value = ""
-                _messages.value = repo.messages(sessionId)
+                if (_currentSessionId.value == sessionId) {
+                    _streamingText.value = ""
+                    _messages.value = repo.messages(sessionId)
+                }
                 refreshSessions()
             } catch (e: Exception) {
+                // Pembatalan (stopChat) bukan error: jangan tampilkan notif.
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 notify(e.message ?: "Terjadi kesalahan")
             } finally {
-                _busy.value = false
+                chatJobs.remove(sessionId)
+                streamBuffers.remove(sessionId)
+                if (_currentSessionId.value == sessionId) {
+                    _busy.value = false
+                    _streamingText.value = ""
+                }
             }
         }
+        chatJobs[sessionId] = job
     }
 
-    fun stopChat() = viewModelScope.launch {
-        repo.cancelChat()
-        chatJob?.cancel()
-        chatJob = null
-        _busy.value = false
-        _streamingText.value = ""
-        streamBuffer = StringBuilder()
+    /** Hentikan chat yang sedang berjalan pada sesi aktif. */
+    fun stopChat() {
+        val sessionId = _currentSessionId.value ?: return
+        viewModelScope.launch {
+            repo.cancelChat(sessionId)
+            chatJobs.remove(sessionId)?.cancel()
+            if (_currentSessionId.value == sessionId) {
+                _busy.value = false
+                _streamingText.value = ""
+            }
+        }
     }
 
     // --------------------------------------------------------- provider

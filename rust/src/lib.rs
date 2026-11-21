@@ -4,8 +4,9 @@
 //! berbahasa Indonesia (sudah siap tampil di UI). Fungsi yang mengembalikan
 //! data mengembalikan JSON, supaya sisi Kotlin tidak perlu parsing manual.
 //!
-//! Pembatalan memakai flag global (`cancelChat` / `cancelExec` / `cancelInstall`)
-//! karena satu aplikasi hanya menjalankan satu operasi panjang pada satu waktu.
+//! Pembatalan: chat memakai flag **per sesi** (`cancelChat(session_id)`)
+//! supaya membatalkan/memulai chat di satu sesi tidak mengganggu sesi lain;
+//! terminal & instalasi tetap global karena hanya satu yang boleh jalan.
 
 mod ai;
 mod ctx;
@@ -25,14 +26,39 @@ use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
-static CHAT_CANCEL: OnceLock<AtomicBool> = OnceLock::new();
+static CHAT_CANCELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static EXEC_CANCEL: OnceLock<AtomicBool> = OnceLock::new();
 static INSTALL_CANCEL: OnceLock<AtomicBool> = OnceLock::new();
 
-fn chat_cancel() -> &'static AtomicBool {
-    CHAT_CANCEL.get_or_init(|| AtomicBool::new(false))
+/// Flag batal **per sesi**, bukan global.
+///
+/// Dulu satu flag global dipakai semua sesi: ketika pengguna pindah sesi lalu
+/// mengirim chat baru, `cancelChat`/`chatStream` berikutnya menimpa flag yang
+/// sama sehingga chat sesi lama ikut terbatal ("gagal") atau justru hidup lagi
+/// karena flag-nya di-reset. Sekarang tiap sesi punya flag sendiri; run lama
+/// yang masih berjalan menyimpan `Arc`-nya sendiri sehingga tidak terpengaruh
+/// oleh run baru pada sesi yang sama.
+fn new_chat_cancel(session_id: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let map = CHAT_CANCELS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = map.lock() {
+        guard.insert(session_id.to_string(), flag.clone());
+    }
+    flag
+}
+
+/// Set flag batal untuk run chat yang terdaftar pada [session_id].
+fn request_chat_cancel(session_id: &str) {
+    let Some(flag) = CHAT_CANCELS.get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|g| g.get(session_id).cloned())
+    else {
+        return;
+    };
+    flag.store(true, Ordering::SeqCst);
 }
 fn exec_cancel() -> &'static AtomicBool {
     EXEC_CANCEL.get_or_init(|| AtomicBool::new(false))
@@ -358,9 +384,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     let model = ju::arg_str(&mut env, &model);
     let messages_json = ju::arg_str(&mut env, &messages_json);
 
-    let cancel = chat_cancel();
-    cancel.store(false, Ordering::SeqCst);
-    let tool_cancel = cancel_token(cancel);
+    // Flag batal khusus sesi ini; run lama pada sesi yang sama tidak terganggu.
+    let cancel = new_chat_cancel(&session_id);
 
     let prepared = (|| -> Result<(provider::Provider, Vec<ai::ChatMsg>), String> {
         let p = if provider_id.trim().is_empty() {
@@ -442,7 +467,7 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
             if command.trim().is_empty() {
                 continue;
             }
-            let output = match proot_manager::run_capture(&command, &tool_cancel, None) {
+            let output = match proot_manager::run_capture(&command, &cancel, None) {
                 Ok((code, out)) => format!("exit {code}\n{}", tail_chars(out, 8000)),
                 Err(e) => format!("Gagal menjalankan perintah: {e}"),
             };
@@ -496,8 +521,6 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         }
     }
 
-    tool_cancel.store(true, Ordering::SeqCst);
-
     if final_text.trim().is_empty() {
         let msg = if cancel.load(Ordering::SeqCst) { "Dibatalkan." } else { "Provider tidak mengirim jawaban." };
         ju::emit_str(&mut env, &cb, "onError", msg);
@@ -517,8 +540,13 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_cancelChat<'local>(_env: JNIEnv, _class: JClass) {
-    chat_cancel().store(true, Ordering::SeqCst);
+pub extern "system" fn Java_com_arka_agent_core_Arka_cancelChat<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session_id: JString<'local>,
+) {
+    let session_id = ju::arg_str(&mut env, &session_id);
+    request_chat_cancel(&session_id);
 }
 
 // ----------------------------------------------------------------- files

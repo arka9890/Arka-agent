@@ -61,7 +61,7 @@ object Arka {
         cb: ChatCallback,
     ): String
 
-    external fun cancelChat()
+    external fun cancelChat(sessionId: String)
 
     // ------------------------------------------------------------ file
     external fun filesJson(path: String): String
