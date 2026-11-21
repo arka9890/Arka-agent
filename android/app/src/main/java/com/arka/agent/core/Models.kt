@@ -55,6 +55,26 @@ data class FileInfo(
     val kind: String = "binary",
 )
 
+/**
+ * Lampiran chat yang dipilih dari file manager perangkat lewat SAF.
+ *
+ * [uri] berupa `content://…` — file TIDAK disalin ke workspace (PRD: pilih
+ * langsung dari file manager, jangan upload dulu). [kind] dihitung dari MIME
+ * saat dipilih supaya bubble chat bisa menampilkan thumbnail yang benar.
+ */
+data class AttachmentRef(
+    val uri: String,
+    val name: String,
+    val kind: String,
+) {
+    /** JSON yang disimpan di kolom `attachments` pesan. */
+    fun toJson(): String =
+        """{"path":${jsonStr(uri)},"kind":${jsonStr(kind)},"name":${jsonStr(name)}}"""
+
+    private fun jsonStr(s: String) =
+        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
+
 @Serializable
 data class DistroStatus(
     val installed: Boolean = false,

@@ -385,7 +385,9 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
-    const MAX_TOOL_ROUNDS: usize = 6;
+    // Batas langkah agent dinaikkan jauh: tugas panjang (clone, build, uji)
+    // sering butuh belasan perintah. Dulu 6 → model berhenti di tengah jalan.
+    const MAX_TOOL_ROUNDS: usize = 40;
     let mut final_text = String::new();
     let mut rounds = 0usize;
 
@@ -414,8 +416,11 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                 }
             }
         }
+        // Simpan semua teks dari tiap putaran (bukan hanya terakhir): kalau
+        // ditimpa, jawaban yang tampil di stream mendadak menyusut setelah
+        // reload dan terlihat seperti "model berhenti di tengah".
         if !answer.trim().is_empty() {
-            final_text = answer;
+            final_text.push_str(&answer);
         }
         if let Some(e) = stream_error {
             if final_text.trim().is_empty() {

@@ -3,6 +3,8 @@ package com.arka.agent.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -70,6 +72,7 @@ import com.arka.agent.MainViewModel
 import com.arka.agent.ui.LocalLanguage
 import com.arka.agent.ui.tr
 import com.arka.agent.ui.trFor
+import com.arka.agent.core.AttachmentRef
 import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
 import com.arka.agent.core.Session
@@ -97,8 +100,7 @@ fun ChatScreen(vm: MainViewModel) {
 
     var drawer by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
-    var attachments by remember { mutableStateOf<List<String>>(emptyList()) }
-    var showAttach by remember { mutableStateOf(false) }
+    var attachments by remember { mutableStateOf<List<AttachmentRef>>(emptyList()) }
     var showModelMenu by remember { mutableStateOf(false) }
     var modelQuery by remember { mutableStateOf("") }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -120,6 +122,18 @@ fun ChatScreen(vm: MainViewModel) {
     }
 
     val current = sessions.firstOrNull { it.id == currentId }
+
+    // Pemilih lampiran langsung ke file manager perangkat (SAF). File tidak
+    // disalin ke workspace — cukup URI content:// yang dibawa ke pesan.
+    val attachLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            vm.describeUris(uris) { refs ->
+                attachments = (attachments + refs).distinctBy { it.uri }
+            }
+        }
+    }
     // Sesi lama bisa punya provider_id kosong. Pakai provider default sebagai
     // fallback supaya daftar model tetap bisa dimuat dan dipilih.
     val activeProvider = current?.providerId?.let { pid -> providers.firstOrNull { it.id == pid } }
@@ -208,8 +222,8 @@ fun ChatScreen(vm: MainViewModel) {
                     attachments = attachments,
                     busy = busy,
                     onInputChange = { input = it },
-                    onAttach = { showAttach = true },
-                    onRemoveAttachment = { path -> attachments = attachments - path },
+                    onAttach = { attachLauncher.launch(arrayOf("*/*")) },
+                    onRemoveAttachment = { ref -> attachments = attachments - ref },
                     onSend = {
                         val text = input
                         val files = attachments
@@ -237,17 +251,6 @@ fun ChatScreen(vm: MainViewModel) {
                 },
                 onRename = { id, title -> vm.renameSession(id, title) },
                 onDelete = { id -> vm.deleteSession(id) },
-            )
-        }
-
-        if (showAttach) {
-            AttachDialog(
-                vm = vm,
-                onDismiss = { showAttach = false },
-                onPick = { path ->
-                    attachments = (attachments + path).distinct()
-                    showAttach = false
-                },
             )
         }
 
@@ -516,11 +519,11 @@ private fun MessageList(
 @Composable
 private fun InputBar(
     input: String,
-    attachments: List<String>,
+    attachments: List<AttachmentRef>,
     busy: Boolean,
     onInputChange: (String) -> Unit,
     onAttach: () -> Unit,
-    onRemoveAttachment: (String) -> Unit,
+    onRemoveAttachment: (AttachmentRef) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -536,12 +539,12 @@ private fun InputBar(
                 Modifier.fillMaxWidth().padding(bottom = Space.xs),
                 horizontalArrangement = Arrangement.spacedBy(Space.xs),
             ) {
-                attachments.take(3).forEach { path ->
+                attachments.take(3).forEach { ref ->
                     // Ketuk pill untuk melepas satu lampiran.
                     ClayPill(
-                        text = path.substringAfterLast('/'),
+                        text = ref.name,
                         color = clay.accent,
-                        onClick = { onRemoveAttachment(path) },
+                        onClick = { onRemoveAttachment(ref) },
                     )
                 }
                 if (attachments.size > 3) {

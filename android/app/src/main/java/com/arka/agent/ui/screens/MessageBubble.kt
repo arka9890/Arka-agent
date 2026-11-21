@@ -52,13 +52,19 @@ import org.json.JSONArray
 import java.io.File
 
 /** Data lampiran yang disimpan di kolom `attachments` pesan. */
-private data class Attachment(val path: String, val kind: String)
+private data class Attachment(val path: String, val kind: String, val name: String)
 
 private fun parseAttachments(json: String): List<Attachment> = runCatching {
     val arr = JSONArray(json)
     (0 until arr.length()).map { i ->
         val o = arr.getJSONObject(i)
-        Attachment(o.optString("path"), o.optString("kind", "text"))
+        val path = o.optString("path")
+        Attachment(
+            path = path,
+            kind = o.optString("kind", "text"),
+            // Nama disimpan saat memilih (SAF); fallback untuk pesan lama.
+            name = o.optString("name").ifBlank { path.substringAfterLast('/') },
+        )
     }
 }.getOrDefault(emptyList())
 
@@ -147,9 +153,12 @@ private fun AttachmentPreview(
     resolveFile: (String) -> File,
     onOpenFile: (String) -> Unit,
 ) {
-    // Path lampiran relatif terhadap workspace, bukan path absolut proses —
-    // tanpa resolver ini File(path) selalu "tidak ditemukan".
-    val file = remember(att.path) { resolveFile(att.path) }
+    // Lampiran SAF berupa URI content:// — tidak bisa diubah jadi File.
+    // Path workspace lama tetap diresolusi relatif ke root workspace.
+    val isUri = att.path.startsWith("content://")
+    val file = remember(att.path) {
+        if (isUri) File("") else resolveFile(att.path)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -159,12 +168,16 @@ private fun AttachmentPreview(
             .padding(8.dp),
     ) {
         when (att.kind) {
-            "image" -> ImageThumbnail(file)
+            "image" -> if (isUri) {
+                UriImageThumbnail(att.path, att.name)
+            } else {
+                ImageThumbnail(file)
+            }
             "video" -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.PlayCircle, "Putar video", tint = Color.White)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    att.path.substringAfterLast('/'),
+                    att.name,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White,
                 )
@@ -173,7 +186,7 @@ private fun AttachmentPreview(
                 Icon(Icons.Outlined.PictureAsPdf, "PDF", tint = Color.White)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    att.path.substringAfterLast('/'),
+                    att.name,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White,
                 )
@@ -183,20 +196,84 @@ private fun AttachmentPreview(
                 Spacer(Modifier.width(8.dp))
                 Column {
                     Text(
-                        att.path.substringAfterLast('/'),
+                        att.name,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White,
                     )
-                    Text(
-                        if (file.exists()) "${file.length() / 1024} KB" else tr(
-                            "tidak ditemukan", "not found", "見つかりません",
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
+                    // Ukuran file SAF tidak selalu tersedia di pesan lama;
+                    // tampilkan hanya bisa dibaca dari file workspace.
+                    if (!isUri) {
+                        Text(
+                            if (file.exists()) "${file.length() / 1024} KB" else tr(
+                                "tidak ditemukan", "not found", "見つかりません",
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * Thumbnail gambar dari URI SAF (`content://`).
+ *
+ * Stream dibuka lewat ContentResolver; `inSampleSize` dihitung dari batas
+ * decode supaya gambar 4000px tidak memenuhi RAM hanya untuk thumbnail.
+ */
+@Composable
+private fun UriImageThumbnail(uri: String, name: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var bitmap by remember(uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var failed by remember(uri) { mutableStateOf(false) }
+
+    LaunchedEffect(uri) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val resolver = context.contentResolver
+                val bounds = android.graphics.BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                resolver.openInputStream(android.net.Uri.parse(uri))?.use {
+                    android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+                }
+                if (bounds.outWidth <= 0) return@runCatching null
+                var sample = 1
+                while (bounds.outWidth / sample > 400 || bounds.outHeight / sample > 400) {
+                    sample *= 2
+                }
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                resolver.openInputStream(android.net.Uri.parse(uri))?.use {
+                    android.graphics.BitmapFactory.decodeStream(it, null, opts)
+                }
+            }.getOrNull()
+        }
+        failed = bitmap == null
+    }
+
+    val image = bitmap
+    when {
+        image != null -> androidx.compose.foundation.Image(
+            bitmap = image.asImageBitmap(),
+            contentDescription = name,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(image.width.toFloat() / image.height.toFloat())
+                .clip(RoundedCornerShape(10.dp)),
+            contentScale = ContentScale.Fit,
+        )
+        failed -> Text(
+            tr("Gambar tidak bisa dibaca", "Image could not be read", "画像を読み込めません"),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.8f),
+        )
+        else -> Text(
+            tr("Memuat gambar…", "Loading image…", "画像を読み込み中…"),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.8f),
+        )
     }
 }
 

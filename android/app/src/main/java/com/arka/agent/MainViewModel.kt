@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.arka.agent.core.ArkaRepo
+import com.arka.agent.core.AttachmentRef
 import com.arka.agent.core.DistroStatus
 import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
@@ -206,11 +207,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Kirim pesan user lalu alirkan jawaban AI.
      *
-     * [attachments] adalah daftar path file workspace yang ikut dikirim; isinya
-     * ditempel ke pesan sebagai konteks supaya model bisa membacanya tanpa
-     * tool tambahan.
+     * [attachments] adalah lampiran dari file manager perangkat (SAF). File
+     * TIDAK disalin ke workspace: hanya URI `content://` yang disimpan, dan
+     * isinya dibaca langsung dari penyedia dokumen saat dibutuhkan.
      */
-    fun send(text: String, attachments: List<String> = emptyList()) {
+    fun send(text: String, attachments: List<AttachmentRef> = emptyList()) {
         val body = text.trim()
         if (body.isEmpty() || _busy.value) return
         val sessionId = _currentSessionId.value ?: run {
@@ -224,18 +225,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         chatJob = viewModelScope.launch {
             try {
-                // Jenis file ikut disimpan supaya bubble chat bisa menampilkan
-                // thumbnail gambar/video, bukan ikon teks untuk semua file.
-                // Jenis diambil lebih dulu karena `fileStat` suspend dan tidak
-                // boleh dipanggil di dalam lambda `joinToString`.
-                val kinds = HashMap<String, String>(attachments.size)
-                for (path in attachments) {
-                    kinds[path] = runCatching { repo.fileStat(path).kind }.getOrDefault("text")
-                }
-                val attachmentJson = attachments.joinToString(",", "[", "]") { path ->
-                    val kind = kinds[path] ?: "text"
-                    """{"path":${quote(path)},"kind":${quote(kind)}}"""
-                }
+                val attachmentJson = attachments.joinToString(",", "[", "]") { it.toJson() }
                 val userMsg = repo.addMessage(sessionId, "user", body, attachmentJson)
                 _messages.value = _messages.value + userMsg
                 repo.autotitle(sessionId, body)
@@ -248,10 +238,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
                 // Konteks file: sertakan isi file teks yang dilampirkan supaya
                 // model benar-benar "melihat" file tanpa tool tambahan.
-                val fileContext = attachments.mapNotNull { path ->
+                val fileContext = attachments.mapNotNull { att ->
+                    if (att.kind != "text") return@mapNotNull null
                     runCatching {
-                        val content = repo.readText(path).take(20_000)
-                        "Isi file `$path`:\n```\n$content\n```"
+                        val content = repo.readText(att.uri).take(20_000)
+                        "Isi file `${att.name}`:\n```\n$content\n```"
                     }.getOrNull()
                 }.joinToString("\n\n")
 
@@ -296,8 +287,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         repo.cancelChat()
         chatJob?.cancel()
     }
-
-    private fun quote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     // --------------------------------------------------------- provider
 
@@ -394,8 +383,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun exportFile(path: String) = viewModelScope.launch {
-        runCatching { repo.exportToDownloads(path) }
-            .onSuccess { notify(it) }
+        // Lampiran SAF (content://) disalin dari penyedia dokumen; file
+        // workspace disalin dari rootfs.
+        val job = if (path.startsWith("content://")) {
+            runCatching { repo.exportUriToDownloads(path) }
+        } else {
+            runCatching { repo.exportToDownloads(path) }
+        }
+        job.onSuccess { notify(it) }
             .onFailure { notify(it.message ?: "Gagal mengunduh file") }
     }
 
@@ -405,11 +400,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Info satu file; dipakai saat lampiran chat diketuk (buka pratinjau). */
     fun statFile(path: String, onResult: (Result<FileInfo>) -> Unit) = viewModelScope.launch {
-        onResult(runCatching { repo.fileStat(path) })
+        onResult(
+            if (path.startsWith("content://")) {
+                runCatching { repo.statUri(path) }
+            } else {
+                runCatching { repo.fileStat(path) }
+            },
+        )
     }
 
-    /** Baca satu folder tanpa mengubah state tab File (dipakai dialog lampiran). */
-    suspend fun filesNow(path: String): List<FileInfo> = repo.files(path)
+    /**
+     * Bangun [AttachmentRef] dari URI yang dipilih lewat SAF.
+     *
+     * Nama + jenis diambil dari penyedia dokumen supaya bubble chat bisa
+     * menampilkan ikon/thumbnail yang benar tanpa menyentuh workspace.
+     */
+    fun describeUris(
+        uris: List<android.net.Uri>,
+        onDone: (List<AttachmentRef>) -> Unit,
+    ) = viewModelScope.launch {
+        val refs = uris.mapNotNull { uri ->
+            runCatching {
+                val info = repo.statUri(uri.toString())
+                AttachmentRef(uri = info.path, name = info.name, kind = info.kind)
+            }.getOrNull()
+        }
+        onDone(refs)
+    }
 
     suspend fun workspaceSizeNow(): Long = repo.workspaceSize()
 

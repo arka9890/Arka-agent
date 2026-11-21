@@ -145,7 +145,121 @@ class ArkaRepo(private val context: Context) {
         json.decodeFromString(Arka.filesJson(path))
     }
 
-    suspend fun readText(path: String): String = io { Arka.readText(path) }
+    /**
+     * Baca isi file teks.
+     *
+     * [path] bisa berupa path relatif workspace ATAU URI SAF `content://`
+     * (lampiran chat tidak disalin ke workspace, jadi dibaca langsung dari
+     * penyedia dokumen perangkat).
+     */
+    suspend fun readText(path: String): String = io {
+        if (path.startsWith("content://")) readUriText(path) else Arka.readText(path)
+    }
+
+    /** Baca maksimal 64 KB pertama dari URI SAF (cukup untuk konteks model). */
+    private fun readUriText(uri: String): String {
+        val stream = appContext.contentResolver.openInputStream(Uri.parse(uri))
+            ?: throw IllegalStateException("File tidak bisa dibaca")
+        stream.use { input ->
+            val buf = java.io.ByteArrayOutputStream()
+            val tmp = ByteArray(8192)
+            while (buf.size() < 64 * 1024) {
+                val n = input.read(tmp)
+                if (n <= 0) break
+                buf.write(tmp, 0, n)
+            }
+            buf.toString("UTF-8").take(20_000)
+        }
+    }
+
+    /**
+     * Info satu file dari URI SAF: nama, ukuran, dan jenis dari MIME.
+     *
+     * Dipakai saat user memilih lampiran dan saat lampiran diketuk untuk
+     * pratinjau — path `content://` tidak bisa distat lewat native workspace.
+     */
+    suspend fun statUri(uri: String): FileInfo = io { statUriSync(uri) }
+
+    /** Versi sinkron dari [statUri]; hanya dipanggil dari dalam [io]. */
+    private fun statUriSync(uri: String): FileInfo {
+        val u = Uri.parse(uri)
+        val resolver = appContext.contentResolver
+        var name = u.lastPathSegment?.substringAfterLast('/') ?: "berkas"
+        var size = -1L
+        resolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
+            ?.use { c ->
+                if (c.moveToFirst()) {
+                    val di = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (di >= 0 && !c.isNull(di)) name = c.getString(di)
+                    val si = c.getColumnIndex(OpenableColumns.SIZE)
+                    if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+                }
+            }
+        val mime = resolver.getType(u).orEmpty()
+        return FileInfo(
+            path = uri,
+            name = name,
+            isDir = false,
+            size = size.coerceAtLeast(0),
+            modified = 0,
+            kind = kindOf(mime, name),
+        )
+    }
+
+    /**
+     * Salin isi URI SAF ke folder Download publik.
+     *
+     * Sama seperti [exportToDownloads] memakai MediaStore (tanpa izin sejak
+     * Android 10) — hanya sumbernya stream SAF, bukan file workspace.
+     */
+    suspend fun exportUriToDownloads(uri: String): String = io {
+        val src = appContext.contentResolver.openInputStream(Uri.parse(uri))
+            ?: throw IllegalStateException("File tidak bisa dibaca")
+        val name = statUriSync(uri).name
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeOf(name))
+                put(
+                    android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOWNLOADS,
+                )
+            }
+            val target = appContext.contentResolver.insert(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                values,
+            ) ?: throw IllegalStateException("Gagal membuat file di Download")
+            src.use { input ->
+                appContext.contentResolver.openOutputStream(target)?.use { out ->
+                    input.copyTo(out)
+                } ?: throw IllegalStateException("Gagal menulis ke Download")
+            }
+        } else {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dir.mkdirs()
+            val target = File(dir, name)
+            src.use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+        }
+        "Tersimpan di Download/$name"
+    }
+
+    /** Jenis konten lampiran SAF dari MIME + nama berkas. */
+    private fun kindOf(mime: String, name: String): String = when {
+        mime.startsWith("image/") -> "image"
+        mime.startsWith("video/") -> "video"
+        mime == "application/pdf" -> "pdf"
+        mime.startsWith("text/") ||
+            mime == "application/json" ||
+            mime == "application/xml" ||
+            mime.endsWith("+json") -> "text"
+        else -> when (name.substringAfterLast('.', "").lowercase()) {
+            "png", "jpg", "jpeg", "gif", "webp", "bmp" -> "image"
+            "mp4", "mkv", "webm", "3gp" -> "video"
+            "pdf" -> "pdf"
+            "txt", "md", "log", "json", "xml", "csv", "py", "kt", "rs", "sh", "java", "js", "html", "css", "yml", "yaml", "toml" -> "text"
+            else -> "binary"
+        }
+    }
 
     suspend fun fileStat(path: String): FileInfo = io {
         json.decodeFromString(Arka.fileStat(path))

@@ -67,6 +67,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    // Lampiran SAF berupa URI content://; path workspace lama tetap path biasa.
+    val isUri = remember(file.path) { file.path.startsWith("content://") }
     var text by remember(file.path) { mutableStateOf<String?>(null) }
     var bitmap by remember(file.path) { mutableStateOf<Bitmap?>(null) }
     var pdfPages by remember(file.path) { mutableStateOf<Int?>(null) }
@@ -79,6 +81,18 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
     LaunchedEffect(file.path) {
         loading = true
         error = null
+        text = null
+        bitmap = null
+        pdfPages = null
+
+        // Path kosong / bukan file → jangan coba decode (dulu penyebab FC:
+        // decodeFile pada direktori mengembalikan null lalu dipaksa render).
+        if (file.path.isBlank()) {
+            error = trFor(lang, "File tidak ditemukan", "File not found", "ファイルが見つかりません")
+            loading = false
+            return@LaunchedEffect
+        }
+
         when (file.kind) {
             "text" -> vm.readText(file.path) { result ->
                 result.onSuccess { text = it }
@@ -86,12 +100,20 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
                 loading = false
             }
             "image" -> {
-                bitmap = withContext(Dispatchers.IO) { decodeScaled(hostFile.absolutePath) }
+                bitmap = withContext(Dispatchers.IO) {
+                    if (isUri) decodeScaledUri(context, file.path)
+                    else if (hostFile.isFile) decodeScaled(hostFile.absolutePath)
+                    else null
+                }
                 if (bitmap == null) error = trFor(lang, "Gambar tidak bisa dibaca", "Image could not be read", "画像を読み込めません")
                 loading = false
             }
             "pdf" -> {
-                val result = withContext(Dispatchers.IO) { renderPdfFirstPage(hostFile) }
+                val result = withContext(Dispatchers.IO) {
+                    if (isUri) renderPdfFirstPageUri(context, file.path)
+                    else if (hostFile.isFile) renderPdfFirstPage(hostFile)
+                    else null
+                }
                 if (result == null) error = trFor(lang, "PDF tidak bisa dibaca", "PDF could not be read", "PDFを読み込めません") else {
                     bitmap = result.first
                     pdfPages = result.second
@@ -106,9 +128,13 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
         onDismissRequest = onDismiss,
         title = {
             Column {
-                Text(file.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                 Text(
-                    "${file.kind} · ${humanSize(file.size)}",
+                    file.name.ifBlank { tr("Tanpa nama", "Untitled", "無題") },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                )
+                Text(
+                    if (file.size > 0) "${file.kind} · ${humanSize(file.size)}" else file.kind,
                     style = MaterialTheme.typography.labelSmall,
                     color = clay.muted,
                 )
@@ -169,17 +195,24 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
             Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
                 if (file.kind == "video" || file.kind == "binary" || file.kind == "pdf") {
                     TextButton(onClick = {
-                        // Buka dengan aplikasi lain lewat FileProvider: URI
-                        // content:// adalah satu-satunya yang boleh dibagikan
-                        // ke aplikasi lain sejak Android 7.
+                        // Lampiran SAF: URI content:// sudah boleh dibagikan
+                        // langsung (diberi izin baca lewat FLAG_GRANT_READ).
+                        // File workspace tetap lewat FileProvider.
                         runCatching {
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.files",
-                                hostFile,
-                            )
+                            val target = if (isUri) {
+                                android.net.Uri.parse(file.path)
+                            } else {
+                                FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.files",
+                                    hostFile,
+                                )
+                            }
+                            val mime = context.contentResolver.getType(target)
+                                ?: context.contentResolver.getType(android.net.Uri.parse(file.path))
+                                ?: "*/*"
                             val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, context.contentResolver.getType(uri) ?: "*/*")
+                                setDataAndType(target, mime)
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
                             context.startActivity(intent)
@@ -238,3 +271,47 @@ private fun renderPdfFirstPage(file: java.io.File): Pair<Bitmap, Int>? = runCatc
         }
     }
 }.getOrNull()
+
+/** Versi [decodeScaled] untuk URI SAF: dua pass (bounds lalu decode). */
+private fun decodeScaledUri(context: android.content.Context, uri: String): Bitmap? {
+    val resolver = context.contentResolver
+    val u = android.net.Uri.parse(uri)
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    runCatching {
+        resolver.openInputStream(u)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+        }
+    }
+    if (bounds.outWidth <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / sample > 1000 || bounds.outHeight / sample > 1000) {
+        sample *= 2
+    }
+    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+    return runCatching {
+        resolver.openInputStream(u)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, opts)
+        }
+    }.getOrNull()
+}
+
+/** Versi [renderPdfFirstPage] untuk URI SAF. */
+private fun renderPdfFirstPageUri(context: android.content.Context, uri: String): Pair<Bitmap, Int>? =
+    runCatching {
+        val descriptor = context.contentResolver.openFileDescriptor(
+            android.net.Uri.parse(uri),
+            "r",
+        ) ?: return null
+        PdfRenderer(descriptor).use { renderer ->
+            val pages = renderer.pageCount
+            if (pages == 0) return null
+            renderer.openPage(0).use { page ->
+                val width = (page.width * 1.5f).toInt().coerceAtLeast(1)
+                val height = (page.height * 1.5f).toInt().coerceAtLeast(1)
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(AndroidColor.WHITE)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmap to pages
+            }
+        }
+    }.getOrNull()

@@ -64,14 +64,18 @@ pub fn resolve(rel: &str) -> Result<PathBuf, String> {
     Ok(full)
 }
 
-fn rel_of(path: &Path) -> String {
-    ctx::workspace_dir()
-        .ok()
-        .and_then(|root| path.strip_prefix(&root).ok().map(|p| p.to_string_lossy().to_string()))
-        .unwrap_or_default()
+/// Path relatif dari UI dibangun dari `rel` yang dikirim UI, bukan dari
+/// `strip_prefix` path absolut.
+///
+/// `resolve()` memakai `canonicalize()` (di Android `/data/user/0/...`
+/// berubah jadi `/data/data/...`), sedangkan root dari `workspace_dir()`
+/// tidak. Strip prefix antar keduanya gagal → semua file dapat `path = ""`
+/// → key `LazyColumn` duplikat → aplikasi force-close.
+fn norm_rel(rel: &str) -> String {
+    rel.trim().trim_start_matches('/').to_string()
 }
 
-fn info_of(path: &Path) -> Option<FileInfo> {
+fn info_of(path: &Path, rel: String) -> Option<FileInfo> {
     let meta = fs::metadata(path).ok()?;
     let name = path.file_name()?.to_string_lossy().to_string();
     let modified = meta
@@ -81,7 +85,7 @@ fn info_of(path: &Path) -> Option<FileInfo> {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     Some(FileInfo {
-        path: rel_of(path),
+        path: rel,
         name: name.clone(),
         is_dir: meta.is_dir(),
         size: meta.len() as i64,
@@ -96,10 +100,15 @@ pub fn list(rel: &str) -> Result<Vec<FileInfo>, String> {
     if !dir.is_dir() {
         return Err("Bukan folder".into());
     }
+    let base = norm_rel(rel);
     let mut items: Vec<FileInfo> = fs::read_dir(&dir)
         .map_err(|e| e.to_string())?
         .flatten()
-        .filter_map(|e| info_of(&e.path()))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let child = if base.is_empty() { name } else { format!("{base}/{name}") };
+            info_of(&e.path(), child)
+        })
         .collect();
     items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
         (true, false) => std::cmp::Ordering::Less,
@@ -155,12 +164,12 @@ pub fn write_bytes(rel: &str, bytes: &[u8]) -> Result<FileInfo, String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(&path, bytes).map_err(|e| e.to_string())?;
-    info_of(&path).ok_or_else(|| "File gagal ditulis".to_string())
+    info_of(&path, norm_rel(rel)).ok_or_else(|| "File gagal ditulis".to_string())
 }
 
 pub fn stat(rel: &str) -> Result<FileInfo, String> {
     let path = resolve(rel)?;
-    info_of(&path).ok_or_else(|| "File tidak ditemukan".into())
+    info_of(&path, norm_rel(rel)).ok_or_else(|| "File tidak ditemukan".into())
 }
 
 /// Ukuran total workspace dalam byte (untuk tab Settings).

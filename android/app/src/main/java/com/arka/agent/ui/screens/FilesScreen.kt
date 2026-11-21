@@ -119,7 +119,7 @@ fun FilesScreen(vm: MainViewModel) {
                     }
                 }
             }
-            items(files, key = { it.path }) { file ->
+            items(files, key = { f -> f.path.ifBlank { "n:${f.name}" } }) { file ->
                 Row(
                     Modifier
                         .fillMaxWidth()
