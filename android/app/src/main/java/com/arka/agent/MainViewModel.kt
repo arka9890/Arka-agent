@@ -167,7 +167,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // di sesi baru tidak tetap berupa tombol berhenti (_busy tetap true
         // karena chatJob lama masih berjalan di latar belakang).
         chatJob?.cancel()
-        repo.cancelChat()
         chatJob = null
         _busy.value = false
         _streamingText.value = ""
@@ -175,6 +174,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         _currentSessionId.value = id
         viewModelScope.launch {
+            repo.cancelChat()
             _messages.value = runCatching { repo.messages(id) }.getOrElse {
                 notify(it.message ?: "Gagal memuat pesan")
                 emptyList()
