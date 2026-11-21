@@ -454,9 +454,12 @@ private fun MessageList(
 
     // SelectionContainer: teks bisa dipilih/dicopy dengan long-press sistem,
     // selain tombol copy di tiap bubble.
-    SelectionContainer {
+    // PENTING: `modifier` (berisi weight(1f)) harus dipasang di sini, bukan di
+    // LazyColumn. Kalau weight ada di LazyColumn, SelectionContainer tidak
+    // ikut terukur dan kolom input terdorong keluar layar.
+    SelectionContainer(modifier = modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = modifier.fillMaxSize().padding(horizontal = Space.md),
+            modifier = Modifier.fillMaxSize().padding(horizontal = Space.md),
             state = listState,
             contentPadding = PaddingValues(vertical = Space.sm),
             verticalArrangement = Arrangement.spacedBy(Space.sm),

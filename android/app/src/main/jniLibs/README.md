@@ -16,11 +16,18 @@ diberi nama `lib*.so`.
 SHA-256 (diverifikasi terhadap mirror resmi Termux):
 
 ```
-3621937c1c5a98d0d39ca599af573a6bc15128690606d535e8b05da00cec4f41  libproot.so
+aad737c5b546ee7471f133be90ef20f765aa98a303522557ceed3dff76605085  libproot.so
 1da54355333cca3fb6ee10e3b82a24df24fb230c99241ce83809bf9e240609b5  libproot-loader.so
 742b438c4d09e276985a61d44164c9de207b6d8cc268f3018cb3001961bcb309  libtalloc.so
 84475798e07c8174dbbfaec70a827fdb02f19ffa69a589380c13e7507fd0e731  libandroid-shmem.so
 ```
+
+`libproot.so` sudah di-patch pada tabel `DT_NEEDED`: `libtalloc.so.2` diubah
+jadi `libtalloc.so` (panjang string sama, ditulis dengan NUL tambahan) supaya
+linker Android menemukan library langsung di `nativeLibraryDir`. Tanpa patch
+ini, setelah aplikasi di-update in-place symlink lama di `proot-libs`
+menggantung dan proot gagal dengan `library "libtalloc.so.2" not found`.
+Hash asli sebelum patch: `3621937c…f41`.
 
 Catatan lisensi: `proot` dari Termux berlisensi GPL-2.0, `libtalloc` LGPL-3.0,
 `libandroid-shmem` MIT. Sertakan sumber/lisensi ini bila APK didistribusikan.
