@@ -268,10 +268,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     providerId = provider?.id,
                     model = session?.model ?: provider?.model,
                     history = history,
-                ) { delta ->
-                    streamBuffer.append(delta)
-                    _streamingText.value = streamBuffer.toString()
-                }
+                    onDelta = { delta ->
+                        streamBuffer.append(delta)
+                        _streamingText.value = streamBuffer.toString()
+                    },
+                    onTool = { command, output ->
+                        // Perintah agent ditampilkan di Terminal supaya
+                        // pengguna melihat apa yang dijalankan model.
+                        appendTerminal("$ $command\n$output\n")
+                        viewModelScope.launch { refreshFiles(_currentDir.value) }
+                    },
+                )
 
                 result.onFailure { notify(it.message ?: "Gagal menghubungi AI") }
                 _streamingText.value = ""
@@ -332,6 +339,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadModels(providerId: String, onResult: (List<String>) -> Unit) = viewModelScope.launch {
         val models = runCatching { repo.models(providerId) }.getOrDefault(emptyList())
+        onResult(models)
+    }
+
+    /** Cek model dari server hanya saat tombol refresh ditekan. */
+    fun refreshModels(providerId: String, onResult: (List<String>) -> Unit) = viewModelScope.launch {
+        val models = runCatching { repo.refreshModels(providerId) }.getOrElse {
+            notify(it.message ?: "Gagal mengecek model")
+            runCatching { repo.models(providerId) }.getOrDefault(emptyList())
+        }
         onResult(models)
     }
 

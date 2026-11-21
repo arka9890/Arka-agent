@@ -58,10 +58,18 @@ Catatan: APK lama yang ditandatangani kunci *random* bawaan runner harus
 di-uninstall **satu kali** sebelum bisa menerima update dari build terbaru.
 Sesudah itu semua build berikutnya bisa di-update di tempat.
 
-## Perilaku chat
+## Perilaku chat (agent)
 
-Saat sesi chat dibuat, aplikasi menyisipkan pesan sistem yang menjelaskan bahwa
-model adalah "otak" Arka Agent: perintah dijalankan lewat tab **Terminal** di
-perangkat, bukan langsung oleh model. Jadi kalau Anda meminta "cek Ubuntu",
-asisten akan memberi perintah siap copy-paste dan siap menganalisis output yang
-Anda tempel di chat. Dropdown model di header chat bisa dicari dengan mengetik.
+Saat sesi chat dibuat, aplikasi menyisipkan pesan sistem + tool `run_command`.
+Kalau Anda meminta model mengecek/menjalankan sesuatu di Ubuntu, model
+memanggil tool itu; aplikasi menjalankan perintah lewat proot, hasilnya
+ditampilkan di tab **Terminal**, lalu dikirim balik ke model supaya ia bisa
+menjawab berdasarkan output asli. Maksimal 6 putaran tool per pesan.
+
+Provider harus mendukung *function calling* (OpenAI-compatible atau Anthropic).
+Kalau tidak, aplikasi otomatis fallback ke chat biasa tanpa tool.
+
+Dropdown model di header chat **tidak** mengecek server setiap kali dibuka —
+daftar diambil dari DB (instan). Tekan tombol **refresh** di dropdown untuk
+mengecek model terbaru dari server; di tab Provider juga ada tombol
+**Cek dari server**. Hasil refresh disimpan, jadi pemakaian berikutnya cepat.

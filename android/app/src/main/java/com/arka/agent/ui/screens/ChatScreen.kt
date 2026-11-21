@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.AlertDialog
@@ -96,6 +97,7 @@ fun ChatScreen(vm: MainViewModel) {
     var showModelMenu by remember { mutableStateOf(false) }
     var modelQuery by remember { mutableStateOf("") }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var refreshingModels by remember { mutableStateOf(false) }
     var modelInput by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<FileInfo?>(null) }
     val lang = LocalLanguage.current
@@ -127,7 +129,20 @@ fun ChatScreen(vm: MainViewModel) {
                 showModelMenu = showModelMenu,
                 models = filteredModels,
                 modelQuery = modelQuery,
+                refreshingModels = refreshingModels,
                 onModelQuery = { modelQuery = it },
+                onRefreshModels = {
+                    val pid = activeProvider?.id
+                    if (pid == null) {
+                        vm.notify(trFor(lang, "Pilih provider dulu.", "Choose a provider first.", "先にプロバイダーを選択してください。"))
+                    } else {
+                        refreshingModels = true
+                        vm.refreshModels(pid) {
+                            models = it
+                            refreshingModels = false
+                        }
+                    }
+                },
                 onMenu = { drawer = true },
                 onToggleModels = {
                     if (!showModelMenu) modelQuery = ""
@@ -251,7 +266,9 @@ private fun ChatTopBar(
     showModelMenu: Boolean,
     models: List<String>,
     modelQuery: String,
+    refreshingModels: Boolean,
     onModelQuery: (String) -> Unit,
+    onRefreshModels: () -> Unit,
     onMenu: () -> Unit,
     onToggleModels: () -> Unit,
     onSelectModel: (String) -> Unit,
@@ -309,18 +326,30 @@ private fun ChatTopBar(
                             .heightIn(max = 320.dp)
                             .verticalScroll(rememberScrollState()),
                     ) {
-                        OutlinedTextField(
-                            value = modelQuery,
-                            onValueChange = onModelQuery,
-                            placeholder = {
-                                Text(tr("Cari model…", "Search models…", "モデルを検索…"))
-                            },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier
+                        Row(
+                            Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedTextField(
+                                value = modelQuery,
+                                onValueChange = onModelQuery,
+                                placeholder = {
+                                    Text(tr("Cari model…", "Search models…", "モデルを検索…"))
+                                },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(onClick = onRefreshModels, enabled = !refreshingModels) {
+                                Icon(
+                                    Icons.Outlined.Refresh,
+                                    tr("Cek model dari server", "Refresh models", "モデルを再取得"),
+                                    tint = clay.accent,
+                                )
+                            }
+                        }
                         if (models.isEmpty()) {
                             DropdownMenuItem(
                                 text = {

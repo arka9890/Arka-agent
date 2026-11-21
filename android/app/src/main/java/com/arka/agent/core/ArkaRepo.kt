@@ -85,8 +85,14 @@ class ArkaRepo(private val context: Context) {
         Arka.testProvider(json.encodeToString(Provider.serializer(), provider))
     }
 
+    /** Daftar model lokal (instan, tanpa network). */
     suspend fun models(providerId: String): List<String> = io {
         json.decodeFromString(Arka.modelsJson(providerId))
+    }
+
+    /** Cek model dari server saat tombol refresh ditekan. */
+    suspend fun refreshModels(providerId: String): List<String> = io {
+        json.decodeFromString(Arka.refreshModels(providerId))
     }
 
     // --------------------------------------------------------------- AI
@@ -104,6 +110,7 @@ class ArkaRepo(private val context: Context) {
         model: String?,
         history: List<Message>,
         onDelta: (String) -> Unit,
+        onTool: (String, String) -> Unit = { _, _ -> },
     ): Result<String> = io {
         runCatching {
             val payload = json.encodeToString(
@@ -122,6 +129,7 @@ class ArkaRepo(private val context: Context) {
                     override fun onError(message: String) {
                         error = message
                     }
+                    override fun onTool(command: String, output: String) = onTool(command, output)
                 },
             )
             error?.let { throw IllegalStateException(it) }

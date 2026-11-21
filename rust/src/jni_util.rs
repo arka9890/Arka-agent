@@ -27,6 +27,27 @@ pub fn emit_str(env: &mut JNIEnv, cb: &JObject, method: &str, arg: &str) {
     }
 }
 
+/// Panggil `cb.<method>(String, String)`.
+pub fn emit_str_str(env: &mut JNIEnv, cb: &JObject, method: &str, a: &str, b: &str) {
+    let a = match env.new_string(a) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let b = match env.new_string(b) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if env
+        .call_method(cb, method, "(Ljava/lang/String;Ljava/lang/String;)V", &[
+            JValue::Object(&a),
+            JValue::Object(&b),
+        ])
+        .is_err()
+    {
+        let _ = env.exception_clear();
+    }
+}
+
 /// Panggil `cb.<method>(Int, String)`.
 pub fn emit_int_str(env: &mut JNIEnv, cb: &JObject, method: &str, n: i32, arg: &str) {
     let s = match env.new_string(arg) {

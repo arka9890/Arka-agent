@@ -228,6 +228,7 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
     var isDefault by remember { mutableStateOf(initial.isDefault) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var refreshingModels by remember { mutableStateOf(false) }
     // Boleh pilih banyak model: yang pertama/paling atas jadi model utama,
     // sisanya tersedia di dropdown chat sebagai alternatif.
     var selectedModels by remember {
@@ -330,15 +331,40 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                     Text(it, style = MaterialTheme.typography.labelSmall, color = clay.muted)
                 }
                 Spacer(Modifier.height(Space.sm))
-                Text(
-                    tr(
-                        "Model tersedia (boleh pilih lebih dari satu):",
-                        "Available models (select more than one):",
-                        "利用可能なモデル（複数選択可）:",
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = clay.muted,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        tr(
+                            "Model tersedia (boleh pilih lebih dari satu):",
+                            "Available models (select more than one):",
+                            "利用可能なモデル（複数選択可）:",
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            val pid = initial.id
+                            if (pid.isBlank()) {
+                                testResult = trFor(
+                                    lang, "Simpan dulu provider-nya.", "Save the provider first.", "先にプロバイダーを保存してください。",
+                                )
+                            } else {
+                                refreshingModels = true
+                                vm.refreshModels(pid) {
+                                    models = it
+                                    refreshingModels = false
+                                }
+                            }
+                        },
+                        enabled = !refreshingModels,
+                    ) {
+                        Text(
+                            if (refreshingModels) tr("Mengecek…", "Checking…", "確認中…")
+                            else tr("Cek dari server", "Refresh", "再取得"),
+                        )
+                    }
+                }
                 // Daftar model bisa sangat panjang: pakai LazyColumn supaya
                 // bisa digulir, bukan `take(6)` yang menyembunyikan sisanya.
                 LazyColumn(Modifier.heightIn(max = 180.dp)) {

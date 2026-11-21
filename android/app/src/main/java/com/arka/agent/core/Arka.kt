@@ -45,6 +45,9 @@ object Arka {
     external fun testProvider(json: String): String
     external fun modelsJson(providerId: String): String
 
+    /** Cek daftar model dari server (manual). Hasilnya disimpan di DB. */
+    external fun refreshModels(providerId: String): String
+
     // --------------------------------------------------------------- AI
     /**
      * Kirim percakapan dan alirkan jawaban ke [cb].
@@ -90,6 +93,9 @@ object Arka {
         fun onDelta(text: String)
         fun onDone(fullText: String)
         fun onError(message: String)
+
+        /** Model meminta menjalankan perintah di Ubuntu (agent tool call). */
+        fun onTool(command: String, output: String)
     }
 
     /** Callback progres unduh/pasang Ubuntu 24. */

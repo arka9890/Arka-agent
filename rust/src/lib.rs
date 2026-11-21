@@ -19,6 +19,7 @@ mod settings;
 mod terminal;
 
 use jni_util as ju;
+use serde_json::json;
 
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jint, jlong};
@@ -296,13 +297,52 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_modelsJson<'local>(
     })
 }
 
+/// Cek daftar model dari server secara manual (tombol refresh di UI).
+/// Hasilnya disimpan di DB supaya pemanggilan berikutnya instan.
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_refreshModels<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    provider_id: JString<'local>,
+) -> JString<'local> {
+    let provider_id = ju::arg_str(&mut env, &provider_id);
+    json_result(&mut env, || {
+        let p = provider::get(&provider_id)?;
+        let models = ai::refresh_models(&p)?;
+        provider::save_models(&provider_id, &models)?;
+        serde_json::to_string(&models).map_err(|e| e.to_string())
+    })
+}
+
 // -------------------------------------------------------------------- AI
+
+fn plain_msg(role: &str, content: &str) -> ai::ChatMsg {
+    ai::ChatMsg {
+        role: role.to_string(),
+        content: content.to_string(),
+        tool_calls: None,
+        tool_call_id: None,
+        blocks: None,
+    }
+}
+
+/// Potong output perintah supaya tidak membengkakkan prompt berikutnya.
+fn tail_chars(text: String, max: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max {
+        return text;
+    }
+    chars[chars.len() - max..].iter().collect()
+}
 
 /// Kirim percakapan dan alirkan jawaban ke `cb.onDelta(text)`.
 ///
-/// Blocking: panggil dari `Dispatchers.IO`. `cb.onDone` dipanggil dengan teks
-/// lengkap; `cb.onError` dengan pesan kegagalan. Mengembalikan id pesan
-/// assistant yang sudah disimpan, atau string kosong kalau gagal/dibatalkan.
+/// Kalau model memanggil tool `run_command`, perintah dijalankan di Ubuntu
+/// lewat proot, hasilnya dikirim balik ke model, lalu sesi dilanjutkan sampai
+/// model selesai menjawab (agent loop). `cb.onTool` dipanggil untuk setiap
+/// perintah supaya UI bisa menampilkannya di tab Terminal.
+///
+/// Blocking: panggil dari `Dispatchers.IO`.
 #[no_mangle]
 pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     mut env: JNIEnv<'local>,
@@ -320,6 +360,7 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
 
     let cancel = chat_cancel();
     cancel.store(false, Ordering::SeqCst);
+    let tool_cancel = cancel_token(cancel);
 
     let prepared = (|| -> Result<(provider::Provider, Vec<ai::ChatMsg>), String> {
         let p = if provider_id.trim().is_empty() {
@@ -339,58 +380,128 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
             return JString::default();
         }
     };
-    // Sisipkan konteks peran Arka Agent kalau sesi belum punya pesan system.
-    // Tanpa ini model menjawab "aku tidak jalan di Ubuntu-mu" dan pengguna
-    // mengira fitur agent-nya rusak.
     if !msgs.iter().any(|m| m.role == "system") {
-        msgs.insert(
-            0,
-            ai::ChatMsg {
-                role: "system".to_string(),
-                content: ai::SYSTEM_PROMPT.to_string(),
-            },
-        );
+        msgs.insert(0, plain_msg("system", ai::SYSTEM_PROMPT));
     }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
-    let mut stream = match ai::ChatStream::open(&p, &model, &msgs) {
-        Ok(s) => s,
-        Err(e) => {
-            ju::emit_str(&mut env, &cb, "onError", &e);
-            return JString::default();
-        }
-    };
+    const MAX_TOOL_ROUNDS: usize = 6;
+    let mut final_text = String::new();
+    let mut rounds = 0usize;
 
-    let mut full = String::new();
-    while let Some(item) = stream.next() {
-        if cancel.load(Ordering::SeqCst) {
+    loop {
+        let mut stream = match ai::ChatStream::open(&p, &model, &msgs) {
+            Ok(s) => s,
+            Err(e) => {
+                ju::emit_str(&mut env, &cb, "onError", &e);
+                return JString::default();
+            }
+        };
+        let mut answer = String::new();
+        let mut stream_error: Option<String> = None;
+        while let Some(item) = stream.next() {
+            if cancel.load(Ordering::SeqCst) {
+                break;
+            }
+            match item {
+                Ok(delta) => {
+                    answer.push_str(&delta);
+                    ju::emit_str(&mut env, &cb, "onDelta", &delta);
+                }
+                Err(e) => {
+                    stream_error = Some(e);
+                    break;
+                }
+            }
+        }
+        if !answer.trim().is_empty() {
+            final_text = answer;
+        }
+        if let Some(e) = stream_error {
+            if final_text.trim().is_empty() {
+                ju::emit_str(&mut env, &cb, "onError", &e);
+                return JString::default();
+            }
             break;
         }
-        match item {
-            Ok(delta) => {
-                full.push_str(&delta);
-                ju::emit_str(&mut env, &cb, "onDelta", &delta);
+        let calls = stream.take_tool_calls();
+        if calls.is_empty() || rounds >= MAX_TOOL_ROUNDS || cancel.load(Ordering::SeqCst) {
+            break;
+        }
+        rounds += 1;
+
+        for call in calls {
+            let args: serde_json::Value = serde_json::from_str(&call.arguments)
+                .unwrap_or_else(|_| json!({}));
+            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if command.trim().is_empty() {
+                continue;
             }
-            Err(e) => {
-                // Simpan teks yang sudah diterima supaya tidak hilang.
-                if full.is_empty() {
-                    ju::emit_str(&mut env, &cb, "onError", &e);
-                    return JString::default();
-                }
-                break;
+            let output = match proot_manager::run_capture(&command, &tool_cancel, None) {
+                Ok((code, out)) => format!("exit {code}\n{}", tail_chars(out, 8000)),
+                Err(e) => format!("Gagal menjalankan perintah: {e}"),
+            };
+            ju::emit_str_str(&mut env, &cb, "onTool", &command, &output);
+
+            if p.kind == "anthropic" {
+                msgs.push(ai::ChatMsg {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    blocks: Some(json!([{
+                        "type": "tool_use",
+                        "id": call.id.clone(),
+                        "name": call.name,
+                        "input": args,
+                    }])),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+                msgs.push(ai::ChatMsg {
+                    role: "user".into(),
+                    content: String::new(),
+                    blocks: Some(json!([{
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": output,
+                    }])),
+                    tool_calls: None,
+                    tool_call_id: None,
+                });
+            } else {
+                let name = if call.name.is_empty() { "run_command" } else { &call.name };
+                msgs.push(ai::ChatMsg {
+                    role: "assistant".into(),
+                    content: String::new(),
+                    tool_calls: Some(json!([{
+                        "id": call.id.clone(),
+                        "type": "function",
+                        "function": { "name": name, "arguments": call.arguments },
+                    }])),
+                    tool_call_id: None,
+                    blocks: None,
+                });
+                msgs.push(ai::ChatMsg {
+                    role: "tool".into(),
+                    content: output,
+                    tool_calls: None,
+                    tool_call_id: Some(call.id),
+                    blocks: None,
+                });
             }
         }
     }
 
-    if full.trim().is_empty() {
+    tool_cancel.store(true, Ordering::SeqCst);
+
+    if final_text.trim().is_empty() {
         let msg = if cancel.load(Ordering::SeqCst) { "Dibatalkan." } else { "Provider tidak mengirim jawaban." };
         ju::emit_str(&mut env, &cb, "onError", msg);
         return JString::default();
     }
 
-    match session::add_message(&session_id, "assistant", &full, "[]") {
+    match session::add_message(&session_id, "assistant", &final_text, "[]") {
         Ok(m) => {
-            ju::emit_str(&mut env, &cb, "onDone", &full);
+            ju::emit_str(&mut env, &cb, "onDone", &final_text);
             json_str(&mut env, &m.id)
         }
         Err(e) => {

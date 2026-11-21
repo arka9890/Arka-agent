@@ -177,6 +177,19 @@ pub fn save(mut p: Provider) -> Result<Provider, String> {
     Ok(p)
 }
 
+/// Simpan daftar model hasil refresh manual ke DB.
+pub fn save_models(id: &str, models: &[String]) -> Result<(), String> {
+    let json = serde_json::to_string(models).map_err(|e| e.to_string())?;
+    db::with(|c| {
+        c.execute(
+            "UPDATE providers SET models = ?2 WHERE id = ?1",
+            params![id, json],
+        )
+        .map_err(|e| e.to_string())
+        .map(|_| ())
+    })
+}
+
 pub fn set_default(id: &str) -> Result<(), String> {
     db::with(|c| {
         c.execute("UPDATE providers SET is_default = 0", [])
