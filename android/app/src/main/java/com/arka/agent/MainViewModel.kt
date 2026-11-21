@@ -226,8 +226,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 // Jenis file ikut disimpan supaya bubble chat bisa menampilkan
                 // thumbnail gambar/video, bukan ikon teks untuk semua file.
+                // Jenis diambil lebih dulu karena `fileStat` suspend dan tidak
+                // boleh dipanggil di dalam lambda `joinToString`.
+                val kinds = HashMap<String, String>(attachments.size)
+                for (path in attachments) {
+                    kinds[path] = runCatching { repo.fileStat(path).kind }.getOrDefault("text")
+                }
                 val attachmentJson = attachments.joinToString(",", "[", "]") { path ->
-                    val kind = runCatching { repo.fileStat(path).kind }.getOrDefault("text")
+                    val kind = kinds[path] ?: "text"
                     """{"path":${quote(path)},"kind":${quote(kind)}}"""
                 }
                 val userMsg = repo.addMessage(sessionId, "user", body, attachmentJson)
