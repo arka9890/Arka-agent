@@ -160,7 +160,7 @@ class ArkaRepo(private val context: Context) {
     private fun readUriText(uri: String): String {
         val stream = appContext.contentResolver.openInputStream(Uri.parse(uri))
             ?: throw IllegalStateException("File tidak bisa dibaca")
-        stream.use { input ->
+        val text: String = stream.use { input ->
             val buf = java.io.ByteArrayOutputStream()
             val tmp = ByteArray(8192)
             while (buf.size() < 64 * 1024) {
@@ -168,8 +168,9 @@ class ArkaRepo(private val context: Context) {
                 if (n <= 0) break
                 buf.write(tmp, 0, n)
             }
-            buf.toString("UTF-8").take(20_000)
+            buf.toString("UTF-8")
         }
+        return text.take(20_000)
     }
 
     /**
