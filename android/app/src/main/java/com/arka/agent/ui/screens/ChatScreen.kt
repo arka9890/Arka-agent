@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -21,7 +22,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -58,6 +61,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.LocalLanguage
+import com.arka.agent.ui.tr
+import com.arka.agent.ui.trFor
 import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
 import com.arka.agent.core.Session
@@ -81,6 +87,7 @@ fun ChatScreen(vm: MainViewModel) {
     val streaming by vm.streamingText.collectAsState()
     val busy by vm.busy.collectAsState()
     val settings by vm.settings.collectAsState()
+    val providers by vm.providers.collectAsState()
 
     var drawer by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
@@ -88,12 +95,20 @@ fun ChatScreen(vm: MainViewModel) {
     var showAttach by remember { mutableStateOf(false) }
     var showModelMenu by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelInput by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<FileInfo?>(null) }
+    val lang = LocalLanguage.current
 
     val current = sessions.firstOrNull { it.id == currentId }
+    // Sesi lama bisa punya provider_id kosong. Pakai provider default sebagai
+    // fallback supaya daftar model tetap bisa dimuat dan dipilih.
+    val activeProvider = current?.providerId?.let { pid -> providers.firstOrNull { it.id == pid } }
+        ?: providers.firstOrNull { it.isDefault }
+        ?: providers.firstOrNull()
+    val menuModels = (listOfNotNull(current?.model?.takeIf { it.isNotBlank() }) + models).distinct()
 
-    LaunchedEffect(currentId, current?.providerId) {
-        val pid = current?.providerId
+    LaunchedEffect(currentId, activeProvider?.id) {
+        val pid = activeProvider?.id
         if (pid != null) {
             vm.loadModels(pid) { models = it }
         } else {
@@ -108,13 +123,14 @@ fun ChatScreen(vm: MainViewModel) {
                 model = current?.model,
                 hasSession = current != null,
                 showModelMenu = showModelMenu,
-                models = models,
+                models = menuModels,
                 onMenu = { drawer = true },
                 onToggleModels = { showModelMenu = !showModelMenu },
                 onSelectModel = { model ->
                     showModelMenu = false
-                    vm.setSessionModel(current?.providerId, model)
+                    vm.setSessionModel(activeProvider?.id ?: current?.providerId, model)
                 },
+                onManualModel = { modelInput = "" },
             )
 
             if (current == null) {
@@ -131,7 +147,7 @@ fun ChatScreen(vm: MainViewModel) {
                         // dengan tab File (gambar, teks, PDF, video).
                         vm.statFile(path) { result ->
                             result.onSuccess { preview = it }
-                                .onFailure { vm.notify(it.message ?: "File tidak ditemukan") }
+                                .onFailure { vm.notify(it.message ?: trFor(lang, "File tidak ditemukan", "File not found", "ファイルが見つかりません")) }
                         }
                     },
                     modifier = Modifier.weight(1f),
@@ -187,6 +203,36 @@ fun ChatScreen(vm: MainViewModel) {
         preview?.let { file ->
             FilePreviewDialog(vm = vm, file = file, onDismiss = { preview = null })
         }
+
+        modelInput?.let { draft ->
+            var typed by remember { mutableStateOf(draft) }
+            AlertDialog(
+                onDismissRequest = { modelInput = null },
+                title = { Text(tr("Pilih model", "Choose a model", "モデルを選択")) },
+                text = {
+                    OutlinedTextField(
+                        value = typed,
+                        onValueChange = { typed = it },
+                        label = { Text(tr("Nama model", "Model name", "モデル名")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (typed.isNotBlank()) {
+                            vm.setSessionModel(activeProvider?.id ?: current?.providerId, typed.trim())
+                        }
+                        modelInput = null
+                    }) { Text(tr("Pakai", "Use", "使用")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { modelInput = null }) {
+                        Text(tr("Batal", "Cancel", "キャンセル"))
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -200,6 +246,7 @@ private fun ChatTopBar(
     onMenu: () -> Unit,
     onToggleModels: () -> Unit,
     onSelectModel: (String) -> Unit,
+    onManualModel: () -> Unit,
 ) {
     Row(
         Modifier
@@ -208,14 +255,14 @@ private fun ChatTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onMenu) {
-            Icon(Icons.Outlined.Menu, "Menu sesi", tint = clay.onSurface)
+            Icon(Icons.Outlined.Menu, tr("Menu sesi", "Session menu", "セッションメニュー"), tint = clay.onSurface)
         }
         Spacer(Modifier.width(Space.xs))
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
             if (hasSession) {
                 Text(
-                    model ?: "tanpa model",
+                    model ?: tr("tanpa model", "no model", "モデルなし"),
                     style = MaterialTheme.typography.labelSmall,
                     color = clay.muted,
                 )
@@ -232,7 +279,7 @@ private fun ChatTopBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        model?.substringAfterLast('/') ?: "Model",
+                        model?.substringAfterLast('/') ?: tr("Model", "Model", "モデル"),
                         style = MaterialTheme.typography.labelSmall,
                         color = clay.accent,
                         maxLines = 1,
@@ -246,17 +293,32 @@ private fun ChatTopBar(
                     )
                 }
                 DropdownMenu(expanded = showModelMenu, onDismissRequest = { onToggleModels() }) {
-                    if (models.isEmpty()) {
-                        // Menu tetap bisa ditutup walau daftar kosong.
+                    // Daftar bisa panjang (OpenRouter ratusan model), jadi
+                    // dibatasi tingginya dan tetap bisa digulir.
+                    Column(
+                        Modifier
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        if (models.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text(tr("Belum ada model", "No models yet", "モデルがありません")) },
+                                onClick = { onToggleModels() },
+                            )
+                        }
+                        models.forEach { m ->
+                            DropdownMenuItem(
+                                text = { Text(m, maxLines = 1) },
+                                onClick = { onSelectModel(m) },
+                            )
+                        }
                         DropdownMenuItem(
-                            text = { Text("Belum ada model") },
-                            onClick = { onToggleModels() },
-                        )
-                    }
-                    models.forEach { m ->
-                        DropdownMenuItem(
-                            text = { Text(m, maxLines = 1) },
-                            onClick = { onSelectModel(m) },
+                            text = {
+                                Text(tr(
+                                    "Ketik nama model…", "Type a model name…", "モデル名を入力…",
+                                ))
+                            },
+                            onClick = { onManualModel() },
                         )
                     }
                 }
@@ -274,17 +336,22 @@ private fun EmptyChat(onStart: () -> Unit) {
                     Text("Arka Agent", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(Space.sm))
                     Text(
-                        "Chat dengan AI + jalankan Python, Git, dan file di workspace " +
-                            "Ubuntu 24 langsung dari perangkat.",
+                        tr(
+                            "Chat dengan AI + jalankan Python, Git, dan file di workspace " +
+                                "Ubuntu 24 langsung dari perangkat.",
+                            "Chat with AI + run Python, Git, and files in the Ubuntu 24 " +
+                                "workspace right from your device.",
+                            "AIとチャットし、Ubuntu 24ワークスペースのPythonやGit、ファイルを端末から操作できます。",
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = clay.muted,
                     )
                     Spacer(Modifier.height(Space.md))
-                    ClayPill("Mulai sesi baru", clay.accent, onClick = onStart)
+                    ClayPill(tr("Mulai sesi baru", "Start a new session", "新しいセッションを開始"), clay.accent, onClick = onStart)
                 }
             }
             Spacer(Modifier.height(Space.lg))
-            TextButton(onClick = onStart) { Text("Buat sesi") }
+            TextButton(onClick = onStart) { Text(tr("Buat sesi", "New session", "新しいセッション")) }
         }
     }
 }
@@ -335,7 +402,7 @@ private fun MessageList(
         if (messages.isEmpty() && streaming.isEmpty()) {
             item {
                 Text(
-                    if (busy) "Berpikir…" else "Kirim pesan untuk mulai.",
+                    if (busy) tr("Berpikir…", "Thinking…", "考えています…") else tr("Kirim pesan untuk mulai.", "Send a message to start.", "メッセージを送信して始めましょう。"),
                     style = MaterialTheme.typography.labelSmall,
                     color = clay.muted,
                     modifier = Modifier.fillMaxWidth().padding(vertical = Space.lg),
@@ -381,7 +448,7 @@ private fun InputBar(
                 }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { attachments.forEach { onRemoveAttachment(it) } }) {
-                    Icon(Icons.Outlined.Close, "Hapus lampiran", tint = clay.muted)
+                    Icon(Icons.Outlined.Close, tr("Hapus lampiran", "Remove attachment", "添付を削除"), tint = clay.muted)
                 }
             }
         }
@@ -397,13 +464,13 @@ private fun InputBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onAttach) {
-                        Icon(Icons.Outlined.AttachFile, "Lampirkan", tint = clay.muted)
+                        Icon(Icons.Outlined.AttachFile, tr("Lampirkan", "Attach", "添付"), tint = clay.muted)
                     }
                     OutlinedTextField(
                         value = input,
                         onValueChange = onInputChange,
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Kirim pesan…", color = clay.muted) },
+                        placeholder = { Text(tr("Kirim pesan…", "Type a message…", "メッセージを入力…"), color = clay.muted) },
                         textStyle = MaterialTheme.typography.bodyMedium,
                         maxLines = 4,
                         // Enter di keyboard = kirim (Shift+Enter tetap baris baru
@@ -426,7 +493,7 @@ private fun InputBar(
             ) {
                 Icon(
                     imageVector = if (busy) Icons.Outlined.Stop else Icons.Outlined.Send,
-                    contentDescription = if (busy) "Hentikan" else "Kirim",
+                    contentDescription = if (busy) tr("Hentikan", "Stop", "停止") else tr("Kirim", "Send", "送信"),
                     tint = Color.White,
                 )
             }
@@ -461,14 +528,14 @@ private fun SessionDrawer(
             contentPadding = Space.md,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Sesi", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(tr("Sesi", "Sessions", "セッション"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 IconButton(onClick = onNew) {
-                    Icon(Icons.Outlined.Add, "Sesi baru", tint = clay.accent)
+                    Icon(Icons.Outlined.Add, tr("Sesi baru", "New session", "新しいセッション"), tint = clay.accent)
                 }
             }
             Spacer(Modifier.height(Space.sm))
             if (sessions.isEmpty()) {
-                Text("Belum ada sesi.", style = MaterialTheme.typography.bodySmall, color = clay.muted)
+                Text(tr("Belum ada sesi.", "No sessions yet.", "セッションがありません。"), style = MaterialTheme.typography.bodySmall, color = clay.muted)
             }
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                 items(sessions, key = { it.id }) { s ->
@@ -485,7 +552,7 @@ private fun SessionDrawer(
             TextButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.Add, null, tint = clay.accent)
                 Spacer(Modifier.width(Space.xs))
-                Text("Sesi baru")
+                Text(tr("Sesi baru", "New session", "新しいセッション"))
             }
         }
     }
@@ -524,8 +591,8 @@ private fun SessionRow(
                     TextButton(onClick = {
                         if (title.isNotBlank()) onRename(title.trim())
                         renaming = false
-                    }) { Text("Simpan") }
-                    TextButton(onClick = { renaming = false }) { Text("Batal") }
+                    }) { Text(tr("Simpan", "Save", "保存")) }
+                    TextButton(onClick = { renaming = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
                 }
             } else {
                 Text(
@@ -536,7 +603,7 @@ private fun SessionRow(
                 )
                 if (session.messageCount > 0) {
                     Text(
-                        "${session.messageCount} pesan",
+                        "${session.messageCount} ${tr("pesan", "messages", "メッセージ")}",
                         style = MaterialTheme.typography.labelSmall,
                         color = clay.muted,
                     )
@@ -549,7 +616,7 @@ private fun SessionRow(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
-                    text = { Text("Ganti nama") },
+                    text = { Text(tr("Ganti nama", "Rename", "名前を変更")) },
                     leadingIcon = { Icon(Icons.Outlined.Edit, null) },
                     onClick = {
                         menu = false
@@ -558,7 +625,7 @@ private fun SessionRow(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Hapus") },
+                    text = { Text(tr("Hapus", "Delete", "削除")) },
                     leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = clay.danger) },
                     onClick = {
                         menu = false

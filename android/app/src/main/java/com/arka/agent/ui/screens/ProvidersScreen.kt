@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +47,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.LocalLanguage
+import com.arka.agent.ui.tr
+import com.arka.agent.ui.trFor
 import com.arka.agent.core.Provider
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.components.ClayPill
@@ -71,9 +75,9 @@ fun ProvidersScreen(vm: MainViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column {
-                Text("Provider AI", style = MaterialTheme.typography.titleLarge)
+                Text(tr("Provider AI", "AI Providers", "AIプロバイダー"), style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "API key disimpan lokal di perangkat",
+                    tr("API key disimpan lokal di perangkat", "API keys are stored locally on this device", "APIキーは端末内に保存されます"),
                     style = MaterialTheme.typography.labelSmall,
                     color = clay.muted,
                 )
@@ -85,7 +89,7 @@ fun ProvidersScreen(vm: MainViewModel) {
             ) {
                 Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Tambah")
+                Text(tr("Tambah", "Add", "追加"))
             }
         }
 
@@ -108,12 +112,12 @@ fun ProvidersScreen(vm: MainViewModel) {
                                 )
                                 if (provider.isDefault) {
                                     Spacer(Modifier.width(6.dp))
-                                    ClayPill("default", clay.success)
+                                    ClayPill(tr("default", "default", "デフォルト"), clay.success)
                                 }
                             }
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                "${provider.kind} · ${provider.model.ifBlank { "model belum dipilih" }}",
+                                "${provider.kind} · ${provider.model.ifBlank { tr("model belum dipilih", "no model selected", "モデル未選択") }}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = clay.muted,
                             )
@@ -126,7 +130,7 @@ fun ProvidersScreen(vm: MainViewModel) {
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             ClayPill(
-                                text = if (provider.apiKey.isBlank()) "key kosong" else "key terisi",
+                                text = if (provider.apiKey.isBlank()) tr("key kosong", "no key", "キーなし") else tr("key terisi", "key set", "キー設定済み"),
                                 color = if (provider.apiKey.isBlank()) clay.danger else clay.success,
                             )
                             Row {
@@ -137,7 +141,7 @@ fun ProvidersScreen(vm: MainViewModel) {
                                     ) {
                                         Icon(
                                             Icons.Outlined.CheckCircle,
-                                            "Jadikan default",
+                                            tr("Jadikan default", "Set as default", "デフォルトにする"),
                                             tint = clay.muted,
                                             modifier = Modifier.size(18.dp),
                                         )
@@ -149,7 +153,7 @@ fun ProvidersScreen(vm: MainViewModel) {
                                 ) {
                                     Icon(
                                         Icons.Outlined.Edit,
-                                        "Ubah",
+                                        tr("Ubah", "Edit", "編集"),
                                         tint = clay.muted,
                                         modifier = Modifier.size(18.dp),
                                     )
@@ -160,7 +164,7 @@ fun ProvidersScreen(vm: MainViewModel) {
                                 ) {
                                     Icon(
                                         Icons.Outlined.Delete,
-                                        "Hapus",
+                                        tr("Hapus", "Delete", "削除"),
                                         tint = clay.muted,
                                         modifier = Modifier.size(18.dp),
                                     )
@@ -173,8 +177,12 @@ fun ProvidersScreen(vm: MainViewModel) {
             if (providers.isEmpty()) {
                 item {
                     Text(
-                        "Belum ada provider. Tekan Tambah untuk memakai OpenAI, Anthropic, " +
-                            "atau endpoint yang kompatibel.",
+                        tr(
+                            "Belum ada provider. Tekan Tambah untuk memakai OpenAI, Anthropic, " +
+                                "atau endpoint yang kompatibel.",
+                            "No providers yet. Tap Add to use OpenAI, Anthropic, or a compatible endpoint.",
+                            "プロバイダーがありません。「追加」を押してOpenAI、Anthropic、または互換エンドポイントを設定してください。",
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = clay.muted,
                         modifier = Modifier.padding(Space.md),
@@ -195,16 +203,16 @@ fun ProvidersScreen(vm: MainViewModel) {
     deleting?.let { provider ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Hapus ${provider.name}?") },
-            text = { Text("API key provider ini ikut terhapus.") },
+            title = { Text("${tr("Hapus", "Delete", "削除")} ${provider.name}?") },
+            text = { Text(tr("API key provider ini ikut terhapus.", "This provider's API key will also be deleted.", "このプロバイダーのAPIキーも削除されます。")) },
             confirmButton = {
                 TextButton(onClick = {
                     vm.deleteProvider(provider.id)
                     deleting = null
-                }) { Text("Hapus", color = clay.danger) }
+                }) { Text(tr("Hapus", "Delete", "削除"), color = clay.danger) }
             },
             dismissButton = {
-                TextButton(onClick = { deleting = null }) { Text("Batal") }
+                TextButton(onClick = { deleting = null }) { Text(tr("Batal", "Cancel", "キャンセル")) }
             },
         )
     }
@@ -220,6 +228,13 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
     var isDefault by remember { mutableStateOf(initial.isDefault) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Boleh pilih banyak model: yang pertama/paling atas jadi model utama,
+    // sisanya tersedia di dropdown chat sebagai alternatif.
+    var selectedModels by remember {
+        mutableStateOf((initial.models + listOfNotNull(initial.model.takeIf { it.isNotBlank() })).toSet())
+    }
+    var manualModel by remember { mutableStateOf("") }
+    val lang = LocalLanguage.current
 
     // Provider yang sudah tersimpan: ambil daftar modelnya sekali saat dialog
     // dibuka supaya pengguna bisa memilih tanpa mengetik nama model.
@@ -228,6 +243,10 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
             vm.loadModels(initial.id) { models = it }
         }
     }
+
+    val allModels = (models + selectedModels.toList() + listOfNotNull(model.takeIf { it.isNotBlank() }))
+        .distinct()
+        .sorted()
 
     val draft = initial.copy(
         name = name,
@@ -246,13 +265,13 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial.id.isBlank()) "Tambah provider" else "Ubah provider") },
+        title = { Text(if (initial.id.isBlank()) tr("Tambah provider", "Add provider", "プロバイダーを追加") else tr("Ubah provider", "Edit provider", "プロバイダーを編集")) },
         text = {
             Column {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nama") },
+                    label = { Text(tr("Nama", "Name", "名前")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -270,7 +289,7 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                 OutlinedTextField(
                     value = baseUrl,
                     onValueChange = { baseUrl = it },
-                    label = { Text("Base URL") },
+                    label = { Text(tr("Base URL", "Base URL", "ベースURL")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -279,7 +298,7 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it },
-                    label = { Text("API key") },
+                    label = { Text(tr("API key", "API key", "APIキー")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
@@ -288,7 +307,7 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                 OutlinedTextField(
                     value = model,
                     onValueChange = { model = it },
-                    label = { Text("Model") },
+                    label = { Text(tr("Model", "Model", "モデル")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -298,51 +317,85 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                     FilterChip(
                         selected = isDefault,
                         onClick = { isDefault = !isDefault },
-                        label = { Text("Jadikan default") },
+                        label = { Text(tr("Jadikan default", "Set as default", "デフォルトにする")) },
                     )
                     Spacer(Modifier.width(Space.sm))
                     TextButton(
                         onClick = {
                             vm.testProvider(draft.copy(baseUrl = resolvedUrl)) { testResult = it }
                         },
-                    ) { Text("Tes koneksi") }
+                    ) { Text(tr("Tes koneksi", "Test connection", "接続テスト")) }
                 }
                 testResult?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, color = clay.muted)
                 }
-                if (models.isNotEmpty()) {
-                    Text(
-                        "Model tersedia (ketuk untuk memakai):",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = clay.muted,
-                    )
-                    models.take(6).forEach { m ->
-                        TextButton(
-                            onClick = { model = m },
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-                        ) {
-                            Text(
-                                m,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (m == model) clay.accent else clay.muted,
-                                maxLines = 1,
-                            )
-                        }
+                Spacer(Modifier.height(Space.sm))
+                Text(
+                    tr(
+                        "Model tersedia (boleh pilih lebih dari satu):",
+                        "Available models (select more than one):",
+                        "利用可能なモデル（複数選択可）:",
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
+                // Daftar model bisa sangat panjang: pakai LazyColumn supaya
+                // bisa digulir, bukan `take(6)` yang menyembunyikan sisanya.
+                LazyColumn(Modifier.heightIn(max = 180.dp)) {
+                    items(allModels, key = { it }) { m ->
+                        FilterChip(
+                            selected = m in selectedModels,
+                            onClick = {
+                                selectedModels = if (m in selectedModels) selectedModels - m
+                                else selectedModels + m
+                                if (model.isBlank()) model = m
+                            },
+                            label = { Text(m, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+                        )
                     }
+                }
+                Spacer(Modifier.height(Space.xs))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = manualModel,
+                        onValueChange = { manualModel = it },
+                        label = {
+                            Text(tr("Tambah model manual", "Add a model manually", "モデルを手動で追加"))
+                        },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(Space.xs))
+                    TextButton(onClick = {
+                        val added = manualModel.trim()
+                        if (added.isNotBlank()) {
+                            selectedModels = selectedModels + added
+                            if (model.isBlank()) model = added
+                            manualModel = ""
+                        }
+                    }) { Text(tr("Tambah", "Add", "追加")) }
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = {
                 if (name.isBlank()) {
-                    testResult = "Nama provider wajib diisi."
+                    testResult = trFor(lang, "Nama provider wajib diisi.", "Provider name is required.", "プロバイダー名は必須です。")
                     return@TextButton
                 }
-                vm.saveProvider(draft.copy(name = name.trim(), baseUrl = resolvedUrl)) { onDismiss() }
-            }) { Text("Simpan") }
+                val finalModels = selectedModels + listOfNotNull(model.trim().takeIf { it.isNotBlank() })
+                vm.saveProvider(
+                    draft.copy(
+                        name = name.trim(),
+                        baseUrl = resolvedUrl,
+                        model = model.trim(),
+                        models = finalModels.toList().sorted(),
+                    ),
+                ) { onDismiss() }
+            }) { Text(tr("Simpan", "Save", "保存")) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Batal") }
+            TextButton(onClick = onDismiss) { Text(tr("Batal", "Cancel", "キャンセル")) }
         },
     )
 }

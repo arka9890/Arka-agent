@@ -47,6 +47,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.LocalLanguage
+import com.arka.agent.ui.tr
+import com.arka.agent.ui.trFor
 import com.arka.agent.core.FileInfo
 import com.arka.agent.ui.components.ClayPill
 import com.arka.agent.ui.theme.Space
@@ -69,6 +72,7 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
     var pdfPages by remember(file.path) { mutableStateOf<Int?>(null) }
     var loading by remember(file.path) { mutableStateOf(true) }
     var error by remember(file.path) { mutableStateOf<String?>(null) }
+    val lang = LocalLanguage.current
 
     val hostFile = remember(file.path) { vm.workspaceFile(file.path) }
 
@@ -83,12 +87,12 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
             }
             "image" -> {
                 bitmap = withContext(Dispatchers.IO) { decodeScaled(hostFile.absolutePath) }
-                if (bitmap == null) error = "Gambar tidak bisa dibaca"
+                if (bitmap == null) error = trFor(lang, "Gambar tidak bisa dibaca", "Image could not be read", "画像を読み込めません")
                 loading = false
             }
             "pdf" -> {
                 val result = withContext(Dispatchers.IO) { renderPdfFirstPage(hostFile) }
-                if (result == null) error = "PDF tidak bisa dibaca" else {
+                if (result == null) error = trFor(lang, "PDF tidak bisa dibaca", "PDF could not be read", "PDFを読み込めません") else {
                     bitmap = result.first
                     pdfPages = result.second
                 }
@@ -146,13 +150,13 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
                         }
                         else -> Column {
                             Text(
-                                "File biner tidak bisa dipratinjau di aplikasi.",
+                                tr("File biner tidak bisa dipratinjau di aplikasi.", "Binary files cannot be previewed in the app.", "バイナリファイルはアプリ内でプレビューできません。"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = clay.muted,
                             )
                             Spacer(Modifier.height(Space.sm))
                             Text(
-                                "Gunakan tombol Unduh untuk membukanya dengan aplikasi lain.",
+                                tr("Gunakan tombol Unduh untuk membukanya dengan aplikasi lain.", "Use Download to open it with another app.", "ダウンロードボタンで他のアプリから開いてください。"),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = clay.muted,
                             )
@@ -179,22 +183,22 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
                             context.startActivity(intent)
-                        }.onFailure { vm.notify("Tidak ada aplikasi untuk membuka file ini") }
+                        }.onFailure { vm.notify(trFor(lang, "Tidak ada aplikasi untuk membuka file ini", "No app can open this file", "このファイルを開くアプリがありません")) }
                     }) {
                         Icon(Icons.Outlined.OpenInNew, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Buka")
+                        Text(tr("Buka", "Open", "開く"))
                     }
                 }
                 TextButton(onClick = { vm.exportFile(file.path) }) {
                     Icon(Icons.Outlined.Download, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Unduh")
+                    Text(tr("Unduh", "Download", "ダウンロード"))
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Tutup") }
+            TextButton(onClick = onDismiss) { Text(tr("Tutup", "Close", "閉じる")) }
         },
     )
 }

@@ -19,6 +19,10 @@ pub struct Provider {
     pub api_key: String,
     #[serde(default)]
     pub model: String,
+    /// Semua model yang dipilih pengguna di tab Provider (JSON array di DB).
+    /// [model] tetap dipakai sebagai model utama saat chat.
+    #[serde(default)]
+    pub models: Vec<String>,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default)]
@@ -49,8 +53,8 @@ pub fn seed_if_empty() -> Result<(), String> {
         }
         for (i, (name, kind, base, model)) in SEEDS.iter().enumerate() {
             c.execute(
-                "INSERT INTO providers (id, name, kind, base_url, api_key, model, is_default, created_at)
-                 VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7)",
+                "INSERT INTO providers (id, name, kind, base_url, api_key, model, models, is_default, created_at)
+                 VALUES (?1, ?2, ?3, ?4, '', ?5, '[]', ?6, ?7)",
                 params![
                     uuid::Uuid::new_v4().to_string(),
                     name,
@@ -75,6 +79,7 @@ fn row_to_provider(r: &rusqlite::Row) -> rusqlite::Result<Provider> {
         base_url: r.get(3)?,
         api_key: r.get(4)?,
         model: r.get(5)?,
+        models: parse_models(&r.get::<_, String>(8)?),
         is_default: r.get::<_, i64>(6)? != 0,
         created_at: r.get(7)?,
     })
@@ -84,7 +89,7 @@ pub fn list() -> Result<Vec<Provider>, String> {
     db::with(|c| {
         let mut stmt = c
             .prepare(
-                "SELECT id, name, kind, base_url, api_key, model, is_default, created_at
+                "SELECT id, name, kind, base_url, api_key, model, is_default, created_at, models
                  FROM providers ORDER BY is_default DESC, created_at ASC",
             )
             .map_err(|e| e.to_string())?;
@@ -96,13 +101,22 @@ pub fn list() -> Result<Vec<Provider>, String> {
 pub fn get(id: &str) -> Result<Provider, String> {
     db::with(|c| {
         c.query_row(
-            "SELECT id, name, kind, base_url, api_key, model, is_default, created_at
+            "SELECT id, name, kind, base_url, api_key, model, is_default, created_at, models
              FROM providers WHERE id = ?1",
             params![id],
             row_to_provider,
         )
         .map_err(|_| "Provider tidak ditemukan".to_string())
     })
+}
+
+fn parse_models(raw: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(raw)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Provider default; kalau tidak ada yang ditandai, ambil yang pertama.
@@ -129,12 +143,20 @@ pub fn save(mut p: Provider) -> Result<Provider, String> {
     } else {
         p.created_at = get(&p.id).map(|old| old.created_at).unwrap_or_else(|_| db::now_ms());
     }
+    // Model utama selalu ikut masuk daftar supaya dropdown chat tidak pernah
+    // kosong walaupun endpoint /models provider gagal/ tidak tersedia.
+    let mut models: Vec<String> = p.models.iter().map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty()).collect();
+    if !p.model.trim().is_empty() && !models.contains(&p.model.trim().to_string()) {
+        models.insert(0, p.model.trim().to_string());
+    }
+    let models_json = serde_json::to_string(&models).unwrap_or_else(|_| "[]".into());
     db::with(|c| {
         c.execute(
-            "INSERT INTO providers (id, name, kind, base_url, api_key, model, is_default, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO providers (id, name, kind, base_url, api_key, model, models, is_default, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET name=?2, kind=?3, base_url=?4, api_key=?5,
-                model=?6, is_default=?7",
+                model=?6, models=?7, is_default=?8",
             params![
                 p.id,
                 p.name.trim(),
@@ -142,6 +164,7 @@ pub fn save(mut p: Provider) -> Result<Provider, String> {
                 p.base_url,
                 p.api_key.trim(),
                 p.model.trim(),
+                models_json,
                 if p.is_default { 1 } else { 0 },
                 p.created_at
             ],

@@ -188,22 +188,41 @@ struct ModelEntry {
     id: String,
 }
 
-/// Daftar model dari provider (`GET /v1/models`). Kosong kalau provider tidak
-/// menyediakannya — UI lalu menampilkan daftar model yang disarankan.
-pub fn list_models(p: &Provider) -> Result<Vec<String>, String> {
+/// Ambil daftar model dari endpoint `/models` provider. Gagal kalau endpoint
+/// tidak ada atau API key ditolak (dipakai tombol "Tes koneksi").
+fn fetch_models(p: &Provider) -> Result<Vec<String>, String> {
     if p.api_key.trim().is_empty() {
-        return Ok(Vec::new());
+        return Err("API key belum diisi.".into());
     }
     let url = endpoint(p, "models");
     let rb = auth_headers(client()?.get(&url), p);
     let resp = rb.send().map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
     if !resp.status().is_success() {
-        return Ok(Vec::new());
+        return Err(format!("Endpoint model mengembalikan HTTP {}", resp.status().as_u16()));
     }
     let parsed: ModelsResp = resp.json().map_err(|e| format!("Balasan model tidak dikenali: {e}"))?;
-    let mut ids: Vec<String> =
-        parsed.data.into_iter().map(|m| m.id).filter(|s| !s.is_empty()).collect();
+    Ok(parsed.data.into_iter().map(|m| m.id).filter(|s| !s.is_empty()).collect())
+}
+
+/// Daftar model untuk dropdown chat/provider.
+///
+/// Model yang disimpan pengguna selalu ikut, dan kalau endpoint `/models`
+/// gagal (offline, provider tidak menyediakannya) daftar lokal tetap dipakai.
+/// Tanpa ini dropdown hanya menampilkan "Belum ada model" walaupun provider
+/// sudah punya model yang dipilih.
+pub fn list_models(p: &Provider) -> Result<Vec<String>, String> {
+    let mut ids: Vec<String> = p.models.iter()
+        .cloned()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    if !p.model.trim().is_empty() {
+        ids.push(p.model.trim().to_string());
+    }
+    if let Ok(remote) = fetch_models(p) {
+        ids.extend(remote);
+    }
     ids.sort();
+    ids.dedup();
     Ok(ids)
 }
 
@@ -213,7 +232,7 @@ pub fn test_connection(p: &Provider) -> Result<String, String> {
     if p.api_key.trim().is_empty() {
         return Err("API key belum diisi.".into());
     }
-    let models = list_models(p)?;
+    let models = fetch_models(p)?;
     if models.is_empty() {
         return Ok("Terhubung, tetapi provider tidak mengirim daftar model.".into());
     }

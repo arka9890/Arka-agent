@@ -24,6 +24,13 @@ pub fn init(path: &str) -> Result<(), String> {
     }
     let conn = Connection::open(path).map_err(|e| e.to_string())?;
     conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+    // Migrasi ringan: tabel providers dari versi lama belum punya kolom
+    // `models`. CREATE TABLE IF NOT EXISTS tidak menambah kolom, jadi tambahkan
+    // di sini. Error "duplicate column" sengaja diabaikan (DB sudah baru).
+    let _ = conn.execute(
+        "ALTER TABLE providers ADD COLUMN models TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
     // Kalau dua thread balapan, yang kalah cukup memakai koneksi pemenang.
     let _ = DB.set(Mutex::new(conn));
     Ok(())
@@ -71,6 +78,7 @@ CREATE TABLE IF NOT EXISTS providers (
     base_url   TEXT NOT NULL,
     api_key    TEXT NOT NULL,
     model      TEXT NOT NULL,
+    models     TEXT NOT NULL DEFAULT '[]',
     is_default INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );

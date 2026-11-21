@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.tr
 import com.arka.agent.core.FileInfo
 import com.arka.agent.ui.theme.clay
 
@@ -54,7 +55,7 @@ fun AttachDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Lampirkan file") },
+        title = { Text(tr("Lampirkan file", "Attach file", "ファイルを添付")) },
         text = {
             Column {
                 Text(
@@ -114,7 +115,7 @@ fun AttachDialog(
                     if (items.isEmpty()) {
                         item(key = "empty") {
                             Text(
-                                "Folder kosong",
+                                tr("Folder kosong", "Empty folder", "空のフォルダー"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = clay.muted,
                                 modifier = Modifier.padding(vertical = 12.dp),
@@ -125,7 +126,7 @@ fun AttachDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Tutup") }
+            TextButton(onClick = onDismiss) { Text(tr("Tutup", "Close", "閉じる")) }
         },
     )
 }

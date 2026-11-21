@@ -77,9 +77,11 @@ fun fontScaleFor(name: String?): Float = when (name) {
     else -> 1f
 }
 
-private fun baseTypography(): Typography {
+private fun baseTypography(scale: Float): Typography {
     val base = Typography()
-    fun TextStyle.scaled() = copy(fontSize = fontSize * 1f, lineHeight = lineHeight * 1f)
+    // Bug lama: parameter fontScale dari Setelan tidak pernah dipakai di sini,
+    // jadi memilih "Kecil"/"Besar" tidak mengubah apa pun di layar.
+    fun TextStyle.scaled() = copy(fontSize = fontSize * scale, lineHeight = lineHeight * scale)
     return Typography(
         displayLarge = base.displayLarge.scaled(),
         displayMedium = base.displayMedium.scaled(),
@@ -95,7 +97,7 @@ private fun baseTypography(): Typography {
         bodySmall = base.bodySmall.scaled(),
         labelLarge = base.labelLarge.scaled().copy(fontWeight = FontWeight.Medium),
         labelMedium = base.labelMedium.scaled(),
-        labelSmall = base.labelSmall.scaled().copy(fontSize = 11.sp, letterSpacing = 0.4.sp),
+        labelSmall = base.labelSmall.scaled().copy(fontSize = 11.sp * scale, letterSpacing = 0.4.sp),
     )
 }
 
@@ -136,7 +138,7 @@ fun ArkaTheme(
     ) {
         MaterialTheme(
             colorScheme = scheme,
-            typography = baseTypography(),
+            typography = baseTypography(fontScale),
             content = content,
         )
     }

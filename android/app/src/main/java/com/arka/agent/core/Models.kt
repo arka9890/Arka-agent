@@ -35,7 +35,10 @@ data class Provider(
     val kind: String = "openai",
     @SerialName("base_url") val baseUrl: String = "",
     @SerialName("api_key") val apiKey: String = "",
+    /** Model utama yang dipakai chat kalau sesi tidak punya model. */
     val model: String = "",
+    /** Semua model yang dipilih di tab Provider (ditampilkan di dropdown chat). */
+    val models: List<String> = emptyList(),
     @SerialName("is_default") val isDefault: Boolean = false,
     @SerialName("created_at") val createdAt: Long = 0,
 )

@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.arka.agent.core.Message
+import com.arka.agent.ui.tr
 import com.arka.agent.ui.theme.clay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -153,7 +154,7 @@ private fun AttachmentPreview(
                 )
             }
             else -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Description, "File", tint = Color.White)
+                Icon(Icons.Outlined.Description, tr("File", "File", "ファイル"), tint = Color.White)
                 Spacer(Modifier.width(8.dp))
                 Column {
                     Text(
@@ -162,7 +163,9 @@ private fun AttachmentPreview(
                         color = Color.White,
                     )
                     Text(
-                        if (file.exists()) "${file.length() / 1024} KB" else "tidak ditemukan",
+                        if (file.exists()) "${file.length() / 1024} KB" else tr(
+                            "tidak ditemukan", "not found", "見つかりません",
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White.copy(alpha = 0.7f),
                     )
@@ -202,7 +205,7 @@ private fun ImageThumbnail(file: File) {
     val image = bitmap
     if (image == null) {
         Text(
-            "Gambar tidak bisa dibaca",
+            tr("Gambar tidak bisa dibaca", "Image could not be read", "画像を読み込めません"),
             style = MaterialTheme.typography.labelSmall,
             color = Color.White.copy(alpha = 0.8f),
         )

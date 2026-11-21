@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.arka.agent.BuildConfig
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.tr
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.components.ClayPill
 import com.arka.agent.ui.theme.Space
@@ -69,33 +70,37 @@ fun SettingsScreen(vm: MainViewModel) {
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = Space.md),
     ) {
         item {
-            Text("Setelan", style = MaterialTheme.typography.titleLarge)
+            Text(tr("Setelan", "Settings", "設定"), style = MaterialTheme.typography.titleLarge)
         }
 
         item {
-            SettingCard("Tampilan") {
+            SettingCard(tr("Tampilan", "Appearance", "外観")) {
                 ChoiceRow(
-                    label = "Tema",
-                    options = listOf("system" to "Sistem", "dark" to "Gelap", "light" to "Terang"),
+                    label = tr("Tema", "Theme", "テーマ"),
+                    options = listOf("system" to tr("Sistem", "System", "システム"), "dark" to tr("Gelap", "Dark", "ダーク"), "light" to tr("Terang", "Light", "ライト")),
                     selected = settings["theme"] ?: "system",
                     onSelect = { vm.updateSetting("theme", it) },
                 )
                 Spacer(Modifier.height(Space.sm))
                 ChoiceRow(
-                    label = "Bahasa",
-                    options = listOf("id" to "Indonesia", "en" to "English", "ja" to "日本語"),
+                    label = tr("Bahasa", "Language", "言語"),
+                    options = listOf("id" to tr("Indonesia", "Indonesian", "インドネシア語"), "en" to "English", "ja" to "日本語"),
                     selected = settings["language"] ?: "id",
                     onSelect = { vm.updateSetting("language", it) },
                 )
                 Text(
-                    "Pilihan disimpan, tetapi teks antarmuka masih Bahasa Indonesia.",
+                    tr(
+                        "Perubahan bahasa langsung diterapkan pada teks antarmuka.",
+                        "Language changes apply immediately to the interface.",
+                        "言語の変更はすぐに画面に反映されます。",
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = clay.muted,
                 )
                 Spacer(Modifier.height(Space.sm))
                 ChoiceRow(
-                    label = "Ukuran font",
-                    options = listOf("small" to "Kecil", "medium" to "Sedang", "large" to "Besar"),
+                    label = tr("Ukuran font", "Font size", "フォントサイズ"),
+                    options = listOf("small" to tr("Kecil", "Small", "小"), "medium" to tr("Sedang", "Medium", "中"), "large" to tr("Besar", "Large", "大")),
                     selected = settings["font_size"] ?: "medium",
                     onSelect = { vm.updateSetting("font_size", it) },
                 )
@@ -103,16 +108,16 @@ fun SettingsScreen(vm: MainViewModel) {
         }
 
         item {
-            SettingCard("Chat") {
+            SettingCard(tr("Chat", "Chat", "チャット")) {
                 ToggleRow(
-                    label = "Gulir otomatis ke pesan terbaru",
+                    label = tr("Gulir otomatis ke pesan terbaru", "Auto-scroll to latest message", "最新メッセージへ自動スクロール"),
                     checked = settings["auto_scroll"] != "false",
                     onChange = { vm.updateSetting("auto_scroll", it.toString()) },
                 )
                 // Belum ada NotificationManager di aplikasi ini: tombol
                 // sengaja dinonaktifkan supaya tidak terlihat "rusak".
                 ToggleRow(
-                    label = "Notifikasi pesan baru (belum aktif)",
+                    label = tr("Notifikasi pesan baru (belum aktif)", "New message notifications (not active)", "新着通知（未実装）"),
                     checked = settings["notifications"] != "false",
                     enabled = false,
                     onChange = { vm.updateSetting("notifications", it.toString()) },
@@ -121,23 +126,23 @@ fun SettingsScreen(vm: MainViewModel) {
         }
 
         item {
-            SettingCard("Workspace") {
-                InfoRow("Path di aplikasi", "/root/storage")
-                InfoRow("Ukuran workspace", humanSize(workspaceBytes))
+            SettingCard(tr("Workspace", "Workspace", "ワークスペース")) {
+                InfoRow(tr("Path di aplikasi", "App path", "アプリ内パス"), "/root/storage")
+                InfoRow(tr("Ukuran workspace", "Workspace size", "ワークスペースのサイズ"), humanSize(workspaceBytes))
                 InfoRow("Rootfs Ubuntu", humanSize(distro.sizeBytes))
                 InfoRow(
-                    "Status Ubuntu",
-                    if (distro.installed) "terpasang" else "belum terpasang",
+                    tr("Status Ubuntu", "Ubuntu status", "Ubuntuの状態"),
+                    if (distro.installed) tr("terpasang", "installed", "インストール済み") else tr("belum terpasang", "not installed", "未インストール"),
                 )
                 Spacer(Modifier.height(Space.sm))
                 Row {
-                    TextButton(onClick = { vm.runDiagnostic() }) { Text("Tes distro") }
+                    TextButton(onClick = { vm.runDiagnostic() }) { Text(tr("Tes distro", "Test distro", "ディストリをテスト")) }
                     if (!distro.installed) {
                         Spacer(Modifier.width(Space.xs))
                         TextButton(
                             onClick = { vm.installUbuntu() },
                             enabled = install == null,
-                        ) { Text(if (install == null) "Pasang Ubuntu 24" else "Memasang…") }
+                        ) { Text(if (install == null) tr("Pasang Ubuntu 24", "Install Ubuntu 24", "Ubuntu 24をインストール") else tr("Memasang…", "Installing…", "インストール中…")) }
                     }
                 }
                 install?.let { progress ->
@@ -163,18 +168,18 @@ fun SettingsScreen(vm: MainViewModel) {
         }
 
         item {
-            SettingCard("Sistem") {
+            SettingCard(tr("Sistem", "System", "システム")) {
                 stats?.let { s ->
-                    InfoRow("RAM terpakai", "${s.usedRamMb} / ${s.totalRamMb} MB")
-                    InfoRow("Storage bebas", humanSize(s.freeStorageBytes))
+                    InfoRow(tr("RAM terpakai", "RAM used", "使用RAM"), "${s.usedRamMb} / ${s.totalRamMb} MB")
+                    InfoRow(tr("Storage bebas", "Free storage", "空きストレージ"), humanSize(s.freeStorageBytes))
                     InfoRow("CPU", s.cpuAbi)
                     InfoRow("Android", "API ${Build.VERSION.SDK_INT}")
-                } ?: Text("Memuat…", style = MaterialTheme.typography.labelSmall, color = clay.muted)
+                } ?: Text(tr("Memuat…", "Loading…", "読み込み中…"), style = MaterialTheme.typography.labelSmall, color = clay.muted)
             }
         }
 
         item {
-            SettingCard("Tentang") {
+            SettingCard(tr("Tentang", "About", "アプリについて")) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Arka Agent", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.width(Space.sm))
@@ -182,8 +187,13 @@ fun SettingsScreen(vm: MainViewModel) {
                 }
                 Spacer(Modifier.height(Space.xs))
                 Text(
-                    "AI Agent dengan workspace Ubuntu 24 di perangkat. " +
-                        "Chat AI, jalankan Python/Git, kelola file — tanpa server.",
+                    tr(
+                        "AI Agent dengan workspace Ubuntu 24 di perangkat. " +
+                            "Chat AI, jalankan Python/Git, kelola file — tanpa server.",
+                        "AI agent with an Ubuntu 24 workspace on your device. " +
+                            "Chat with AI, run Python/Git, manage files — no server needed.",
+                        "端末内にUbuntu 24ワークスペースを持つAIエージェント。AIとチャットし、Python/Gitを実行し、ファイルを管理できます。サーバー不要です。",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = clay.muted,
                 )

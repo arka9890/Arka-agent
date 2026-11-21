@@ -242,6 +242,36 @@ fn extract_rootfs(archive: &Path) -> Result<(), String> {
         if path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
             continue;
         }
+        if entry.header().entry_type().is_hard_link() {
+            // Bug di perangkat tertentu: std::fs::hard_link ditolak oleh
+            // filesystem /data (EXDEV/EPERM), sehingga unpack gagal di entri
+            // seperti usr/bin/perl5.38.2. Hard link di rootfs hanya dipakai
+            // untuk menghemat ruang, jadi salin isinya saja — hasilnya sama.
+            let Some(link) = entry.link_name().map_err(|e| e.to_string())? else {
+                continue;
+            };
+            let target_rel = link.to_path_buf();
+            if target_rel.is_absolute()
+                || target_rel.components().any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                continue;
+            }
+            let target = staging.join(target_rel);
+            let dest = staging.join(&path);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            // Timpa file lama (mis. saat ekstraksi diulang) supaya tidak
+            // gagal dengan "File exists".
+            let _ = fs::remove_file(&dest);
+            fs::copy(&target, &dest).map_err(|e| {
+                format!("failed to copy hard link {} → {}: {}", path.display(), target.display(), e)
+            })?;
+            let mode = entry.header().mode().map_err(|e| e.to_string())? & 0o7777;
+            fs::set_permissions(&dest, fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+            count += 1;
+            continue;
+        }
         entry.unpack_in(&staging).map_err(|e| e.to_string())?;
         count += 1;
     }

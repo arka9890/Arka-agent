@@ -53,12 +53,17 @@ import com.arka.agent.ui.screens.TerminalScreen
 import com.arka.agent.ui.theme.clay
 
 /** Lima tab sesuai PRD. */
-enum class Tab(val label: String, val icon: ImageVector) {
-    Chat("Chat", Icons.Outlined.Chat),
-    Provider("Provider", Icons.Outlined.Hub),
-    File("File", Icons.Outlined.Description),
-    Terminal("Terminal", Icons.Outlined.Terminal),
-    Settings("Setelan", Icons.Outlined.Settings),
+enum class Tab(
+    val label: String,
+    val labelEn: String,
+    val labelJa: String,
+    val icon: ImageVector,
+) {
+    Chat("Chat", "Chat", "チャット", Icons.Outlined.Chat),
+    Provider("Provider", "Provider", "プロバイダー", Icons.Outlined.Hub),
+    File("File", "Files", "ファイル", Icons.Outlined.Description),
+    Terminal("Terminal", "Terminal", "ターミナル", Icons.Outlined.Terminal),
+    Settings("Setelan", "Settings", "設定", Icons.Outlined.Settings),
 }
 
 @Composable
@@ -113,6 +118,7 @@ private fun ClayTabBar(current: Tab, onSelect: (Tab) -> Unit) {
     ) {
         Tab.entries.forEach { entry ->
             val active = entry == current
+            val label = tr(entry.label, entry.labelEn, entry.labelJa)
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -131,13 +137,13 @@ private fun ClayTabBar(current: Tab, onSelect: (Tab) -> Unit) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         imageVector = entry.icon,
-                        contentDescription = entry.label,
+                        contentDescription = label,
                         tint = if (active) clay.accent else clay.muted,
                         modifier = Modifier.height(22.dp),
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = entry.label,
+                        text = label,
                         style = MaterialTheme.typography.labelSmall,
                         color = if (active) clay.accent else clay.muted,
                     )

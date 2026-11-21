@@ -52,6 +52,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.LocalLanguage
+import com.arka.agent.ui.tr
+import com.arka.agent.ui.trFor
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.components.ClayPill
 import com.arka.agent.ui.theme.Space
@@ -75,6 +78,7 @@ fun TerminalScreen(vm: MainViewModel) {
     var command by remember { mutableStateOf("") }
     var showHistory by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val lang = LocalLanguage.current
 
     LaunchedEffect(lines.size) {
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
@@ -86,25 +90,25 @@ fun TerminalScreen(vm: MainViewModel) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Terminal", style = MaterialTheme.typography.titleLarge)
+                Text(tr("Terminal", "Terminal", "ターミナル"), style = MaterialTheme.typography.titleLarge)
                 Text(
-                    if (distro.installed) "Ubuntu 24 · /root/storage" else "Ubuntu 24 belum terpasang",
+                    if (distro.installed) "Ubuntu 24 · /root/storage" else tr("Ubuntu 24 belum terpasang", "Ubuntu 24 not installed", "Ubuntu 24は未インストール"),
                     style = MaterialTheme.typography.labelSmall,
                     color = clay.muted,
                 )
             }
             ClayPill(
-                text = if (distro.installed) "siap" else "belum siap",
+                text = if (distro.installed) tr("siap", "ready", "準備完了") else tr("belum siap", "not ready", "未準備"),
                 color = if (distro.installed) clay.success else clay.danger,
             )
             Box {
                 IconButton(onClick = { showHistory = true }) {
-                    Icon(Icons.Outlined.History, "Riwayat", tint = clay.muted)
+                    Icon(Icons.Outlined.History, tr("Riwayat", "History", "履歴"), tint = clay.muted)
                 }
                 DropdownMenu(expanded = showHistory, onDismissRequest = { showHistory = false }) {
                     if (history.isEmpty()) {
                         DropdownMenuItem(
-                            text = { Text("Belum ada riwayat") },
+                            text = { Text(tr("Belum ada riwayat", "No history yet", "履歴がありません")) },
                             onClick = { showHistory = false },
                         )
                     }
@@ -120,14 +124,14 @@ fun TerminalScreen(vm: MainViewModel) {
                 }
             }
             IconButton(onClick = { vm.clearTerminal() }) {
-                Icon(Icons.Outlined.Delete, "Bersihkan", tint = clay.muted)
+                Icon(Icons.Outlined.Delete, tr("Bersihkan", "Clear", "クリア"), tint = clay.muted)
             }
         }
 
         val install = progress
         if (install != null) {
             ClayCard(Modifier.fillMaxWidth()) {
-                Text("Menyiapkan Ubuntu 24", style = MaterialTheme.typography.titleSmall)
+                Text(tr("Menyiapkan Ubuntu 24", "Preparing Ubuntu 24", "Ubuntu 24を準備中"), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(Space.xs))
                 Text(
                     install.second,
@@ -142,16 +146,21 @@ fun TerminalScreen(vm: MainViewModel) {
                 )
                 Spacer(Modifier.height(Space.sm))
                 TextButton(onClick = { vm.cancelInstall() }) {
-                    Text("Batalkan", color = clay.danger)
+                    Text(tr("Batalkan", "Cancel", "キャンセル"), color = clay.danger)
                 }
             }
         } else if (!distro.installed) {
             ClayCard(Modifier.fillMaxWidth()) {
-                Text("Pasang Ubuntu 24", style = MaterialTheme.typography.titleSmall)
+                Text(tr("Pasang Ubuntu 24", "Install Ubuntu 24", "Ubuntu 24をインストール"), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(Space.xs))
                 Text(
-                    "Unduh rootfs resmi Ubuntu (±30 MB) lalu pasang Python 3, Git, curl, " +
-                        "wget, dan nano secara otomatis. Butuh koneksi internet.",
+                    tr(
+                        "Unduh rootfs resmi Ubuntu (±30 MB) lalu pasang Python 3, Git, curl, " +
+                            "wget, dan nano secara otomatis. Butuh koneksi internet.",
+                        "Download the official Ubuntu rootfs (~30 MB), then automatically " +
+                            "install Python 3, Git, curl, wget, and nano. Internet required.",
+                        "公式Ubuntu rootfs（約30MB）をダウンロードし、Python 3、Git、curl、wget、nanoを自動インストールします。インターネット接続が必要です。",
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = clay.muted,
                 )
@@ -164,16 +173,21 @@ fun TerminalScreen(vm: MainViewModel) {
                             .clip(RoundedCornerShape(14.dp))
                             .background(clay.accent),
                     ) {
-                        Icon(Icons.Outlined.Download, "Pasang", tint = androidx.compose.ui.graphics.Color.White)
+                        Icon(Icons.Outlined.Download, tr("Pasang", "Install", "インストール"), tint = androidx.compose.ui.graphics.Color.White)
                     }
                     Spacer(Modifier.width(Space.sm))
-                    Text("Pasang sekarang", style = MaterialTheme.typography.bodyMedium)
+                    Text(tr("Pasang sekarang", "Install now", "今すぐインストール"), style = MaterialTheme.typography.bodyMedium)
                 }
                 if (!distro.prootAvailable) {
                     Spacer(Modifier.height(Space.xs))
                     Text(
-                        "Catatan: APK ini dibangun tanpa binary proot, jadi perintah tidak " +
-                            "akan bisa dijalankan.",
+                        tr(
+                            "Catatan: APK ini dibangun tanpa binary proot, jadi perintah tidak " +
+                                "akan bisa dijalankan.",
+                            "Note: this APK was built without the proot binary, so commands " +
+                                "cannot be run.",
+                            "注意: このAPKにはprootバイナリが含まれていないため、コマンドを実行できません。",
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = clay.danger,
                     )
@@ -202,9 +216,9 @@ fun TerminalScreen(vm: MainViewModel) {
                     item {
                         Text(
                             if (distro.installed) {
-                                "Ketik perintah, mis. python3 --version"
+                                tr("Ketik perintah, mis. python3 --version", "Type a command, e.g. python3 --version", "コマンドを入力（例: python3 --version）")
                             } else {
-                                "Pasang Ubuntu 24 dulu untuk membuka terminal."
+                                tr("Pasang Ubuntu 24 dulu untuk membuka terminal.", "Install Ubuntu 24 first to use the terminal.", "ターミナルを使うには先にUbuntu 24をインストールしてください。")
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = clay.muted,
@@ -222,7 +236,7 @@ fun TerminalScreen(vm: MainViewModel) {
                 value = command,
                 onValueChange = { command = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("perintah…", color = clay.muted) },
+                placeholder = { Text(tr("perintah…", "command…", "コマンド…"), color = clay.muted) },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
@@ -232,8 +246,8 @@ fun TerminalScreen(vm: MainViewModel) {
                 ),
                 keyboardActions = KeyboardActions(onSend = {
                     when {
-                        running -> vm.notify("Tunggu perintah sebelumnya selesai.")
-                        !distro.installed -> vm.notify("Pasang Ubuntu 24 dulu.")
+                        running -> vm.notify(trFor(lang, "Tunggu perintah sebelumnya selesai.", "Wait for the previous command to finish.", "前のコマンドの完了をお待ちください。"))
+                        !distro.installed -> vm.notify(trFor(lang, "Pasang Ubuntu 24 dulu.", "Install Ubuntu 24 first.", "先にUbuntu 24をインストールしてください。"))
                         else -> {
                             vm.runCommand(command)
                             command = ""
@@ -246,8 +260,8 @@ fun TerminalScreen(vm: MainViewModel) {
                 onClick = {
                     when {
                         running -> vm.stopCommand()
-                        !distro.installed -> vm.notify("Pasang Ubuntu 24 dulu.")
-                        command.isBlank() -> vm.notify("Ketik perintah dulu.")
+                        !distro.installed -> vm.notify(trFor(lang, "Pasang Ubuntu 24 dulu.", "Install Ubuntu 24 first.", "先にUbuntu 24をインストールしてください。"))
+                        command.isBlank() -> vm.notify(trFor(lang, "Ketik perintah dulu.", "Type a command first.", "まずコマンドを入力してください。"))
                         else -> {
                             vm.runCommand(command)
                             command = ""
@@ -261,7 +275,7 @@ fun TerminalScreen(vm: MainViewModel) {
             ) {
                 Icon(
                     imageVector = if (running) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
-                    contentDescription = if (running) "Hentikan" else "Jalankan",
+                    contentDescription = if (running) tr("Hentikan", "Stop", "停止") else tr("Jalankan", "Run", "実行"),
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }

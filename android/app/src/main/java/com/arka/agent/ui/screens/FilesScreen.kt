@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.arka.agent.MainViewModel
+import com.arka.agent.ui.tr
 import com.arka.agent.core.FileInfo
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.components.ClayPill
@@ -83,7 +84,7 @@ fun FilesScreen(vm: MainViewModel) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Workspace", style = MaterialTheme.typography.titleLarge)
+                Text(tr("Workspace", "Workspace", "ワークスペース"), style = MaterialTheme.typography.titleLarge)
                 Text(
                     if (dir.isBlank()) "/" else "/$dir",
                     style = MaterialTheme.typography.labelSmall,
@@ -91,10 +92,10 @@ fun FilesScreen(vm: MainViewModel) {
                 )
             }
             IconButton(onClick = { newFolder = true }) {
-                Icon(Icons.Outlined.CreateNewFolder, "Folder baru", tint = clay.accent)
+                Icon(Icons.Outlined.CreateNewFolder, tr("Folder baru", "New folder", "新しいフォルダー"), tint = clay.accent)
             }
             IconButton(onClick = { picker.launch(arrayOf("*/*")) }) {
-                Icon(Icons.Outlined.UploadFile, "Impor file", tint = clay.accent)
+                Icon(Icons.Outlined.UploadFile, tr("Impor file", "Import file", "ファイルをインポート"), tint = clay.accent)
             }
         }
 
@@ -114,7 +115,7 @@ fun FilesScreen(vm: MainViewModel) {
                     ) {
                         Icon(Icons.Outlined.FolderOpen, null, tint = clay.accent)
                         Spacer(Modifier.width(Space.sm))
-                        Text("Folder induk", style = MaterialTheme.typography.bodyMedium)
+                        Text(tr("Folder induk", "Parent folder", "親フォルダー"), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -140,7 +141,7 @@ fun FilesScreen(vm: MainViewModel) {
                     Column(Modifier.weight(1f)) {
                         Text(file.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                         Text(
-                            if (file.isDir) "folder" else humanSize(file.size),
+                            if (file.isDir) tr("folder", "folder", "フォルダー") else humanSize(file.size),
                             style = MaterialTheme.typography.labelSmall,
                             color = clay.muted,
                         )
@@ -151,7 +152,7 @@ fun FilesScreen(vm: MainViewModel) {
                     ) {
                         Icon(
                             Icons.Outlined.Delete,
-                            "Hapus",
+                            tr("Hapus", "Delete", "削除"),
                             tint = clay.muted,
                             modifier = Modifier.size(18.dp),
                         )
@@ -162,8 +163,13 @@ fun FilesScreen(vm: MainViewModel) {
                 item(key = "empty") {
                     ClayCard(Modifier.fillMaxWidth().padding(top = Space.md)) {
                         Text(
-                            "Folder masih kosong. File yang dibuat dari Terminal " +
-                                "atau dilampirkan di chat akan muncul di sini.",
+                            tr(
+                                "Folder masih kosong. File yang dibuat dari Terminal " +
+                                    "atau dilampirkan di chat akan muncul di sini.",
+                                "This folder is empty. Files created in Terminal or attached " +
+                                    "in chat will appear here.",
+                                "このフォルダーは空です。ターミナルで作成したファイルやチャットに添付したファイルが表示されます。",
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = clay.muted,
                         )
@@ -184,20 +190,20 @@ fun FilesScreen(vm: MainViewModel) {
     deleting?.let { file ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Hapus ${file.name}?") },
+            title = { Text("${tr("Hapus", "Delete", "削除")} ${file.name}?") },
             text = {
                 Text(
-                    if (file.isDir) "Folder dan seluruh isinya akan dihapus." else "File akan dihapus permanen.",
+                    if (file.isDir) tr("Folder dan seluruh isinya akan dihapus.", "The folder and all its contents will be deleted.", "フォルダーとその内容がすべて削除されます。") else tr("File akan dihapus permanen.", "The file will be deleted permanently.", "ファイルは完全に削除されます。"),
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     vm.deleteFile(file.path)
                     deleting = null
-                }) { Text("Hapus", color = clay.danger) }
+                }) { Text(tr("Hapus", "Delete", "削除"), color = clay.danger) }
             },
             dismissButton = {
-                TextButton(onClick = { deleting = null }) { Text("Batal") }
+                TextButton(onClick = { deleting = null }) { Text(tr("Batal", "Cancel", "キャンセル")) }
             },
         )
     }
@@ -206,12 +212,12 @@ fun FilesScreen(vm: MainViewModel) {
         var name by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { newFolder = false },
-            title = { Text("Folder baru") },
+            title = { Text(tr("Folder baru", "New folder", "新しいフォルダー")) },
             text = {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nama folder") },
+                    label = { Text(tr("Nama folder", "Folder name", "フォルダー名")) },
                     singleLine = true,
                 )
             },
@@ -221,10 +227,10 @@ fun FilesScreen(vm: MainViewModel) {
                         if (name.isNotBlank()) vm.newFolder(name.trim())
                         newFolder = false
                     },
-                ) { Text("Buat") }
+                ) { Text(tr("Buat", "Create", "作成")) }
             },
             dismissButton = {
-                TextButton(onClick = { newFolder = false }) { Text("Batal") }
+                TextButton(onClick = { newFolder = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
             },
         )
     }
