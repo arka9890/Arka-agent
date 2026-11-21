@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Path yang boleh dibagikan lewat FileProvider. Hanya workspace aplikasi
+  (rootfs Ubuntu + folder unduhan) yang boleh dibuka aplikasi lain.
+-->
+<paths>
+    <files-path name="workspace" path="." />
+    <cache-path name="cache" path="." />
+</paths>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tema dasar Android: hanya dipakai sebelum Compose menggambar.
+         Warna sebenarnya diatur oleh ArkaTheme (Compose). -->
+    <style name="Theme.ArkaAgent" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/clay_bg</item>
+        <item name="android:statusBarColor">@color/clay_bg</item>
+        <item name="android:navigationBarColor">@color/clay_bg</item>
+    </style>
+</resources>
