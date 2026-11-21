@@ -10,15 +10,25 @@ plugins {
 
 // Penandatanganan APK.
 //
-// Kunci bersama (committed) dipakai supaya APK dari CI mana pun bisa
-// di-upgrade di tempat tanpa uninstall. Kalau `keystore.properties` tidak ada,
-// build tetap jalan dengan debug key bawaan Gradle.
+// Urutan prioritas:
+//  1. `android/keystore.properties` + keystore milik sendiri (RAHASIA,
+//     sengaja tidak di-commit) — dipakai kalau ada.
+//  2. `android/app/ci-debug.keystore` — kunci debug bersama yang sengaja
+//     di-commit dengan password publik. Bukan kredensial: hanya untuk APK
+//     sideload/CI supaya tiap build punya signature SAMA dan pengguna bisa
+//     meng-upgrade aplikasi tanpa uninstall.
+//  3. Tanpa keduanya, Gradle memakai debug key bawaan yang berubah-ubah.
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 val hasSigning = keystorePropsFile.exists() &&
     keystoreProps.getProperty("storeFile")?.let { rootProject.file(it).exists() } == true
+val ciKeystore = rootProject.file("app/ci-debug.keystore")
+val hasCiSigning = !hasSigning && ciKeystore.exists()
+val ciStorePassword = "arka1234"
+val ciKeyAlias = "arkaci"
+val ciKeyPassword = "arka1234"
 
 android {
     namespace = "com.arka.agent"
@@ -50,18 +60,26 @@ android {
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
             }
+        } else if (hasCiSigning) {
+            create("ci") {
+                storeFile = ciKeystore
+                storePassword = ciStorePassword
+                keyAlias = ciKeyAlias
+                keyPassword = ciKeyPassword
+            }
         }
     }
 
+    val signingName = if (hasSigning) "arka" else if (hasCiSigning) "ci" else null
     buildTypes {
         debug {
-            if (hasSigning) signingConfig = signingConfigs.getByName("arka")
+            if (signingName != null) signingConfig = signingConfigs.getByName(signingName)
             ndk { debugSymbolLevel = "none" }
         }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (hasSigning) signingConfig = signingConfigs.getByName("arka")
+            if (signingName != null) signingConfig = signingConfigs.getByName(signingName)
             ndk { debugSymbolLevel = "none" }
         }
     }

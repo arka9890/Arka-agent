@@ -94,6 +94,7 @@ fun ChatScreen(vm: MainViewModel) {
     var attachments by remember { mutableStateOf<List<String>>(emptyList()) }
     var showAttach by remember { mutableStateOf(false) }
     var showModelMenu by remember { mutableStateOf(false) }
+    var modelQuery by remember { mutableStateOf("") }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
     var modelInput by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<FileInfo?>(null) }
@@ -106,6 +107,7 @@ fun ChatScreen(vm: MainViewModel) {
         ?: providers.firstOrNull { it.isDefault }
         ?: providers.firstOrNull()
     val menuModels = (listOfNotNull(current?.model?.takeIf { it.isNotBlank() }) + models).distinct()
+    val filteredModels = menuModels.filter { it.contains(modelQuery, ignoreCase = true) }
 
     LaunchedEffect(currentId, activeProvider?.id) {
         val pid = activeProvider?.id
@@ -123,9 +125,14 @@ fun ChatScreen(vm: MainViewModel) {
                 model = current?.model,
                 hasSession = current != null,
                 showModelMenu = showModelMenu,
-                models = menuModels,
+                models = filteredModels,
+                modelQuery = modelQuery,
+                onModelQuery = { modelQuery = it },
                 onMenu = { drawer = true },
-                onToggleModels = { showModelMenu = !showModelMenu },
+                onToggleModels = {
+                    if (!showModelMenu) modelQuery = ""
+                    showModelMenu = !showModelMenu
+                },
                 onSelectModel = { model ->
                     showModelMenu = false
                     vm.setSessionModel(activeProvider?.id ?: current?.providerId, model)
@@ -243,6 +250,8 @@ private fun ChatTopBar(
     hasSession: Boolean,
     showModelMenu: Boolean,
     models: List<String>,
+    modelQuery: String,
+    onModelQuery: (String) -> Unit,
     onMenu: () -> Unit,
     onToggleModels: () -> Unit,
     onSelectModel: (String) -> Unit,
@@ -300,9 +309,29 @@ private fun ChatTopBar(
                             .heightIn(max = 320.dp)
                             .verticalScroll(rememberScrollState()),
                     ) {
+                        OutlinedTextField(
+                            value = modelQuery,
+                            onValueChange = onModelQuery,
+                            placeholder = {
+                                Text(tr("Cari model…", "Search models…", "モデルを検索…"))
+                            },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
                         if (models.isEmpty()) {
                             DropdownMenuItem(
-                                text = { Text(tr("Belum ada model", "No models yet", "モデルがありません")) },
+                                text = {
+                                    Text(
+                                        if (modelQuery.isBlank()) {
+                                            tr("Belum ada model", "No models yet", "モデルがありません")
+                                        } else {
+                                            tr("Tidak ada model cocok", "No matching models", "一致するモデルがありません")
+                                        },
+                                    )
+                                },
                                 onClick = { onToggleModels() },
                             )
                         }

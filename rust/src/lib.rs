@@ -332,13 +332,25 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         Ok((p, msgs))
     })();
 
-    let (p, msgs) = match prepared {
+    let (p, mut msgs) = match prepared {
         Ok(v) => v,
         Err(e) => {
             ju::emit_str(&mut env, &cb, "onError", &e);
             return JString::default();
         }
     };
+    // Sisipkan konteks peran Arka Agent kalau sesi belum punya pesan system.
+    // Tanpa ini model menjawab "aku tidak jalan di Ubuntu-mu" dan pengguna
+    // mengira fitur agent-nya rusak.
+    if !msgs.iter().any(|m| m.role == "system") {
+        msgs.insert(
+            0,
+            ai::ChatMsg {
+                role: "system".to_string(),
+                content: ai::SYSTEM_PROMPT.to_string(),
+            },
+        );
+    }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
     let mut stream = match ai::ChatStream::open(&p, &model, &msgs) {
