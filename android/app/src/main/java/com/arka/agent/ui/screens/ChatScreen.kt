@@ -1,5 +1,8 @@
 package com.arka.agent.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
@@ -57,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
@@ -101,6 +106,18 @@ fun ChatScreen(vm: MainViewModel) {
     var modelInput by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<FileInfo?>(null) }
     val lang = LocalLanguage.current
+    val context = LocalContext.current
+    val clipboard = remember {
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    }
+    val onCopy: (String) -> Unit = { text ->
+        runCatching {
+            clipboard.setPrimaryClip(ClipData.newPlainText("Arka Agent", text))
+            vm.notify(trFor(
+                lang, "Pesan disalin.", "Message copied.", "メッセージをコピーしました。",
+            ))
+        }.onFailure { vm.notify(it.message ?: "Gagal menyalin") }
+    }
 
     val current = sessions.firstOrNull { it.id == currentId }
     // Sesi lama bisa punya provider_id kosong. Pakai provider default sebagai
@@ -172,6 +189,7 @@ fun ChatScreen(vm: MainViewModel) {
                                 .onFailure { vm.notify(it.message ?: trFor(lang, "File tidak ditemukan", "File not found", "ファイルが見つかりません")) }
                         }
                     },
+                    onCopy = onCopy,
                     modifier = Modifier.weight(1f),
                 )
                 InputBar(
@@ -422,6 +440,7 @@ private fun MessageList(
     autoScroll: Boolean,
     resolveFile: (String) -> java.io.File,
     onOpenFile: (String) -> Unit,
+    onCopy: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -433,14 +452,22 @@ private fun MessageList(
         if (target >= 0) listState.animateScrollToItem(target)
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize().padding(horizontal = Space.md),
-        state = listState,
-        contentPadding = PaddingValues(vertical = Space.sm),
-        verticalArrangement = Arrangement.spacedBy(Space.sm),
-    ) {
+    // SelectionContainer: teks bisa dipilih/dicopy dengan long-press sistem,
+    // selain tombol copy di tiap bubble.
+    SelectionContainer {
+        LazyColumn(
+            modifier = modifier.fillMaxSize().padding(horizontal = Space.md),
+            state = listState,
+            contentPadding = PaddingValues(vertical = Space.sm),
+            verticalArrangement = Arrangement.spacedBy(Space.sm),
+        ) {
         items(messages, key = { it.id }) { m ->
-            MessageBubble(message = m, resolveFile = resolveFile, onOpenFile = onOpenFile)
+            MessageBubble(
+                message = m,
+                resolveFile = resolveFile,
+                onOpenFile = onOpenFile,
+                onCopy = onCopy,
+            )
         }
         if (streaming.isNotEmpty()) {
             item(key = "streaming") {
@@ -454,6 +481,7 @@ private fun MessageList(
                     streaming = true,
                     resolveFile = resolveFile,
                     onOpenFile = onOpenFile,
+                    onCopy = onCopy,
                 )
             }
         }
@@ -466,6 +494,7 @@ private fun MessageList(
                     modifier = Modifier.fillMaxWidth().padding(vertical = Space.lg),
                 )
             }
+        }
         }
     }
 }

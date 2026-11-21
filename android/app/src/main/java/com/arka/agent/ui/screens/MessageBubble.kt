@@ -16,10 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,6 +74,7 @@ fun MessageBubble(
     streaming: Boolean = false,
     resolveFile: (String) -> File = { File(it) },
     onOpenFile: (String) -> Unit = {},
+    onCopy: (String) -> Unit = {},
 ) {
     val isUser = message.role == "user"
     val attachments = remember(message.attachments) { parseAttachments(message.attachments) }
@@ -105,6 +108,28 @@ fun MessageBubble(
                 color = if (isUser) Color.White else clay.onSurface,
                 showCursor = streaming,
             )
+            if (!streaming) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    IconButton(
+                        onClick = { onCopy(message.content) },
+                        modifier = Modifier.size(26.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.ContentCopy,
+                            tr("Salin pesan", "Copy message", "メッセージをコピー"),
+                            tint = if (isUser) {
+                                Color.White.copy(alpha = 0.85f)
+                            } else {
+                                clay.muted
+                            },
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -334,28 +334,53 @@ fn tail(text: &str, n: usize) -> String {
 
 // ---------------------------------------------------------------- run
 
+/// Pastikan salinan library ada di `proot-libs` dengan nama SONAME yang
+/// dicari linker.
+///
+/// Dulu ini memakai symlink yang dibuat sekali. Setelah aplikasi bisa
+/// di-upgrade in-place, `nativeLibraryDir` berubah (path instalasi baru)
+/// sehingga symlink lama menggantung dan linker mengeluarkan:
+///   CANNOT LINK EXECUTABLE libproot.so: library "libtalloc.so.2" not found
+/// Selalu hapus entri lama lalu salin ulang — bukan symlink — supaya path
+/// selalu segar setelah update.
+fn refresh_lib(src: &Path, dest: &Path) -> Result<(), String> {
+    match fs::remove_file(dest) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "Gagal menghapus {} lama: {}",
+                dest.display(),
+                e
+            ))
+        }
+    }
+    fs::copy(src, dest).map_err(|e| {
+        format!("Gagal menyiapkan {} dari {}: {}", dest.display(), src.display(), e)
+    })?;
+    // Library tidak perlu executable, tapi izin 0644 membuatnya bisa dibaca
+    // linker di semua perangkat.
+    fs::set_permissions(dest, fs::Permissions::from_mode(0o644))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Env untuk proses proot itu sendiri (bukan untuk guest).
 fn proot_env() -> Result<Vec<(String, String)>, String> {
     let tmp = ctx::proot_tmp_dir()?;
     let libs = ctx::proot_libs_dir()?;
     if let Some(talloc) = ctx::native_lib("libtalloc.so")? {
-        let link = libs.join("libtalloc.so.2");
-        if !link.exists() {
-            // Fallback ke copy: symlink bisa ditolak di beberapa perangkat.
-            let _ = std::os::unix::fs::symlink(&talloc, &link)
-                .or_else(|_| fs::copy(&talloc, &link).map(|_| ()));
-        }
+        // libproot.so membutuhkan SONAME "libtalloc.so.2", bukan "libtalloc.so".
+        refresh_lib(&talloc, &libs.join("libtalloc.so.2"))?;
     }
     if let Some(shmem) = ctx::native_lib("libandroid-shmem.so")? {
-        let link = libs.join("libandroid-shmem.so");
-        if !link.exists() {
-            let _ = std::os::unix::fs::symlink(&shmem, &link)
-                .or_else(|_| fs::copy(&shmem, &link).map(|_| ()));
-        }
+        refresh_lib(&shmem, &libs.join("libandroid-shmem.so"))?;
     }
+    let native_dir = &ctx::ctx()?.native_lib_dir;
+    let ld_path = format!("{}:{}", libs.to_string_lossy(), native_dir.to_string_lossy());
     let mut env = vec![
         ("PROOT_TMP_DIR".to_string(), tmp.to_string_lossy().to_string()),
-        ("LD_LIBRARY_PATH".to_string(), libs.to_string_lossy().to_string()),
+        ("LD_LIBRARY_PATH".to_string(), ld_path),
     ];
     if let Some(loader) = ctx::loader_binary()? {
         env.push(("PROOT_LOADER".to_string(), loader.to_string_lossy().to_string()));
