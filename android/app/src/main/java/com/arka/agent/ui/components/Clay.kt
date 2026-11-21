@@ -2,6 +2,7 @@ package com.arka.agent.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
@@ -9,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -47,18 +49,36 @@ fun ClayCard(
     }
 }
 
-/** Kotak kecil berwarna lembut untuk label/status. */
+/**
+ * Kotak kecil berwarna lembut untuk label/status.
+ *
+ * Kalau [onClick] diisi, pill menjadi tombol (ripple + area klik penuh) —
+ * dipakai untuk "Mulai sesi baru" dan melepas lampiran chat.
+ *
+ * Catatan: memakai `Modifier.clickable`, bukan overload `Surface(onClick=…)`
+ * yang sudah deprecated di Material3.
+ */
 @Composable
 fun ClayPill(
     text: String,
     color: Color,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
+    val shape = RoundedCornerShape(50)
+    val background = color.copy(alpha = 0.16f)
+    val border = BorderStroke(1.dp, color.copy(alpha = 0.35f))
+    val clickModifier = if (onClick != null) {
+        modifier.clip(shape).clickable(onClick = onClick)
+    } else {
+        modifier
+    }
+
     Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = color.copy(alpha = 0.16f),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.35f)),
+        modifier = clickModifier,
+        shape = shape,
+        color = background,
+        border = border,
     ) {
         androidx.compose.material3.Text(
             text = text,

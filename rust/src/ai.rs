@@ -29,9 +29,23 @@ fn client() -> Result<reqwest::blocking::Client, String> {
 ///
 /// Base URL boleh ditulis dengan atau tanpa `/v1` (kebanyakan orang menyalin
 /// dari dokumentasi provider yang menyertakannya).
+///
+/// Perhatikan: [path] adalah path **relatif** setelah `/v1`, dan tiap protokol
+/// memakai nama berbeda — OpenAI-compatible memakai `chat/completions`,
+/// Anthropic memakai `messages`. Jangan samakan keduanya.
 pub fn endpoint(p: &Provider, path: &str) -> String {
     let base = p.base_url.trim().trim_end_matches('/');
-    if base.ends_with("/v1") {
+    // Sebagian gateway sudah menyertakan versi API di base URL, mis.
+    //   OpenAI    https://api.openai.com/v1
+    //   Gemini    https://generativelanguage.googleapis.com/v1beta/openai
+    //   OpenRouter https://openrouter.ai/api/v1
+    // Menambahkan "/v1" lagi ke URL seperti itu menghasilkan 404, jadi hanya
+    // tambahkan kalau base belum punya segmen versi.
+    let has_version = base.ends_with("/v1")
+        || base.ends_with("/v2")
+        || base.contains("/v1beta")
+        || base.ends_with("/openai");
+    if has_version {
         format!("{base}/{path}")
     } else {
         format!("{base}/v1/{path}")
@@ -96,7 +110,14 @@ impl ChatStream {
                     .collect::<Vec<_>>(),
             })
         };
-        let url = endpoint(provider, "messages");
+        // Bug lama: kedua protokol memakai "messages" sehingga semua provider
+        // OpenAI-compatible (OpenAI, Mistral, Gemini, endpoint custom) kena
+        // HTTP 404. Path yang benar berbeda per protokol.
+        let url = if anthropic {
+            endpoint(provider, "messages")
+        } else {
+            endpoint(provider, "chat/completions")
+        };
         let rb = auth_headers(client()?.post(&url).json(&body), provider);
         let resp = rb.send().map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
         if !resp.status().is_success() {

@@ -12,7 +12,9 @@ set -eu
 
 TARGET_ARM64="aarch64-linux-android"
 TARGET_ARMv7="armv7-linux-androideabi"
-API=26
+# Harus sama dengan minSdk di android/app/build.gradle.kts (24). Kalau lebih
+# tinggi, APK terpasang di Android lama tetapi gagal memuat libarka_core.so.
+API=24
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ANDROID_DIR="$SCRIPT_DIR/../android"

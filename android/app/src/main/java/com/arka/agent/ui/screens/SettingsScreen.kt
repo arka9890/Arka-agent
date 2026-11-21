@@ -47,13 +47,16 @@ import kotlinx.coroutines.withContext
 fun SettingsScreen(vm: MainViewModel) {
     val settings by vm.settings.collectAsState()
     val distro by vm.distro.collectAsState()
+    val diag by vm.diagnostic.collectAsState()
+    val install by vm.installProgress.collectAsState()
     val context = LocalContext.current
 
     var stats by remember { mutableStateOf<SystemStats?>(null) }
-    var diag by remember { mutableStateOf<String?>(null) }
     var workspaceBytes by remember { mutableStateOf(0L) }
 
-    LaunchedEffect(Unit) {
+    // Dimuat ulang setelah rootfs selesai dipasang supaya angka ukuran tidak
+    // tertinggal di 0 B.
+    LaunchedEffect(distro.installed, distro.sizeBytes) {
         stats = withContext(Dispatchers.IO) { readStats(context) }
         workspaceBytes = withContext(Dispatchers.IO) {
             runCatching { vm.workspaceSizeNow() }.getOrDefault(0L)
@@ -84,6 +87,11 @@ fun SettingsScreen(vm: MainViewModel) {
                     selected = settings["language"] ?: "id",
                     onSelect = { vm.updateSetting("language", it) },
                 )
+                Text(
+                    "Pilihan disimpan, tetapi teks antarmuka masih Bahasa Indonesia.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
                 Spacer(Modifier.height(Space.sm))
                 ChoiceRow(
                     label = "Ukuran font",
@@ -101,9 +109,12 @@ fun SettingsScreen(vm: MainViewModel) {
                     checked = settings["auto_scroll"] != "false",
                     onChange = { vm.updateSetting("auto_scroll", it.toString()) },
                 )
+                // Belum ada NotificationManager di aplikasi ini: tombol
+                // sengaja dinonaktifkan supaya tidak terlihat "rusak".
                 ToggleRow(
-                    label = "Notifikasi pesan baru",
+                    label = "Notifikasi pesan baru (belum aktif)",
                     checked = settings["notifications"] != "false",
+                    enabled = false,
                     onChange = { vm.updateSetting("notifications", it.toString()) },
                 )
             }
@@ -114,8 +125,28 @@ fun SettingsScreen(vm: MainViewModel) {
                 InfoRow("Path di aplikasi", "/root/storage")
                 InfoRow("Ukuran workspace", humanSize(workspaceBytes))
                 InfoRow("Rootfs Ubuntu", humanSize(distro.sizeBytes))
+                InfoRow(
+                    "Status Ubuntu",
+                    if (distro.installed) "terpasang" else "belum terpasang",
+                )
                 Spacer(Modifier.height(Space.sm))
-                TextButton(onClick = { vm.runDiagnostic() }) { Text("Tes distro") }
+                Row {
+                    TextButton(onClick = { vm.runDiagnostic() }) { Text("Tes distro") }
+                    if (!distro.installed) {
+                        Spacer(Modifier.width(Space.xs))
+                        TextButton(
+                            onClick = { vm.installUbuntu() },
+                            enabled = install == null,
+                        ) { Text(if (install == null) "Pasang Ubuntu 24" else "Memasang…") }
+                    }
+                }
+                install?.let { progress ->
+                    Text(
+                        "${progress.first}% · ${progress.second}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.accent,
+                    )
+                }
                 diag?.let {
                     Text(
                         it,
@@ -213,14 +244,23 @@ private fun ChoiceRow(
 }
 
 @Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onChange)
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (enabled) clay.onSurface else clay.muted,
+        )
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
 

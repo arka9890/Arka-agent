@@ -25,6 +25,14 @@ import kotlinx.coroutines.launch
  */
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
+    companion object {
+        /** Setting penanda kapan auto-install terakhir dicoba. */
+        private const val AUTO_INSTALL_KEY = "rootfs_auto_attempt"
+
+        /** Jeda minimum sebelum auto-install boleh mencoba lagi (6 jam). */
+        private const val AUTO_INSTALL_RETRY_MS = 6 * 60 * 60 * 1000L
+    }
+
     private val repo = ArkaRepo(app)
 
     // ------------------------------------------------------------- state
@@ -72,6 +80,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _installProgress = MutableStateFlow<Pair<Int, String>?>(null)
     val installProgress: StateFlow<Pair<Int, String>?> = _installProgress.asStateFlow()
 
+    private val _diagnostic = MutableStateFlow<String?>(null)
+
+    /** Hasil "Tes distro" terakhir (ditampilkan di tab Setelan). */
+    val diagnostic: StateFlow<String?> = _diagnostic.asStateFlow()
+
     private val _notice = MutableStateFlow<String?>(null)
 
     /** Pesan sekali-tampil (snackbar): error atau konfirmasi aksi. */
@@ -80,18 +93,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var chatJob: Job? = null
     private var streamBuffer = StringBuilder()
 
+    /** Penjaga [appendTerminal]; output datang dari thread native juga. */
+    private val terminalLock = Any()
+    private var terminalPending = StringBuilder()
+
+    /** Cegah auto-install dipicu dua kali dalam satu proses. */
+    private var autoInstallStarted = false
+
     init {
         viewModelScope.launch {
-            _settings.value = repo.settings()
-            refreshSessions()
-            refreshProviders()
-            refreshDistro()
-            refreshFiles("")
-            _terminalHistory.value = repo.terminalHistory()
+            // Dimuat berurutan (bukan lewat refreshXxx yang melempar coroutine
+            // baru) supaya state di bawah sudah terisi saat dipakai.
+            _settings.value = runCatching { repo.settings() }.getOrDefault(emptyMap())
+            _providers.value = runCatching { repo.providers() }.getOrDefault(emptyList())
+            _sessions.value = runCatching { repo.sessions() }.getOrDefault(emptyList())
+            _distro.value = runCatching { repo.distroStatus() }.getOrDefault(DistroStatus())
+            _files.value = runCatching { repo.files("") }.getOrDefault(emptyList())
+            _terminalHistory.value = runCatching { repo.terminalHistory() }.getOrDefault(emptyList())
             ArkaApp.initError?.let { notify(it) }
             // Pilih sesi terbaru supaya pengguna langsung bisa mengetik.
             _sessions.value.firstOrNull()?.let { selectSession(it.id) }
+            autoInstallIfNeeded()
         }
+    }
+
+    /**
+     * PRD 4.2: rootfs Ubuntu diunduh otomatis saat aplikasi pertama kali
+     * dibuka. Dipanggil setelah status distro diketahui.
+     *
+     * Percobaan otomatis dibatasi (maksimal sekali per [AUTO_INSTALL_RETRY_MS])
+     * supaya perangkat offline tidak mencoba mengunduh 30 MB setiap aplikasi
+     * dibuka; tombol "Pasang sekarang" tetap bisa dipakai kapan saja.
+     */
+    private fun autoInstallIfNeeded() {
+        val status = _distro.value
+        if (status.installed || autoInstallStarted) return
+        if (!status.prootAvailable) {
+            // Tanpa binary proot rootfs tidak bisa dijalankan sama sekali.
+            return
+        }
+        val last = _settings.value[AUTO_INSTALL_KEY]?.toLongOrNull() ?: 0L
+        if (System.currentTimeMillis() - last < AUTO_INSTALL_RETRY_MS) return
+
+        autoInstallStarted = true
+        updateSetting(AUTO_INSTALL_KEY, System.currentTimeMillis().toString())
+        notify("Mengunduh Ubuntu 24 (±30 MB). Progres ada di tab Terminal.")
+        installUbuntu()
     }
 
     fun notify(message: String) {
@@ -104,7 +151,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------- sesi
 
-    fun refreshSessions() = viewModelScope.launch {
+    fun refreshSessions() = viewModelScope.launch { reloadSessions() }
+
+    /** Versi suspend: daftar sesi sudah terisi saat baris berikutnya berjalan. */
+    private suspend fun reloadSessions() {
         _sessions.value = runCatching { repo.sessions() }.getOrElse {
             notify(it.message ?: "Gagal memuat sesi")
             emptyList()
@@ -125,7 +175,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val provider = _providers.value.firstOrNull { it.isDefault } ?: _providers.value.firstOrNull()
         runCatching {
             val s = repo.createSession("Sesi baru", provider?.id, provider?.model)
-            refreshSessions()
+            // Tunggu daftar sesi terisi dulu supaya UI tidak sempat menampilkan
+            // layar "belum ada sesi" setelah menekan tombol buat sesi.
+            reloadSessions()
             selectSession(s.id)
         }.onFailure { notify(it.message ?: "Gagal membuat sesi") }
     }
@@ -140,7 +192,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteSession(id: String) = viewModelScope.launch {
         runCatching {
             repo.deleteSession(id)
-            refreshSessions()
+            reloadSessions()
             if (_currentSessionId.value == id) {
                 _currentSessionId.value = null
                 _messages.value = emptyList()
@@ -172,8 +224,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         chatJob = viewModelScope.launch {
             try {
-                val attachmentJson = attachments.joinToString(",", "[", "]") {
-                    """{"path":${quote(it)},"kind":"text"}"""
+                // Jenis file ikut disimpan supaya bubble chat bisa menampilkan
+                // thumbnail gambar/video, bukan ikon teks untuk semua file.
+                val attachmentJson = attachments.joinToString(",", "[", "]") { path ->
+                    val kind = runCatching { repo.fileStat(path).kind }.getOrDefault("text")
+                    """{"path":${quote(path)},"kind":${quote(kind)}}"""
                 }
                 val userMsg = repo.addMessage(sessionId, "user", body, attachmentJson)
                 _messages.value = _messages.value + userMsg
@@ -326,6 +381,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onResult(runCatching { repo.readText(path) })
     }
 
+    /** Info satu file; dipakai saat lampiran chat diketuk (buka pratinjau). */
+    fun statFile(path: String, onResult: (Result<FileInfo>) -> Unit) = viewModelScope.launch {
+        onResult(runCatching { repo.fileStat(path) })
+    }
+
     /** Baca satu folder tanpa mengubah state tab File (dipakai dialog lampiran). */
     suspend fun filesNow(path: String): List<FileInfo> = repo.files(path)
 
@@ -343,12 +403,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_installProgress.value != null) return
         _installProgress.value = 0 to "Menyiapkan…"
         viewModelScope.launch {
-            val result = repo.installUbuntu { percent, label ->
-                _installProgress.value = percent to label
-            }
+            val result = repo.installUbuntu(
+                onProgress = { percent, label ->
+                    _installProgress.value = percent to label
+                },
+                // Output apt-get ikut ditampilkan di tab Terminal supaya
+                // pengguna tahu prosesnya benar-benar berjalan.
+                onOutput = { chunk -> appendTerminal(chunk) },
+            )
             _installProgress.value = null
             refreshDistro()
-            result.onFailure { notify(it.message ?: "Pemasangan gagal") }
+            result
+                .onSuccess { notify("Ubuntu 24 siap dipakai.") }
+                .onFailure { notify(it.message ?: "Pemasangan gagal") }
         }
     }
 
@@ -381,6 +448,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearTerminal() {
+        synchronized(terminalLock) { terminalPending = StringBuilder() }
         _terminalLines.value = emptyList()
     }
 
@@ -390,18 +458,50 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun runDiagnostic() = viewModelScope.launch {
+        _diagnostic.value = "Menjalankan tes distro…"
         appendTerminal("\$ arka-diagnostic\n")
         runCatching { repo.diagnostic() }
-            .onSuccess { appendTerminal("$it\n") }
-            .onFailure { appendTerminal("${it.message}\n") }
+            .onSuccess {
+                _diagnostic.value = it
+                appendTerminal("$it\n")
+            }
+            .onFailure {
+                _diagnostic.value = it.message ?: "Tes distro gagal"
+                appendTerminal("${it.message}\n")
+            }
     }
 
+    /**
+     * Tambahkan output mentah ke terminal.
+     *
+     * Output proot datang sebagai potongan sembarang (bisa di tengah baris),
+     * jadi potongan disimpan dulu sampai ada newline. Tanpa buffer ini setiap
+     * potongan tampil sebagai baris baru dan output `apt`/`git` jadi berantakan.
+     */
     private fun appendTerminal(chunk: String) {
+        synchronized(terminalLock) {
+            terminalPending.append(chunk.replace("\r\n", "\n").replace('\r', '\n'))
+            val text = terminalPending.toString()
+            val cut = text.lastIndexOf('\n')
+            if (cut < 0) {
+                // Belum ada baris utuh. Potongan sangat panjang (mis. prompt
+                // tanpa newline) tetap ditampilkan supaya tidak "hilang".
+                if (terminalPending.length > 8192) {
+                    terminalPending = StringBuilder()
+                    pushTerminalLines(listOf(text))
+                }
+                return
+            }
+            terminalPending = StringBuilder(text.substring(cut + 1))
+            pushTerminalLines(text.substring(0, cut).split("\n"))
+        }
+    }
+
+    private fun pushTerminalLines(newLines: List<String>) {
+        if (newLines.isEmpty()) return
         // Batasi riwayat tampilan supaya scroll tidak melambat setelah ribuan
         // baris output (mis. `apt upgrade`).
-        val merged = (_terminalLines.value + chunk.split("\n").dropLast(1).let {
-            if (chunk.endsWith("\n")) it else it + chunk.split("\n").last()
-        })
+        val merged = _terminalLines.value + newLines
         _terminalLines.value = if (merged.size > 2000) merged.takeLast(2000) else merged
     }
 

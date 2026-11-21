@@ -97,25 +97,27 @@ fun TerminalScreen(vm: MainViewModel) {
                 text = if (distro.installed) "siap" else "belum siap",
                 color = if (distro.installed) clay.success else clay.danger,
             )
-            IconButton(onClick = { showHistory = true }) {
-                Icon(Icons.Outlined.History, "Riwayat", tint = clay.muted)
+            Box {
+                IconButton(onClick = { showHistory = true }) {
+                    Icon(Icons.Outlined.History, "Riwayat", tint = clay.muted)
+                }
+                DropdownMenu(expanded = showHistory, onDismissRequest = { showHistory = false }) {
+                    if (history.isEmpty()) {
+                        DropdownMenuItem(text = { Text("Belum ada riwayat") }, onClick = {})
+                    }
+                    history.reversed().take(20).forEach { cmd ->
+                        DropdownMenuItem(
+                            text = { Text(cmd, style = MaterialTheme.typography.bodySmall, maxLines = 1) },
+                            onClick = {
+                                command = cmd
+                                showHistory = false
+                            },
+                        )
+                    }
+                }
             }
             IconButton(onClick = { vm.clearTerminal() }) {
                 Icon(Icons.Outlined.Delete, "Bersihkan", tint = clay.muted)
-            }
-            DropdownMenu(expanded = showHistory, onDismissRequest = { showHistory = false }) {
-                if (history.isEmpty()) {
-                    DropdownMenuItem(text = { Text("Belum ada riwayat") }, onClick = {})
-                }
-                history.reversed().take(20).forEach { cmd ->
-                    DropdownMenuItem(
-                        text = { Text(cmd, style = MaterialTheme.typography.bodySmall, maxLines = 1) },
-                        onClick = {
-                            command = cmd
-                            showHistory = false
-                        },
-                    )
-                }
             }
         }
 
@@ -226,20 +228,26 @@ fun TerminalScreen(vm: MainViewModel) {
                     imeAction = ImeAction.Send,
                 ),
                 keyboardActions = KeyboardActions(onSend = {
-                    if (!running && distro.installed) {
-                        vm.runCommand(command)
-                        command = ""
+                    when {
+                        running -> Unit
+                        !distro.installed -> vm.notify("Pasang Ubuntu 24 dulu.")
+                        else -> {
+                            vm.runCommand(command)
+                            command = ""
+                        }
                     }
                 }),
             )
             Spacer(Modifier.width(Space.sm))
             IconButton(
                 onClick = {
-                    if (running) {
-                        vm.stopCommand()
-                    } else if (distro.installed) {
-                        vm.runCommand(command)
-                        command = ""
+                    when {
+                        running -> vm.stopCommand()
+                        !distro.installed -> vm.notify("Pasang Ubuntu 24 dulu.")
+                        else -> {
+                            vm.runCommand(command)
+                            command = ""
+                        }
                     }
                 },
                 modifier = Modifier

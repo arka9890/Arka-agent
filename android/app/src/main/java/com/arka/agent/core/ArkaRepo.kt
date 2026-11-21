@@ -244,11 +244,15 @@ class ArkaRepo(private val context: Context) {
      * Pasang Ubuntu 24. [onProgress] dipanggil dari thread native dengan
      * persentase + label tahap.
      */
-    suspend fun installUbuntu(onProgress: (Int, String) -> Unit): Result<Unit> = io {
+    suspend fun installUbuntu(
+        onProgress: (Int, String) -> Unit,
+        onOutput: (String) -> Unit = {},
+    ): Result<Unit> = io {
         runCatching {
             var error: String? = null
             Arka.installUbuntu(object : Arka.InstallCallback {
                 override fun onProgress(percent: Int, label: String) = onProgress(percent, label)
+                override fun onOutput(chunk: String) = onOutput(chunk)
                 override fun onError(message: String) {
                     error = message
                 }

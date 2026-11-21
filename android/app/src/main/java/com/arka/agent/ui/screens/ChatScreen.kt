@@ -22,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
@@ -56,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.arka.agent.MainViewModel
+import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
 import com.arka.agent.core.Session
 import com.arka.agent.ui.components.ClayCard
@@ -77,6 +80,7 @@ fun ChatScreen(vm: MainViewModel) {
     val messages by vm.messages.collectAsState()
     val streaming by vm.streamingText.collectAsState()
     val busy by vm.busy.collectAsState()
+    val settings by vm.settings.collectAsState()
 
     var drawer by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
@@ -84,6 +88,7 @@ fun ChatScreen(vm: MainViewModel) {
     var showAttach by remember { mutableStateOf(false) }
     var showModelMenu by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var preview by remember { mutableStateOf<FileInfo?>(null) }
 
     val current = sessions.firstOrNull { it.id == currentId }
 
@@ -93,12 +98,6 @@ fun ChatScreen(vm: MainViewModel) {
             vm.loadModels(pid) { models = it }
         } else {
             models = emptyList()
-        }
-    }
-
-    LaunchedEffect(messages.size, streaming) {
-        if (messages.isNotEmpty() || streaming.isNotEmpty()) {
-            // auto-scroll ditangani list; cukup andalkan animateScrollToItem
         }
     }
 
@@ -125,7 +124,16 @@ fun ChatScreen(vm: MainViewModel) {
                     messages = messages,
                     streaming = streaming,
                     busy = busy,
-                    onOpenFile = { path -> vm.notify("Buka: $path") },
+                    autoScroll = settings["auto_scroll"] != "false",
+                    resolveFile = vm::workspaceFile,
+                    onOpenFile = { path ->
+                        // Lampiran diketuk → buka dialog pratinjau yang sama
+                        // dengan tab File (gambar, teks, PDF, video).
+                        vm.statFile(path) { result ->
+                            result.onSuccess { preview = it }
+                                .onFailure { vm.notify(it.message ?: "File tidak ditemukan") }
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 InputBar(
@@ -174,6 +182,10 @@ fun ChatScreen(vm: MainViewModel) {
                     showAttach = false
                 },
             )
+        }
+
+        preview?.let { file ->
+            FilePreviewDialog(vm = vm, file = file, onDismiss = { preview = null })
         }
     }
 }
@@ -264,7 +276,7 @@ private fun EmptyChat(onStart: () -> Unit) {
                         color = clay.muted,
                     )
                     Spacer(Modifier.height(Space.md))
-                    ClayPill("Mulai sesi baru", clay.accent)
+                    ClayPill("Mulai sesi baru", clay.accent, onClick = onStart)
                 }
             }
             Spacer(Modifier.height(Space.lg))
@@ -278,13 +290,16 @@ private fun MessageList(
     messages: List<Message>,
     streaming: String,
     busy: Boolean,
+    autoScroll: Boolean,
+    resolveFile: (String) -> java.io.File,
     onOpenFile: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
     val lastContent = streaming.ifEmpty { messages.lastOrNull()?.content.orEmpty() }
 
-    LaunchedEffect(messages.size, lastContent.length) {
+    LaunchedEffect(messages.size, lastContent.length, autoScroll) {
+        if (!autoScroll) return@LaunchedEffect
         val target = if (streaming.isNotEmpty()) messages.size else messages.lastIndex.coerceAtLeast(0)
         if (target >= 0) listState.animateScrollToItem(target)
     }
@@ -296,7 +311,7 @@ private fun MessageList(
         verticalArrangement = Arrangement.spacedBy(Space.sm),
     ) {
         items(messages, key = { it.id }) { m ->
-            MessageBubble(message = m, onOpenFile = onOpenFile)
+            MessageBubble(message = m, resolveFile = resolveFile, onOpenFile = onOpenFile)
         }
         if (streaming.isNotEmpty()) {
             item(key = "streaming") {
@@ -308,6 +323,7 @@ private fun MessageList(
                         content = streaming,
                     ),
                     streaming = true,
+                    resolveFile = resolveFile,
                     onOpenFile = onOpenFile,
                 )
             }
@@ -349,14 +365,15 @@ private fun InputBar(
                 horizontalArrangement = Arrangement.spacedBy(Space.xs),
             ) {
                 attachments.take(3).forEach { path ->
-                    ClayPill(path.substringAfterLast('/'), clay.accent)
+                    // Ketuk pill untuk melepas satu lampiran.
+                    ClayPill(
+                        text = path.substringAfterLast('/'),
+                        color = clay.accent,
+                        onClick = { onRemoveAttachment(path) },
+                    )
                 }
                 if (attachments.size > 3) {
                     ClayPill("+${attachments.size - 3}", clay.muted)
-                }
-                attachments.forEach { path ->
-                    // hanya satu aksi hapus per pill tidak praktis di sini;
-                    // hapus semua lewat ikon.
                 }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { attachments.forEach { onRemoveAttachment(it) } }) {
@@ -385,6 +402,12 @@ private fun InputBar(
                         placeholder = { Text("Kirim pesan…", color = clay.muted) },
                         textStyle = MaterialTheme.typography.bodyMedium,
                         maxLines = 4,
+                        // Enter di keyboard = kirim (Shift+Enter tetap baris baru
+                        // di keyboard fisik).
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (!busy && input.isNotBlank()) onSend()
+                        }),
                     )
                 }
             }

@@ -95,6 +95,9 @@ object Arka {
     /** Callback progres unduh/pasang Ubuntu 24. */
     interface InstallCallback {
         fun onProgress(percent: Int, label: String)
+
+        /** Output mentah apt-get saat memasang tools (dipanggil dari thread native). */
+        fun onOutput(chunk: String)
         fun onError(message: String)
     }
 

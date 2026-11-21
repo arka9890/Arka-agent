@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -172,7 +173,8 @@ fun ProvidersScreen(vm: MainViewModel) {
             if (providers.isEmpty()) {
                 item {
                     Text(
-                        "Belum ada provider. Tekan Tambah untuk memakai [OI], Mistral, atau endpoint sendiri.",
+                        "Belum ada provider. Tekan Tambah untuk memakai OpenAI, Anthropic, " +
+                            "atau endpoint yang kompatibel.",
                         style = MaterialTheme.typography.bodySmall,
                         color = clay.muted,
                         modifier = Modifier.padding(Space.md),
@@ -219,6 +221,14 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
     var testResult by remember { mutableStateOf<String?>(null) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
 
+    // Provider yang sudah tersimpan: ambil daftar modelnya sekali saat dialog
+    // dibuka supaya pengguna bisa memilih tanpa mengetik nama model.
+    LaunchedEffect(initial.id) {
+        if (initial.id.isNotBlank()) {
+            vm.loadModels(initial.id) { models = it }
+        }
+    }
+
     val draft = initial.copy(
         name = name,
         kind = kind,
@@ -227,6 +237,12 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
         model = model,
         isDefault = isDefault,
     )
+
+    // Base URL default per jenis protokol supaya provider baru tidak langsung
+    // gagal karena field kosong. Dipakai tombol Tes maupun Simpan.
+    val resolvedUrl = baseUrl.ifBlank {
+        if (kind == "anthropic") "https://api.anthropic.com" else "https://api.openai.com/v1"
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -287,7 +303,7 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                     Spacer(Modifier.width(Space.sm))
                     TextButton(
                         onClick = {
-                            vm.testProvider(draft) { testResult = it }
+                            vm.testProvider(draft.copy(baseUrl = resolvedUrl)) { testResult = it }
                         },
                     ) { Text("Tes koneksi") }
                 }
@@ -296,16 +312,33 @@ private fun ProviderDialog(vm: MainViewModel, initial: Provider, onDismiss: () -
                 }
                 if (models.isNotEmpty()) {
                     Text(
-                        "Model tersedia: ${models.take(5).joinToString(", ")}",
+                        "Model tersedia (ketuk untuk memakai):",
                         style = MaterialTheme.typography.labelSmall,
                         color = clay.muted,
                     )
+                    models.take(6).forEach { m ->
+                        TextButton(
+                            onClick = { model = m },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        ) {
+                            Text(
+                                m,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (m == model) clay.accent else clay.muted,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                vm.saveProvider(draft) { onDismiss() }
+                if (name.isBlank()) {
+                    testResult = "Nama provider wajib diisi."
+                    return@TextButton
+                }
+                vm.saveProvider(draft.copy(name = name.trim(), baseUrl = resolvedUrl)) { onDismiss() }
             }) { Text("Simpan") }
         },
         dismissButton = {

@@ -85,6 +85,22 @@ android {
     }
 }
 
+// Peringatan dini: APK tanpa binary proot tetap bisa dibangun, tetapi tab
+// Terminal tidak akan bisa menjalankan perintah sama sekali. Lebih baik
+// terlihat di log build daripada baru ketahuan di perangkat.
+tasks.named("preBuild") {
+    doFirst {
+        val abiDir = file("src/main/jniLibs/arm64-v8a")
+        if (!File(abiDir, "libproot.so").exists()) {
+            logger.warn(
+                "[arka] libproot.so tidak ada di ${abiDir.path}. " +
+                    "Terminal tidak akan berfungsi di APK ini " +
+                    "(lihat android/app/src/main/jniLibs/README.md).",
+            )
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

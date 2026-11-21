@@ -69,6 +69,7 @@ private fun parseAttachments(json: String): List<Attachment> = runCatching {
 fun MessageBubble(
     message: Message,
     streaming: Boolean = false,
+    resolveFile: (String) -> File = { File(it) },
     onOpenFile: (String) -> Unit = {},
 ) {
     val isUser = message.role == "user"
@@ -94,7 +95,7 @@ fun MessageBubble(
         ) {
             if (attachments.isNotEmpty()) {
                 attachments.forEach { att ->
-                    AttachmentPreview(att, onOpenFile)
+                    AttachmentPreview(att, resolveFile, onOpenFile)
                     Spacer(Modifier.height(6.dp))
                 }
             }
@@ -115,8 +116,14 @@ fun MessageBubble(
  * tombol — file besar tidak boleh didekode ke memori di tengah chat.
  */
 @Composable
-private fun AttachmentPreview(att: Attachment, onOpenFile: (String) -> Unit) {
-    val file = remember(att.path) { File(att.path) }
+private fun AttachmentPreview(
+    att: Attachment,
+    resolveFile: (String) -> File,
+    onOpenFile: (String) -> Unit,
+) {
+    // Path lampiran relatif terhadap workspace, bukan path absolut proses —
+    // tanpa resolver ini File(path) selalu "tidak ditemukan".
+    val file = remember(att.path) { resolveFile(att.path) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -126,7 +133,7 @@ private fun AttachmentPreview(att: Attachment, onOpenFile: (String) -> Unit) {
             .padding(8.dp),
     ) {
         when (att.kind) {
-            "image" -> ImageThumbnail(att.path)
+            "image" -> ImageThumbnail(file)
             "video" -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.PlayCircle, "Putar video", tint = Color.White)
                 Spacer(Modifier.width(8.dp))
@@ -166,13 +173,13 @@ private fun AttachmentPreview(att: Attachment, onOpenFile: (String) -> Unit) {
 }
 
 @Composable
-private fun ImageThumbnail(path: String) {
-    var bitmap by remember(path) { mutableStateOf<android.graphics.Bitmap?>(null) }
+private fun ImageThumbnail(file: File) {
+    var bitmap by remember(file.path) { mutableStateOf<android.graphics.Bitmap?>(null) }
 
-    LaunchedEffect(path) {
+    LaunchedEffect(file.path) {
         bitmap = withContext(Dispatchers.IO) {
             runCatching {
-                val file = File(path)
+                val path = file.path
                 if (!file.isFile) return@runCatching null
                 // Decode dengan inSampleSize supaya gambar 4000px tidak
                 // menghabiskan RAM hanya untuk thumbnail 200px.

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Chat
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.screens.ChatScreen
@@ -116,6 +118,13 @@ private fun ClayTabBar(current: Tab, onSelect: (Tab) -> Unit) {
                     .weight(1f)
                     .clip(RoundedCornerShape(18.dp))
                     .background(if (active) clay.accentSoft else clay.surface)
+                    // Tanpa modifier ini item tab hanya dekorasi: tidak ada
+                    // klik/ripple sehingga navbar terasa mati.
+                    .selectable(
+                        selected = active,
+                        role = Role.Tab,
+                        onClick = { onSelect(entry) },
+                    )
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center,
             ) {

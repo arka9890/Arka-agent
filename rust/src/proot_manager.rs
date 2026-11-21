@@ -59,7 +59,9 @@ pub fn status() -> Result<DistroStatus, String> {
     let proot_available = ctx::proot_binary()?.is_some() && ctx::loader_binary()?.is_some();
     let size = if installed { dir_size(&ctx::rootfs_dir()?) } else { 0 };
     let message = if !proot_available {
-        "Binary proot tidak ada di APK ini. Build ulang tanpa -Pproot.skip.".to_string()
+        "Binary proot tidak ada di APK ini, jadi terminal tidak bisa dipakai. \
+         Pastikan libproot.so + libproot-loader.so ada di jniLibs saat build."
+            .to_string()
     } else if !installed {
         "Ubuntu 24 belum dipasang. Unduh ±30 MB untuk mengaktifkan terminal dan tools.".to_string()
     } else {
@@ -388,8 +390,8 @@ fn spawn_proot(command: &str) -> Result<std::process::Child, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     cmd.spawn().map_err(|e| {
         format!(
-            "Gagal menjalankan proot: {e}. Pastikan APK dibangun dengan binary proot \
-             (jangan pakai -Pproot.skip)."
+            "Gagal menjalankan proot: {e}. Pastikan libproot.so dan \
+             libproot-loader.so ada di jniLibs saat build."
         )
     })
 }

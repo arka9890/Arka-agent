@@ -56,7 +56,9 @@ fn cancel_token(source: &'static AtomicBool) -> Arc<AtomicBool> {
         }
     });
     token
-}fn fail(env: &mut JNIEnv, msg: impl AsRef<str>) {
+}
+
+fn fail(env: &mut JNIEnv, msg: impl AsRef<str>) {
     let _ = env.throw_new("java/lang/RuntimeException", msg.as_ref());
 }
 
