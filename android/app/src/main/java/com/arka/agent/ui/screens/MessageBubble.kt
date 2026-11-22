@@ -10,7 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -22,9 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -35,11 +32,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Stop
@@ -76,7 +77,6 @@ import com.arka.agent.MainViewModel
 import com.arka.agent.ui.LocalLanguage
 import com.arka.agent.ui.tr
 import com.arka.agent.ui.trFor
-import com.arka.agent.core.AttachmentRef
 import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
 import com.arka.agent.core.Session
@@ -84,7 +84,6 @@ import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.components.ClayPill
 import com.arka.agent.ui.theme.Space
 import com.arka.agent.ui.theme.clay
-import kotlinx.coroutines.delay
 import java.io.File
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -98,24 +97,18 @@ data class Attachment(
     val name: String,
 )
 
-private fun parseAttachments(refs: List<AttachmentRef>): List<Attachment> = refs.mapNotNull {
-    val path = it.path
-    if (path.isBlank()) return@mapNotNull null
-    val mime = it.mime
-    Attachment(
-        path = path,
-        kind = when {
-            mime.startsWith("image/") -> "image"
-            mime.startsWith("video/") -> "video"
-            mime == "application/pdf" -> "pdf"
-            mime.startsWith("text/") -> "text"
-            else -> "file"
-        },
-        name = it.name.takeIf { name -> name.isNotBlank() }?.let { name ->
-            // Hapus prefix workspace jika ada, ambil nama file saja
-            name.replace("^/root/storage/".toRegex(), "")
-        }.ifBlank { path.substringAfterLast('/') },
-    )
+private fun parseAttachments(json: String): List<Attachment> = runCatching {
+    val arr = org.json.JSONArray(json)
+    (0 until arr.length()).map { i ->
+        val o = arr.getJSONObject(i)
+        val path = o.optString("path")
+        Attachment(
+            path = path,
+            kind = o.optString("kind", "text"),
+            // Nama disimpan saat memilih (SAF); fallback untuk pesan lama.
+            name = o.optString("name").ifBlank { path.substringAfterLast('/') },
+        )
+    }
 }.getOrDefault(emptyList())
 
 /**
@@ -128,26 +121,12 @@ private fun parseAttachments(refs: List<AttachmentRef>): List<Attachment> = refs
 fun MessageBubble(
     message: Message,
     streaming: Boolean = false,
-    streamingText: String = "",
     resolveFile: (String) -> File = { File(it) },
     onOpenFile: (String) -> Unit = {},
     onCopy: (String) -> Unit = {},
 ) {
     val isUser = message.role == "user"
     val attachments = remember(message.attachments) { parseAttachments(message.attachments) }
-    
-    // State untuk animasi mengetik
-    var showTypingAnimation by remember(message.id) { mutableStateOf(false) }
-    
-    // Delay awal untuk efek mengetik
-    LaunchedEffect(key1 = message.id) {
-        if (message.role == "assistant" && message.content.isNotEmpty() && !streaming) {
-            delay(300) // Delay awal sebelum mulai mengetik
-            showTypingAnimation = true
-        } else {
-            showTypingAnimation = false
-        }
-    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -174,13 +153,11 @@ fun MessageBubble(
                 }
             }
             MarkdownText(
-                text = if (streaming && message.content == "") streamingText else message.content,
+                text = message.content,
                 color = if (isUser) Color.White else clay.onSurface,
                 showCursor = streaming,
-                animateTyping = showTypingAnimation,
-                typingSpeed = 20L, // ms per karakter
             )
-            if (!streaming && !showTypingAnimation) {
+            if (!streaming) {
                 Row(
                     Modifier.fillMaxWidth().padding(top = 2.dp),
                     horizontalArrangement = Arrangement.End,
@@ -391,7 +368,7 @@ private fun ImageThumbnail(file: File) {
 }
 
 /**
- * Markdown minimal dengan animasi mengetik.
+ * Markdown minimal.
  *
  * Tidak memakai library markdown: PRD hanya butuh code block + bold/italic,
  * dan parser ini menghindari satu dependensi + satu Compose-renderer besar.
@@ -401,27 +378,8 @@ fun MarkdownText(
     text: String,
     color: Color,
     showCursor: Boolean = false,
-    animateTyping: Boolean = false,
-    typingSpeed: Long = 20L, // ms per karakter
 ) {
-    val animatedText = remember(text, animateTyping) { 
-        mutableStateOf(if (animateTyping) "" else text) 
-    }
-    
-    // Animasi mengetik
-    LaunchedEffect(key1 = text, key2 = animateTyping) {
-        if (animateTyping && text.isNotEmpty()) {
-            animatedText.value = ""
-            for (i in 1..text.length) {
-                animatedText.value = text.take(i)
-                delay(typingSpeed)
-            }
-        } else {
-            animatedText.value = text
-        }
-    }
-    
-    val blocks = remember(animatedText.value) { splitCodeBlocks(animatedText.value) }
+    val blocks = remember(text) { splitCodeBlocks(text) }
     Column {
         blocks.forEach { block ->
             if (block.isCode) {

@@ -472,47 +472,53 @@ private fun MessageList(
     // ikut terukur dan kolom input terdorong keluar layar.
     SelectionContainer(modifier = modifier.fillMaxSize()) {
         LazyColumn(
-            }
             modifier = Modifier.fillMaxSize().padding(horizontal = Space.md),
             state = listState,
             contentPadding = PaddingValues(vertical = Space.sm),
             verticalArrangement = Arrangement.spacedBy(Space.sm),
         ) {
-        items(messages, key = { it.id }) { m ->
-            MessageBubble(
-                streamingText = streaming,
-                message = m,
-                resolveFile = resolveFile,
-                onOpenFile = onOpenFile,
-                onCopy = onCopy,
-            )
-        }
-        if (streaming.isNotEmpty()) {
-            item(key = "streaming") {
+            items(messages, key = { it.id }) { m ->
                 MessageBubble(
-                    message = Message(
-                        id = "streaming",
-                        sessionId = "",
-                        role = "assistant",
-                        content = streaming,
-                    ),
-                    streamingText = streaming,
-                    streaming = true,
+                    message = m,
                     resolveFile = resolveFile,
                     onOpenFile = onOpenFile,
                     onCopy = onCopy,
                 )
             }
-        }
-        if (messages.isEmpty() && streaming.isEmpty()) {
-            item {
-                Text(
-                    if (busy) tr("Berpikir…", "Thinking…", "考えています…") else tr("Kirim pesan untuk mulai.", "Send a message to start.", "メッセージを送信して始めましょう。"),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = clay.muted,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = Space.lg),
-                )
-        }
+            if (streaming.isNotEmpty()) {
+                item(key = "streaming") {
+                    MessageBubble(
+                        message = Message(
+                            id = "streaming",
+                            sessionId = "",
+                            role = "assistant",
+                            content = streaming,
+                        ),
+                        streaming = true,
+                        resolveFile = resolveFile,
+                        onOpenFile = onOpenFile,
+                        onCopy = onCopy,
+                    )
+                }
+            }
+            if (messages.isEmpty() && streaming.isEmpty()) {
+                item {
+                    Text(
+                        if (busy) {
+                            tr("Berpikir…", "Thinking…", "考えています…")
+                        } else {
+                            tr(
+                                "Kirim pesan untuk mulai.",
+                                "Send a message to start.",
+                                "メッセージを送信して始めましょう。",
+                            )
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = Space.lg),
+                    )
+                }
+            }
         }
     }
 }
