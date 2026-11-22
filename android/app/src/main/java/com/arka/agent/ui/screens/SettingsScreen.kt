@@ -63,6 +63,10 @@ fun SettingsScreen(vm: MainViewModel) {
     var roundsDraft by remember { mutableStateOf("40") }
     var showPromptDialog by remember { mutableStateOf(false) }
     var promptDraft by remember { mutableStateOf("") }
+    var showBudgetDialog by remember { mutableStateOf(false) }
+    var budgetDraft by remember { mutableStateOf("24000") }
+    var showToolOutputDialog by remember { mutableStateOf(false) }
+    var toolOutputDraft by remember { mutableStateOf("4000") }
 
     // Dimuat ulang setelah rootfs selesai dipasang supaya angka ukuran tidak
     // tertinggal di 0 B.
@@ -160,6 +164,71 @@ fun SettingsScreen(vm: MainViewModel) {
                     Spacer(Modifier.width(Space.sm))
                     TextButton(onClick = { roundsDraft = roundsValue.toString(); showRoundsDialog = true }) {
                         Text("$roundsValue")
+                    }
+                }
+                Spacer(Modifier.height(Space.sm))
+                // Ringkasan konteks: mencegah model "lupa" awal obrolan saat
+                // router memilih model dengan context window kecil.
+                ToggleRow(
+                    label = tr("Ringkas otomatis konteks lama", "Auto-compact old context", "古いコンテキストを自動要約"),
+                    checked = settings["auto_summary"] != "false",
+                    onChange = { vm.updateSetting("auto_summary", it.toString()) },
+                )
+                Text(
+                    tr(
+                        "Pesan lama diringkas sebelum dikirim. Pesan asli tetap tersimpan di riwayat.",
+                        "Older messages are summarized before sending. The originals stay in the history.",
+                        "古いメッセージは送信前に要約されます。元のメッセージは履歴に残ります。",
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
+                Spacer(Modifier.height(Space.sm))
+                val budgetValue = settings["context_budget"]?.toIntOrNull() ?: 24000
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Batas konteks", "Context budget", "コンテキスト上限"), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            tr(
+                                "Perkiraan token yang dikirim per request (4.000–128.000).",
+                                "Approximate tokens sent per request (4,000–128,000).",
+                                "1リクエストあたりの推定トークン数（4,000〜128,000）。",
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = clay.muted,
+                        )
+                    }
+                    Spacer(Modifier.width(Space.sm))
+                    TextButton(onClick = { budgetDraft = budgetValue.toString(); showBudgetDialog = true }) {
+                        Text("$budgetValue")
+                    }
+                }
+                Spacer(Modifier.height(Space.sm))
+                val toolCharsValue = settings["tool_output_chars"]?.toIntOrNull() ?: 4000
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Batas output tool", "Tool output limit", "ツール出力の上限"), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            tr(
+                                "Karakter output perintah yang disimpan di konteks (1.000–20.000).",
+                                "Characters of command output kept in context (1,000–20,000).",
+                                "コンテキストに保持するコマンド出力の文字数（1,000〜20,000）。",
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = clay.muted,
+                        )
+                    }
+                    Spacer(Modifier.width(Space.sm))
+                    TextButton(onClick = { toolOutputDraft = toolCharsValue.toString(); showToolOutputDialog = true }) {
+                        Text("$toolCharsValue")
                     }
                 }
                 Spacer(Modifier.height(Space.sm))
@@ -324,6 +393,92 @@ fun SettingsScreen(vm: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showRoundsDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
+            },
+        )
+    }
+
+    if (showBudgetDialog) {
+        val parsed = budgetDraft.trim().toIntOrNull()
+        val valid = parsed != null && parsed in 4_000..128_000
+        AlertDialog(
+            onDismissRequest = { showBudgetDialog = false },
+            title = { Text(tr("Batas konteks", "Context budget", "コンテキスト上限")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = budgetDraft,
+                        onValueChange = { budgetDraft = it.filter(Char::isDigit).take(6) },
+                        singleLine = true,
+                        label = { Text(tr("Token", "Tokens", "トークン")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        tr(
+                            "4.000–128.000. Default 24.000. Turunkan kalau combo/router sering memakai model berkonteks kecil.",
+                            "4,000–128,000. Default 24,000. Lower it if your combo/router often uses small-context models.",
+                            "4,000〜128,000。既定値は24,000。小さいコンテキストのモデルを使う場合は下げてください。",
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = valid,
+                    onClick = {
+                        vm.updateSetting("context_budget", parsed.toString())
+                        showBudgetDialog = false
+                    },
+                ) { Text(tr("Simpan", "Save", "保存")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBudgetDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
+            },
+        )
+    }
+
+    if (showToolOutputDialog) {
+        val parsed = toolOutputDraft.trim().toIntOrNull()
+        val valid = parsed != null && parsed in 1_000..20_000
+        AlertDialog(
+            onDismissRequest = { showToolOutputDialog = false },
+            title = { Text(tr("Batas output tool", "Tool output limit", "ツール出力の上限")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = toolOutputDraft,
+                        onValueChange = { toolOutputDraft = it.filter(Char::isDigit).take(5) },
+                        singleLine = true,
+                        label = { Text(tr("Karakter", "Characters", "文字数")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        tr(
+                            "1.000–20.000. Default 4.000. Output lebih panjang memakan konteks dan mempercepat model lupa.",
+                            "1,000–20,000. Default 4,000. Longer output consumes context and makes the model forget sooner.",
+                            "1,000〜20,000。既定値は4,000。出力が長いとコンテキストを消費し、モデルが忘れやすくなります。",
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = valid,
+                    onClick = {
+                        vm.updateSetting("tool_output_chars", parsed.toString())
+                        showToolOutputDialog = false
+                    },
+                ) { Text(tr("Simpan", "Save", "保存")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showToolOutputDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
             },
         )
     }

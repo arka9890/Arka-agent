@@ -8,6 +8,8 @@ import android.provider.OpenableColumns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.io.FileOutputStream
 
@@ -66,6 +68,17 @@ class ArkaRepo(private val context: Context) {
 
     suspend fun setSessionModel(sessionId: String, providerId: String?, model: String?) =
         io { Arka.setSessionModel(sessionId, providerId.orEmpty(), model.orEmpty()) }
+
+    /**
+     * Ringkas riwayat sesi sekarang (manual). Mengembalikan teks ringkasan
+     * yang baru disimpan; string kosong kalau provider tidak mengirim teks.
+     */
+    suspend fun compactSession(sessionId: String): String = io {
+        val raw = Arka.compactSession(sessionId)
+        runCatching {
+            json.parseToJsonElement(raw).jsonObject["summary"]?.jsonPrimitive?.content.orEmpty()
+        }.getOrDefault("")
+    }
 
     // --------------------------------------------------------- provider
 

@@ -13,6 +13,7 @@ mod ctx;
 mod db;
 mod file;
 mod jni_util;
+mod memory;
 mod proot_manager;
 mod provider;
 mod session;
@@ -248,6 +249,37 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_setSessionModel<'local>(
     unit_result(&mut env, || session::set_model(&session_id, &provider_id, &model));
 }
 
+/// Ringkas riwayat sesi sekarang (manual, dari menu sesi di UI).
+///
+/// Memakai provider/model sesi; kalau providernya sudah dihapus, jatuh ke
+/// provider default. Mengembalikan JSON `{ "summary": "..." }`.
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_compactSession<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session_id: JString<'local>,
+) -> JString<'local> {
+    let session_id = ju::arg_str(&mut env, &session_id);
+    json_result(&mut env, || {
+        let s = session::get(&session_id)?;
+        let p = match s.provider_id.as_deref().filter(|v| !v.trim().is_empty()) {
+            Some(id) => provider::get(id).or_else(|_| {
+                provider::default_provider()?
+                    .ok_or_else(|| "Belum ada provider AI. Tambahkan di tab Provider.".to_string())
+            })?,
+            None => provider::default_provider()?
+                .ok_or("Belum ada provider AI. Tambahkan di tab Provider.")?,
+        };
+        let model = s
+            .model
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| p.model.clone());
+        let summary = memory::compact_now(&p, &model, &session_id)?;
+        Ok(json!({ "summary": summary }).to_string())
+    })
+}
+
 // ------------------------------------------------------------- providers
 
 #[no_mangle]
@@ -343,13 +375,7 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_refreshModels<'local>(
 // -------------------------------------------------------------------- AI
 
 fn plain_msg(role: &str, content: &str) -> ai::ChatMsg {
-    ai::ChatMsg {
-        role: role.to_string(),
-        content: content.to_string(),
-        tool_calls: None,
-        tool_call_id: None,
-        blocks: None,
-    }
+    ai::ChatMsg::plain(role, content)
 }
 
 /// Potong output perintah supaya tidak membengkakkan prompt berikutnya.
@@ -444,18 +470,61 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
+    // Ringkas riwayat lama sebelum dikirim. Ini pengaman untuk router/combo
+    // yang memilih model dengan context window kecil: lebih baik model
+    // menerima ringkasan + pesan terakhir daripada awal obrolan dipotong
+    // diam-diam oleh provider.
+    let budget = settings::context_budget();
+    if settings::auto_summary() {
+        msgs = memory::prepare(&p, &model, &session_id, msgs, budget, cancel.as_ref());
+    }
+
     // Batas langkah agent bisa diatur di Setelan (default 40): tugas panjang
     // (clone, build, uji) sering butuh belasan perintah.
     let max_tool_rounds = settings::max_tool_rounds();
+    let tool_output_chars = settings::tool_output_chars();
     let mut final_text = String::new();
     let mut rounds = 0usize;
     // Token dari setiap putaran dijumlahkan: satu jawaban bisa terdiri dari
     // puluhan panggilan provider (tiap putaran tool = 1 permintaan).
     let mut total_tokens: i64 = 0;
+    // Anggaran bisa diturunkan otomatis kalau provider menolak karena
+    // konteks terlalu panjang (mis. router memilih model 8k).
+    let mut effective_budget = budget;
+    let mut context_retries = 0usize;
 
     loop {
+        // Output tool dari putaran sebelumnya bisa membuat konteks membengkak
+        // di tengah tugas. Pangkas output paling lama, bukan pesan terbaru.
+        memory::fit_tool_outputs(&mut msgs, effective_budget);
         let mut stream = match ai::ChatStream::open(&p, &model, &msgs) {
             Ok(s) => s,
+            Err(e)
+                if settings::auto_summary()
+                    && context_retries < 3
+                    && effective_budget > settings::CONTEXT_BUDGET_MIN
+                    && ai::is_context_error(&e) =>
+            {
+                context_retries += 1;
+                effective_budget =
+                    (effective_budget / 2).max(settings::CONTEXT_BUDGET_MIN);
+                if rounds == 0 {
+                    // Belum ada tool call: urutan pesan masih aman diubah.
+                    msgs = memory::prepare(
+                        &p,
+                        &model,
+                        &session_id,
+                        msgs,
+                        effective_budget,
+                        cancel.as_ref(),
+                    );
+                } else {
+                    // Sudah ada tool call: jangan mengubah urutan pesan,
+                    // cukup pangkas output tool lebih agresif.
+                    memory::fit_tool_outputs(&mut msgs, effective_budget);
+                }
+                continue;
+            }
             Err(e) => {
                 ju::emit_str(&mut env, &cb, "onError", &e);
                 return JString::default();
@@ -514,11 +583,22 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
             if command.trim().is_empty() {
                 continue;
             }
-            let output = match proot_manager::run_capture(&command, &cancel, None) {
-                Ok((code, out)) => format!("exit {code}\n{}", tail_chars(out, 8000)),
-                Err(e) => format!("Gagal menjalankan perintah: {e}"),
+            let (display, output) = match proot_manager::run_capture(&command, &cancel, None) {
+                Ok((code, out)) => {
+                    let full = format!("exit {code}\n{out}");
+                    // Terminal boleh menampilkan lebih banyak; konteks model
+                    // dibatasi supaya tidak cepat penuh.
+                    (
+                        tail_chars(full.clone(), 20_000),
+                        tail_chars(full, tool_output_chars),
+                    )
+                }
+                Err(e) => {
+                    let msg = format!("Gagal menjalankan perintah: {e}");
+                    (msg.clone(), msg)
+                }
             };
-            ju::emit_str_str(&mut env, &cb, "onTool", &command, &output);
+            ju::emit_str_str(&mut env, &cb, "onTool", &command, &display);
 
             if p.kind == "anthropic" {
                 msgs.push(ai::ChatMsg {
@@ -532,6 +612,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                     }])),
                     tool_calls: None,
                     tool_call_id: None,
+                    id: None,
+                    created_at: None,
                 });
                 msgs.push(ai::ChatMsg {
                     role: "user".into(),
@@ -543,6 +625,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                     }])),
                     tool_calls: None,
                     tool_call_id: None,
+                    id: None,
+                    created_at: None,
                 });
             } else {
                 let name = if call.name.is_empty() { "run_command" } else { &call.name };
@@ -556,6 +640,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                     }])),
                     tool_call_id: None,
                     blocks: None,
+                    id: None,
+                    created_at: None,
                 });
                 msgs.push(ai::ChatMsg {
                     role: "tool".into(),
@@ -563,6 +649,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                     tool_calls: None,
                     tool_call_id: Some(call.id),
                     blocks: None,
+                    id: None,
+                    created_at: None,
                 });
             }
         }

@@ -31,6 +31,16 @@ pub fn init(path: &str) -> Result<(), String> {
         "ALTER TABLE providers ADD COLUMN models TEXT NOT NULL DEFAULT '[]'",
         [],
     );
+    // Ringkasan konteks per sesi (dipakai `memory::prepare`). Kolom ditambah
+    // lewat ALTER supaya database lama tetap bisa dibuka tanpa reset.
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN summary_upto INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // Kalau dua thread balapan, yang kalah cukup memakai koneksi pemenang.
     let _ = DB.set(Mutex::new(conn));
     Ok(())
@@ -58,7 +68,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     provider_id TEXT,
     model       TEXT,
     created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
+    updated_at  INTEGER NOT NULL,
+    summary      TEXT NOT NULL DEFAULT '',
+    summary_upto INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (

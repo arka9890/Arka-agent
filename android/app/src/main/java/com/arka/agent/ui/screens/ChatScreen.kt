@@ -249,6 +249,7 @@ fun ChatScreen(vm: MainViewModel) {
                 },
                 onRename = { id, title -> vm.renameSession(id, title) },
                 onDelete = { id -> vm.deleteSession(id) },
+                onCompact = { id -> vm.compactSession(id) },
             )
         }
 
@@ -613,6 +614,7 @@ private fun SessionDrawer(
     onNew: () -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onCompact: (String) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
         // Latar tembus pandang: klik di luar panel menutup.
@@ -648,6 +650,7 @@ private fun SessionDrawer(
                         onClick = { onSelect(s.id) },
                         onRename = { newTitle -> onRename(s.id, newTitle) },
                         onDelete = { onDelete(s.id) },
+                        onCompact = { onCompact(s.id) },
                     )
                 }
             }
@@ -668,6 +671,7 @@ private fun SessionRow(
     onClick: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    onCompact: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
@@ -725,6 +729,14 @@ private fun SessionRow(
                         menu = false
                         title = session.title
                         renaming = true
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(tr("Ringkas konteks", "Compact context", "コンテキストを要約")) },
+                    leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
+                    onClick = {
+                        menu = false
+                        onCompact()
                     },
                 )
                 DropdownMenuItem(

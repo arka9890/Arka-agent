@@ -231,6 +231,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }.onFailure { notify(it.message ?: "Gagal menghapus sesi") }
     }
 
+    /**
+     * Ringkas riwayat sesi sekarang (menu sesi). Pesan asli tidak dihapus;
+     * ringkasan hanya dipakai saat mengirim konteks ke model.
+     */
+    fun compactSession(id: String) = viewModelScope.launch {
+        if (chatJobs[id]?.isActive == true) {
+            notify("Hentikan chat dulu sebelum meringkas konteks.")
+            return@launch
+        }
+        notify("Meringkas konteks…")
+        runCatching { repo.compactSession(id) }
+            .onSuccess {
+                notify("Konteks diringkas. Pesan lama tetap tersimpan di riwayat.")
+            }
+            .onFailure { notify(it.message ?: "Gagal meringkas konteks") }
+    }
+
     // -------------------------------------------------------------- chat
 
     /**
@@ -278,7 +295,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }.getOrNull()
                 }.joinToString("\n\n")
 
-                val history = (_messages.value).map { m ->
+                // Riwayat dibaca langsung dari database, bukan dari _messages:
+                // state UI bisa masih berisi pesan sesi lain kalau pengguna
+                // baru pindah sesi lalu langsung mengirim. Kalau itu terjadi,
+                // model menerima percakapan yang salah dan terlihat seperti
+                // "kehilangan konteks".
+                val history = repo.messages(sessionId).map { m ->
                     if (m.role == "user" && m.id == userMsg.id && fileContext.isNotEmpty()) {
                         m.copy(content = "${m.content}\n\n$fileContext")
                     } else {

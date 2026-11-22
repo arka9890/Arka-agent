@@ -19,6 +19,19 @@ pub const DEFAULT_MAX_TOOL_ROUNDS: usize = 40;
 /// berjalan sangat lama tanpa kendali.
 pub const MAX_TOOL_ROUNDS_LIMIT: usize = 200;
 
+/// Anggaran token konteks bawaan. Riwayat di atas angka ini diringkas lebih
+/// dulu sebelum dikirim, supaya model kecil (mis. anggota combo OmniRoute
+/// 8k/32k) tidak memotong awal percakapan.
+pub const DEFAULT_CONTEXT_BUDGET: usize = 24_000;
+pub const CONTEXT_BUDGET_MIN: usize = 4_000;
+pub const CONTEXT_BUDGET_MAX: usize = 128_000;
+
+/// Batas karakter output tool per perintah. Output besar mempercepat
+/// konteks penuh dan membuat model kehilangan instruksi awal.
+pub const DEFAULT_TOOL_OUTPUT_CHARS: usize = 4_000;
+pub const TOOL_OUTPUT_CHARS_MIN: usize = 1_000;
+pub const TOOL_OUTPUT_CHARS_MAX: usize = 20_000;
+
 /// Nilai default per kunci (dipakai saat kunci belum pernah disimpan).
 pub fn defaults() -> HashMap<&'static str, &'static str> {
     HashMap::from([
@@ -32,6 +45,11 @@ pub fn defaults() -> HashMap<&'static str, &'static str> {
         ("max_tool_rounds", "40"),
         // Kosong = pakai prompt bawaan (`ai::SYSTEM_PROMPT`).
         ("system_prompt", ""),
+        // Ringkas otomatis riwayat lama supaya konteks tidak hilang saat
+        // model/router punya context window kecil.
+        ("auto_summary", "true"),
+        ("context_budget", "24000"),
+        ("tool_output_chars", "4000"),
     ])
 }
 
@@ -80,6 +98,29 @@ pub fn system_prompt() -> String {
     }
 }
 
+/// Ringkas otomatis riwayat lama (default aktif).
+pub fn auto_summary() -> bool {
+    get("auto_summary")
+        .map(|v| v.trim() != "false")
+        .unwrap_or(true)
+}
+
+/// Anggaran token konteks, sudah dijepit ke rentang aman.
+pub fn context_budget() -> usize {
+    get("context_budget")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(CONTEXT_BUDGET_MIN, CONTEXT_BUDGET_MAX))
+        .unwrap_or(DEFAULT_CONTEXT_BUDGET)
+}
+
+/// Batas karakter output tool per perintah, sudah dijepit.
+pub fn tool_output_chars() -> usize {
+    get("tool_output_chars")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(TOOL_OUTPUT_CHARS_MIN, TOOL_OUTPUT_CHARS_MAX))
+        .unwrap_or(DEFAULT_TOOL_OUTPUT_CHARS)
+}
+
 /// Semua preferensi (default ditimpa nilai tersimpan) sebagai JSON.
 pub fn all_json() -> Result<String, String> {
     let stored = db::with(|c| {
@@ -116,5 +157,15 @@ mod tests {
         let d = defaults();
         assert_eq!(d.get("max_tool_rounds"), Some(&"40"));
         assert_eq!(d.get("system_prompt"), Some(&""));
+        assert_eq!(d.get("auto_summary"), Some(&"true"));
+        assert_eq!(d.get("context_budget"), Some(&"24000"));
+        assert_eq!(d.get("tool_output_chars"), Some(&"4000"));
+    }
+
+    #[test]
+    fn context_settings_fall_back_to_defaults() {
+        assert!(auto_summary());
+        assert_eq!(context_budget(), DEFAULT_CONTEXT_BUDGET);
+        assert_eq!(tool_output_chars(), DEFAULT_TOOL_OUTPUT_CHARS);
     }
 }

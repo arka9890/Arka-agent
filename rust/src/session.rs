@@ -62,6 +62,28 @@ pub fn list() -> Result<Vec<Session>, String> {
     })
 }
 
+/// Satu sesi berdasarkan id.
+pub fn get(id: &str) -> Result<Session, String> {
+    db::with(|c| {
+        c.query_row(
+            "SELECT id, title, provider_id, model, created_at, updated_at FROM sessions WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok(Session {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    provider_id: r.get(2)?,
+                    model: r.get(3)?,
+                    created_at: r.get(4)?,
+                    updated_at: r.get(5)?,
+                    message_count: 0,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())
+    })
+}
+
 pub fn create(title: &str, provider_id: Option<&str>, model: Option<&str>) -> Result<Session, String> {
     let now = db::now_ms();
     let s = Session {
@@ -190,6 +212,34 @@ pub fn set_model(session_id: &str, provider_id: &str, model: &str) -> Result<(),
         )
         .map_err(|e| e.to_string())
         .and_then(|n| if n == 0 { Err("Sesi tidak ditemukan".into()) } else { Ok(()) })
+    })
+}
+
+// ------------------------------------------------------- ringkasan konteks
+
+/// Ringkasan percakapan yang tersimpan + waktu pesan terakhir yang sudah
+/// tercakup ringkasan (`summary_upto`, ms epoch).
+pub fn memory(session_id: &str) -> Result<(String, i64), String> {
+    db::with(|c| {
+        c.query_row(
+            "SELECT summary, summary_upto FROM sessions WHERE id = ?1",
+            params![session_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .map_err(|e| e.to_string())
+    })
+}
+
+/// Simpan ringkasan baru. `upto` = `created_at` pesan terakhir yang sudah
+/// diringkas, supaya pesan itu tidak dikirim ulang di request berikutnya.
+pub fn set_memory(session_id: &str, summary: &str, upto: i64) -> Result<(), String> {
+    db::with(|c| {
+        c.execute(
+            "UPDATE sessions SET summary = ?2, summary_upto = ?3 WHERE id = ?1",
+            params![session_id, summary, upto],
+        )
+        .map_err(|e| e.to_string())
+        .map(|_| ())
     })
 }
 

@@ -23,6 +23,27 @@ pub struct ChatMsg {
     /// Isi pesan berupa blok (Anthropic: tool_use / tool_result).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Value>,
+    /// Metadata dari aplikasi; tidak pernah dikirim ke provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Waktu pesan dibuat (ms epoch), dipakai untuk menandai batas ringkasan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+}
+
+impl ChatMsg {
+    /// Pesan teks biasa tanpa tool call.
+    pub fn plain(role: &str, content: &str) -> Self {
+        Self {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            blocks: None,
+            id: None,
+            created_at: None,
+        }
+    }
 }
 
 /// Satu permintaan eksekusi perintah dari model.
@@ -178,7 +199,7 @@ fn request_body(
     include_usage: bool,
 ) -> Value {
     let system = messages.iter().find(|m| m.role == "system").map(|m| m.content.clone());
-    let msgs: Vec<Value> = messages.iter()
+    let rest: Vec<Value> = messages.iter()
         .filter(|m| m.role != "system")
         .map(|m| message_value(anthropic, m))
         .collect();
@@ -188,13 +209,22 @@ fn request_body(
             "max_tokens": 4096,
             "stream": true,
             "system": system,
-            "messages": msgs,
+            "messages": rest,
         });
         if with_tools {
             v["tools"] = anthropic_tools_schema();
         }
         v
     } else {
+        // OpenAI-compatible memakai pesan `system` di dalam array `messages`.
+        // Sebelumnya pesan ini tersaring keluar dan tidak pernah dikirim,
+        // sehingga model tidak menerima prompt sistem (termasuk ringkasan
+        // konteks) sama sekali.
+        let mut msgs = Vec::with_capacity(rest.len() + 1);
+        if let Some(sys) = system {
+            msgs.push(json!({"role": "system", "content": sys}));
+        }
+        msgs.extend(rest);
         let mut v = json!({"model": model, "stream": true, "messages": msgs});
         // Minta laporan token di chunk terakhir supaya statistik provider
         // bisa diisi. Endpoint lama yang tidak kenal `stream_options` akan
@@ -228,6 +258,25 @@ impl ChatStream {
     /// Provider yang tidak mendukung function calling ditanya ulang tanpa
     /// tools supaya chat biasa tetap berfungsi (fallback).
     pub fn open(provider: &Provider, model: &str, messages: &[ChatMsg]) -> Result<Self, String> {
+        Self::open_inner(provider, model, messages, true)
+    }
+
+    /// Seperti [open], tetapi tanpa tool schema. Dipakai untuk peringkasan
+    /// konteks supaya model tidak menjawab dengan memanggil tool.
+    pub fn open_without_tools(
+        provider: &Provider,
+        model: &str,
+        messages: &[ChatMsg],
+    ) -> Result<Self, String> {
+        Self::open_inner(provider, model, messages, false)
+    }
+
+    fn open_inner(
+        provider: &Provider,
+        model: &str,
+        messages: &[ChatMsg],
+        allow_tools: bool,
+    ) -> Result<Self, String> {
         if provider.api_key.trim().is_empty() {
             return Err(format!(
                 "API key untuk provider {} belum diisi. Buka tab Provider untuk mengisinya.",
@@ -242,12 +291,17 @@ impl ChatStream {
             endpoint(provider, "chat/completions")
         };
         let mut last_error = "Gagal menghubungi provider".to_string();
-        // Coba 4 kombinasi: (tools?, usage?). Provider yang menolak
+        // Coba kombinasi (tools?, usage?). Provider yang menolak
         // `stream_options` akan bilang 400 — lalu dicoba tanpa usage supaya
         // chat tetap jalan (statistik token hanya kosong di kasus itu).
-        for (with_tools, include_usage) in
-            [(true, true), (true, false), (false, false), (false, true)]
-        {
+        // Kalau pemanggil tidak butuh tools (mis. peringkasan konteks),
+        // cukup coba variasi usage saja.
+        let combos: &[(bool, bool)] = if allow_tools {
+            &[(true, true), (true, false), (false, false), (false, true)]
+        } else {
+            &[(false, true), (false, false)]
+        };
+        for &(with_tools, include_usage) in combos {
             let body = request_body(anthropic, model, messages, with_tools, include_usage);
             let resp = auth_headers(client()?.post(&url).json(&body), provider)
                 .send()
@@ -362,6 +416,45 @@ impl ChatStream {
             }
         }
     }
+}
+
+/// Apakah pesan error dari provider menandakan konteks terlalu panjang?
+///
+/// Dipakai untuk retry otomatis dengan anggaran token lebih kecil. Router
+/// seperti combo round-robin bisa memilih model 8k walau request sebelumnya
+/// dilayani model 128k, jadi batasnya baru ketahuan dari error ini.
+pub fn is_context_error(message: &str) -> bool {
+    let m = message.to_lowercase();
+    m.contains("context length")
+        || m.contains("context_length")
+        || m.contains("maximum context")
+        || m.contains("too many tokens")
+        || m.contains("reduce the length")
+        || m.contains("prompt is too long")
+        || m.contains("input is too long")
+        || m.contains("token limit")
+        || m.contains("exceeds the maximum")
+}
+
+/// Kirim percakapan dan kembalikan seluruh teks jawaban (tanpa streaming ke
+/// UI, tanpa tools). Dipakai untuk meringkas konteks lama.
+pub fn complete(
+    provider: &Provider,
+    model: &str,
+    messages: &[ChatMsg],
+) -> Result<String, String> {
+    let mut stream = ChatStream::open_without_tools(provider, model, messages)?;
+    let mut out = String::new();
+    while let Some(item) = stream.next() {
+        match item {
+            Ok(delta) => out.push_str(&delta),
+            Err(e) => return Err(e),
+        }
+    }
+    if out.trim().is_empty() {
+        return Err("Provider tidak mengirim ringkasan.".into());
+    }
+    Ok(out)
 }
 
 /// Kumpulkan potongan tool call dari SSE OpenAI/Anthropic.
@@ -503,6 +596,39 @@ pub fn test_connection(p: &Provider) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openai_body_keeps_system_prompt() {
+        let msgs = vec![
+            ChatMsg::plain("system", "aturan penting"),
+            ChatMsg::plain("user", "halo"),
+        ];
+        let body = request_body(false, "m", &msgs, false, false);
+        let arr = body["messages"].as_array().unwrap();
+        assert_eq!(arr[0]["role"], "system");
+        assert_eq!(arr[0]["content"], "aturan penting");
+        assert_eq!(arr[1]["role"], "user");
+    }
+
+    #[test]
+    fn anthropic_body_uses_system_field() {
+        let msgs = vec![
+            ChatMsg::plain("system", "aturan"),
+            ChatMsg::plain("user", "halo"),
+        ];
+        let body = request_body(true, "m", &msgs, false, false);
+        assert_eq!(body["system"], "aturan");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn context_errors_are_detected() {
+        assert!(is_context_error(
+            "Provider mengembalikan HTTP 400. {\"error\":\"context_length_exceeded\"}"
+        ));
+        assert!(is_context_error("This model's maximum context length is 8192 tokens"));
+        assert!(!is_context_error("API key ditolak provider (HTTP 401)"));
+    }
 
     #[test]
     fn openai_tool_call_fragments_are_merged() {

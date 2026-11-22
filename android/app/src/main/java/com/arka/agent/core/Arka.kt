@@ -37,6 +37,12 @@ object Arka {
     external fun autotitleSession(sessionId: String, text: String)
     external fun setSessionModel(sessionId: String, providerId: String, model: String)
 
+    /**
+     * Ringkas riwayat sesi sekarang (manual). Mengembalikan JSON
+     * `{ "summary": "..." }`. Memakai provider/model sesi.
+     */
+    external fun compactSession(sessionId: String): String
+
     // --------------------------------------------------------- provider
     external fun providersJson(): String
     external fun saveProvider(json: String): String
