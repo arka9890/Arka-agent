@@ -66,6 +66,8 @@ Aplikasi ini memiliki workspace Ubuntu 24.04 asli yang berjalan di perangkat pen
 
 KAMU PUNYA TOOL bernama `run_command`. Tool ini menjalankan perintah bash di Ubuntu pengguna dan mengembalikan stdout/stderr-nya.
 
+KAMU JUGA PUNYA TOOL bernama `install_skill`. Gunakan tool ini kalau pengguna memberi link repo skill atau file SKILL.md berformat Claude: panggil `install_skill` dengan URL-nya (jangan memakai `git clone`). Skill yang sudah aktif tercantum di bagian "Skill agen" pada prompt ini dan harus diikuti jika relevan.
+
 Aturan penggunaan tool:
 - Jika pengguna meminta kamu mengecek, menjalankan, menguji, atau memverifikasi sesuatu di Ubuntu / terminal / file, LANGSUNG panggil `run_command` dengan perintah yang tepat. JANGAN menjawab bahwa kamu tidak bisa mengakses terminal, jangan mengaku hanya berjalan di server AI, dan jangan menyuruh pengguna menjalankan sendiri.
 - Gunakan perintah non-interaktif. Contoh: `cat /etc/os-release`, `uname -m`, `python3 --version`, `git --version`, `ls -la /root/storage`, `which git curl wget python3`.
@@ -138,6 +140,22 @@ fn tools_schema() -> Value {
     json!([{
         "type": "function",
         "function": {
+            "name": "install_skill",
+            "description": "Pasang skill agen berformat Claude (SKILL.md) dari URL. Bisa menerima URL file .md langsung atau URL repo GitHub publik yang berisi file SKILL.md. Pakai ini kalau pengguna memberi link repo skill.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL file SKILL.md atau URL repo GitHub, mis. https://github.com/owner/repo",
+                    }
+                },
+                "required": ["url"],
+            }
+        }
+    }, {
+        "type": "function",
+        "function": {
             "name": "run_command",
             "description": "Jalankan perintah bash non-interaktif di workspace Ubuntu 24.04 di perangkat pengguna. Mengembalikan stdout/stderr. Pakai tool ini setiap kali perlu mengecek atau menjalankan sesuatu di Ubuntu/terminal/file.",
             "parameters": {
@@ -156,6 +174,19 @@ fn tools_schema() -> Value {
 
 fn anthropic_tools_schema() -> Value {
     json!([{
+        "name": "install_skill",
+        "description": "Pasang skill agen berformat Claude (SKILL.md) dari URL file .md langsung atau URL repo GitHub publik. Pakai ini kalau pengguna memberi link repo skill.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL SKILL.md atau repo GitHub.",
+                }
+            },
+            "required": ["url"],
+        }
+    }, {
         "name": "run_command",
         "description": "Jalankan perintah bash non-interaktif di workspace Ubuntu 24.04 di perangkat pengguna. Mengembalikan stdout/stderr. Pakai setiap kali perlu mengecek atau menjalankan sesuatu di Ubuntu/terminal/file.",
         "input_schema": {

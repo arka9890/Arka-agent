@@ -18,7 +18,9 @@
 use crate::db;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// Batas total karakter instruksi skill yang disisipkan ke system prompt.
 /// Mencegah skill besar menghabiskan anggaran konteks (lihat `context_budget`).
@@ -204,6 +206,103 @@ pub fn delete(id: &str) -> Result<(), String> {
             .map_err(|e| e.to_string())
             .map(|_| ())
     })
+}
+
+/// Pasang skill dari URL.
+///
+/// Menerima langsung URL file `SKILL.md` (raw) **atau** URL repo GitHub
+/// publik. Untuk repo, semua file bernama `SKILL.md` diambil lewat GitHub API
+/// lalu dipasang satu per satu. Dipanggil dari tool agent `install_skill`,
+/// sehingga pengguna cukup menempelkan link di chat.
+pub fn install_from_url(url: &str) -> Result<String, String> {
+    let url = url.trim().trim_end_matches('/');
+    if url.is_empty() {
+        return Err("URL skill kosong.".into());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent("ArkaAgent/1.0")
+        .build()
+        .map_err(|e| format!("Gagal membuat klien HTTP: {e}"))?;
+
+    fn fetch_json(client: &reqwest::blocking::Client, url: &str) -> Result<Value, String> {
+        client
+            .get(url)
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.json::<Value>())
+            .map_err(|e| format!("Gagal menghubungi GitHub: {e}"))
+    }
+
+    let (repo, files): (Option<(String, String, String)>, Vec<String>) =
+        if let Some(rest) = url.strip_prefix("https://github.com/") {
+            let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+            if parts.len() < 2 {
+                return Err("URL GitHub tidak valid. Contoh: https://github.com/owner/repo".into());
+            }
+            let (owner, name) = (parts[0], parts[1]);
+            let meta = fetch_json(&client, &format!("https://api.github.com/repos/{owner}/{name}"))?;
+            let branch = meta["default_branch"]
+                .as_str()
+                .unwrap_or("main")
+                .to_string();
+            let tree = fetch_json(
+                &client,
+                &format!(
+                    "https://api.github.com/repos/{owner}/{name}/git/trees/{branch}?recursive=1"
+                ),
+            )?;
+            let mut found: Vec<String> = Vec::new();
+            if let Some(entries) = tree["tree"].as_array() {
+                for entry in entries {
+                    let path = entry["path"].as_str().unwrap_or("");
+                    if path.to_ascii_lowercase().ends_with("skill.md") {
+                        found.push(path.to_string());
+                    }
+                }
+            }
+            if found.is_empty() {
+                return Err("Repo tidak berisi file SKILL.md.".into());
+            }
+            found.truncate(20);
+            (
+                Some((owner.to_string(), name.to_string(), branch)),
+                found,
+            )
+        } else {
+            (None, vec![url.to_string()])
+        };
+
+    let mut installed: Vec<String> = Vec::new();
+    for path in files {
+        let raw = match &repo {
+            Some((owner, name, branch)) => format!(
+                "https://raw.githubusercontent.com/{owner}/{name}/{branch}/{path}"
+            ),
+            None => path.clone(),
+        };
+        let text = client
+            .get(&raw)
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.text())
+            .map_err(|e| format!("Gagal mengunduh skill: {e}"))?;
+        // Untuk repo, nama folder induk biasanya nama skill (mis.
+        // `skills/pdf/SKILL.md` → `pdf`).
+        let fallback = path
+            .rsplit('/')
+            .nth(1)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("skill")
+            .to_string();
+        let skill = import(&text, &fallback)?;
+        installed.push(skill.name);
+    }
+    Ok(format!(
+        "Terpasang {} skill: {}. Skill dipakai pada request berikutnya.",
+        installed.len(),
+        installed.join(", ")
+    ))
 }
 
 /// Bagian system prompt yang berisi semua skill aktif.
