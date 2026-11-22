@@ -2,7 +2,9 @@ package com.arka.agent
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.arka.agent.core.ArkaRepo
@@ -13,6 +15,7 @@ import com.arka.agent.core.Message
 import com.arka.agent.core.Provider
 import com.arka.agent.core.ProviderStats
 import com.arka.agent.core.Session
+import com.arka.agent.core.Skill
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +72,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _providerStats = MutableStateFlow<List<ProviderStats>>(emptyList())
     val providerStats: StateFlow<List<ProviderStats>> = _providerStats.asStateFlow()
 
+    private val _skills = MutableStateFlow<List<Skill>>(emptyList())
+    val skills: StateFlow<List<Skill>> = _skills.asStateFlow()
+
     private val _files = MutableStateFlow<List<FileInfo>>(emptyList())
     val files: StateFlow<List<FileInfo>> = _files.asStateFlow()
 
@@ -121,6 +127,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _settings.value = runCatching { repo.settings() }.getOrDefault(emptyMap())
             _providers.value = runCatching { repo.providers() }.getOrDefault(emptyList())
             _providerStats.value = runCatching { repo.providerStats() }.getOrDefault(emptyList())
+            _skills.value = runCatching { repo.skills() }.getOrDefault(emptyList())
             _sessions.value = runCatching { repo.sessions() }.getOrDefault(emptyList())
             _distro.value = runCatching { repo.distroStatus() }.getOrDefault(DistroStatus())
             _files.value = runCatching { repo.files("") }.getOrDefault(emptyList())
@@ -240,6 +247,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 notify("Konteks diringkas. Pesan lama tetap tersimpan di riwayat.")
             }
             .onFailure { notify(it.message ?: "Gagal meringkas konteks") }
+    }
+
+    // ------------------------------------------------------------- skill
+
+    /** Impor `SKILL.md` langsung dari URI SAF yang dipilih di UI. */
+    fun importSkillFromUri(uri: Uri) = viewModelScope.launch {
+        runCatching {
+            val name = appContext.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: "skill-${System.currentTimeMillis()}"
+            val raw = repo.readText(uri.toString())
+            repo.importSkill(raw, name)
+        }.onSuccess { skill ->
+            _skills.value = runCatching { repo.skills() }.getOrDefault(_skills.value)
+            notify("Skill '${skill.name}' dipasang.")
+        }.onFailure { notify(it.message ?: "Gagal membaca file skill") }
+    }
+
+    /** Impor `SKILL.md` dari file manager (SAF). */
+    fun importSkill(raw: String, fallbackName: String) = viewModelScope.launch {
+        runCatching { repo.importSkill(raw, fallbackName) }
+            .onSuccess { skill ->
+                _skills.value = runCatching { repo.skills() }.getOrDefault(_skills.value)
+                notify("Skill '${skill.name}' dipasang.")
+            }
+            .onFailure { notify(it.message ?: "Gagal memasang skill") }
+    }
+
+    fun deleteSkill(id: String) = viewModelScope.launch {
+        runCatching { repo.deleteSkill(id) }
+            .onSuccess { _skills.value = _skills.value.filterNot { it.id == id } }
+            .onFailure { notify(it.message ?: "Gagal menghapus skill") }
+    }
+
+    fun setSkillEnabled(id: String, enabled: Boolean) = viewModelScope.launch {
+        runCatching { repo.setSkillEnabled(id, enabled) }
+            .onSuccess {
+                _skills.value = _skills.value.map {
+                    if (it.id == id) it.copy(enabled = enabled) else it
+                }
+            }
+            .onFailure { notify(it.message ?: "Gagal mengubah skill") }
     }
 
     // -------------------------------------------------------------- chat

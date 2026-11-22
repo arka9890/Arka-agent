@@ -113,4 +113,14 @@ CREATE TABLE IF NOT EXISTS provider_stats (
     last_used_at INTEGER,
     FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
 );
+
+-- Skill agen format Claude (SKILL.md).
+CREATE TABLE IF NOT EXISTS skills (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    content     TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  INTEGER NOT NULL
+);
 "#;

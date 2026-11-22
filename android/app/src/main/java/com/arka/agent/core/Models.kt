@@ -83,6 +83,17 @@ data class AttachmentRef(
         "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
+/** Skill agen format Claude (`SKILL.md`). */
+@Serializable
+data class Skill(
+    val id: String = "",
+    val name: String = "",
+    val description: String = "",
+    val content: String = "",
+    val enabled: Boolean = true,
+    @SerialName("created_at") val createdAt: Long = 0,
+)
+
 @Serializable
 data class DistroStatus(
     val installed: Boolean = false,
