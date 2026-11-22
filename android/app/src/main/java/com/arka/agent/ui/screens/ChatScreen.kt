@@ -472,6 +472,7 @@ private fun MessageList(
     // ikut terukur dan kolom input terdorong keluar layar.
     SelectionContainer(modifier = modifier.fillMaxSize()) {
         LazyColumn(
+            }
             modifier = Modifier.fillMaxSize().padding(horizontal = Space.md),
             state = listState,
             contentPadding = PaddingValues(vertical = Space.sm),
@@ -479,6 +480,7 @@ private fun MessageList(
         ) {
         items(messages, key = { it.id }) { m ->
             MessageBubble(
+                streamingText = streaming,
                 message = m,
                 resolveFile = resolveFile,
                 onOpenFile = onOpenFile,
@@ -494,6 +496,7 @@ private fun MessageList(
                         role = "assistant",
                         content = streaming,
                     ),
+                    streamingText = streaming,
                     streaming = true,
                     resolveFile = resolveFile,
                     onOpenFile = onOpenFile,
@@ -509,7 +512,6 @@ private fun MessageList(
                     color = clay.muted,
                     modifier = Modifier.fillMaxWidth().padding(vertical = Space.lg),
                 )
-            }
         }
         }
     }

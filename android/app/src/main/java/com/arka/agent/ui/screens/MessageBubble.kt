@@ -1,71 +1,121 @@
 package com.arka.agent.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.PictureAsPdf
-import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Send
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import com.arka.agent.core.Message
+import com.arka.agent.MainViewModel
+import com.arka.agent.ui.LocalLanguage
 import com.arka.agent.ui.tr
+import com.arka.agent.ui.trFor
+import com.arka.agent.core.AttachmentRef
+import com.arka.agent.core.FileInfo
+import com.arka.agent.core.Message
+import com.arka.agent.core.Session
+import com.arka.agent.ui.components.ClayCard
+import com.arka.agent.ui.components.ClayPill
+import com.arka.agent.ui.theme.Space
 import com.arka.agent.ui.theme.clay
+import kotlinx.coroutines.delay
+import java.io.File
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import java.io.File
+import androidx.compose.ui.text.font.FontStyle
 
-/** Data lampiran yang disimpan di kolom `attachments` pesan. */
-private data class Attachment(val path: String, val kind: String, val name: String)
+data class Attachment(
+    val path: String,
+    val kind: String,
+    val name: String,
+)
 
-private fun parseAttachments(json: String): List<Attachment> = runCatching {
-    val arr = JSONArray(json)
-    (0 until arr.length()).map { i ->
-        val o = arr.getJSONObject(i)
-        val path = o.optString("path")
-        Attachment(
-            path = path,
-            kind = o.optString("kind", "text"),
-            // Nama disimpan saat memilih (SAF); fallback untuk pesan lama.
-            name = o.optString("name").ifBlank { path.substringAfterLast('/') },
-        )
-    }
+private fun parseAttachments(refs: List<AttachmentRef>): List<Attachment> = refs.mapNotNull {
+    val path = it.path
+    if (path.isBlank()) return@mapNotNull null
+    val mime = it.mime
+    Attachment(
+        path = path,
+        kind = when {
+            mime.startsWith("image/") -> "image"
+            mime.startsWith("video/") -> "video"
+            mime == "application/pdf" -> "pdf"
+            mime.startsWith("text/") -> "text"
+            else -> "file"
+        },
+        name = it.name.takeIf { name -> name.isNotBlank() }?.let { name ->
+            // Hapus prefix workspace jika ada, ambil nama file saja
+            name.replace("^/root/storage/".toRegex(), "")
+        }.ifBlank { path.substringAfterLast('/') },
+    )
 }.getOrDefault(emptyList())
 
 /**
@@ -78,12 +128,26 @@ private fun parseAttachments(json: String): List<Attachment> = runCatching {
 fun MessageBubble(
     message: Message,
     streaming: Boolean = false,
+    streamingText: String = "",
     resolveFile: (String) -> File = { File(it) },
     onOpenFile: (String) -> Unit = {},
     onCopy: (String) -> Unit = {},
 ) {
     val isUser = message.role == "user"
     val attachments = remember(message.attachments) { parseAttachments(message.attachments) }
+    
+    // State untuk animasi mengetik
+    var showTypingAnimation by remember(message.id) { mutableStateOf(false) }
+    
+    // Delay awal untuk efek mengetik
+    LaunchedEffect(key1 = message.id) {
+        if (message.role == "assistant" && message.content.isNotEmpty() && !streaming) {
+            delay(300) // Delay awal sebelum mulai mengetik
+            showTypingAnimation = true
+        } else {
+            showTypingAnimation = false
+        }
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -110,11 +174,13 @@ fun MessageBubble(
                 }
             }
             MarkdownText(
-                text = message.content,
+                text = if (streaming && message.content == "") streamingText else message.content,
                 color = if (isUser) Color.White else clay.onSurface,
                 showCursor = streaming,
+                animateTyping = showTypingAnimation,
+                typingSpeed = 20L, // ms per karakter
             )
-            if (!streaming) {
+            if (!streaming && !showTypingAnimation) {
                 Row(
                     Modifier.fillMaxWidth().padding(top = 2.dp),
                     horizontalArrangement = Arrangement.End,
@@ -325,7 +391,7 @@ private fun ImageThumbnail(file: File) {
 }
 
 /**
- * Markdown minimal: blok kode (```), `inline code`, **tebal**, dan *miring*.
+ * Markdown minimal dengan animasi mengetik.
  *
  * Tidak memakai library markdown: PRD hanya butuh code block + bold/italic,
  * dan parser ini menghindari satu dependensi + satu Compose-renderer besar.
@@ -335,8 +401,27 @@ fun MarkdownText(
     text: String,
     color: Color,
     showCursor: Boolean = false,
+    animateTyping: Boolean = false,
+    typingSpeed: Long = 20L, // ms per karakter
 ) {
-    val blocks = remember(text) { splitCodeBlocks(text) }
+    val animatedText = remember(text, animateTyping) { 
+        mutableStateOf(if (animateTyping) "" else text) 
+    }
+    
+    // Animasi mengetik
+    LaunchedEffect(key1 = text, key2 = animateTyping) {
+        if (animateTyping && text.isNotEmpty()) {
+            animatedText.value = ""
+            for (i in 1..text.length) {
+                animatedText.value = text.take(i)
+                delay(typingSpeed)
+            }
+        } else {
+            animatedText.value = text
+        }
+    }
+    
+    val blocks = remember(animatedText.value) { splitCodeBlocks(animatedText.value) }
     Column {
         blocks.forEach { block ->
             if (block.isCode) {
@@ -413,7 +498,7 @@ private fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString
             }
             rest.startsWith("*") && rest.indexOf('*', 1) > 0 -> {
                 val end = rest.indexOf('*', 1)
-                withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) {
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                     append(rest.substring(1, end))
                 }
                 i += end + 1
