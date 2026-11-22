@@ -1,6 +1,5 @@
 package com.arka.agent.core
 
-import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -34,7 +33,7 @@ object ApiKeyEncryption {
     /**
      * Mendapatkan/menghasilkan master key di Android Keystore.
      */
-    private fun getMasterKey(context: Context): SecretKey {
+    private fun getMasterKey(): SecretKey {
         val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE_PROVIDER)
@@ -55,12 +54,12 @@ object ApiKeyEncryption {
      * Enkripsi plaintext API key.
      * Mengembalikan string format: `enc:v1:<base64(nonce|ciphertext|tag)>`
      */
-    fun encrypt(context: Context, plaintext: String): String {
+    fun encrypt(plaintext: String): String {
         if (plaintext.isBlank()) return plaintext
         // Sudah terenkripsi?
         if (plaintext.startsWith(PREFIX)) return plaintext
 
-        val masterKey = getMasterKey(context)
+        val masterKey = getMasterKey()
         val cipher = getCipher()
 
         val nonceArray = ByteArray(NONCE_LENGTH).also { secureRandom.nextBytes(it) }
@@ -80,10 +79,10 @@ object ApiKeyEncryption {
      * Dekripsi ciphertext ke plaintext.
      * Jika input sudah plaintext (tidak berprefiks `enc:v1:`), dikembalikan apa adanya.
      */
-    fun decrypt(context: Context, ciphertext: String): String {
+    fun decrypt(ciphertext: String): String {
         if (ciphertext.isBlank() || !ciphertext.startsWith(PREFIX)) return ciphertext
 
-        val masterKey = getMasterKey(context)
+        val masterKey = getMasterKey()
         val cipher = getCipher()
 
         val data = Base64.decode(ciphertext.substring(PREFIX.length), Base64.NO_WRAP)

@@ -63,7 +63,7 @@ class ArkaRepo(
     suspend fun saveProvider(provider: Provider): Provider = io {
         // Enkripsi API key sebelum disimpan
         val encrypted = ProviderEditor.encryptForStorage(appContext, provider)
-        val saved = Arka.saveProvider(json.encodeToString(Provider.serializer(), encrypted))
+        val saved = Arka.saveProvider(encrypted)
         json.decodeFromJsonElement(Provider.serializer(), json.parseToJsonElement(saved))
     }
 
