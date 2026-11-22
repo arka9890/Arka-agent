@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -124,6 +125,7 @@ fun MessageBubble(
     resolveFile: (String) -> File = { File(it) },
     onOpenFile: (String) -> Unit = {},
     onCopy: (String) -> Unit = {},
+    onDownload: (String) -> Unit = {},
 ) {
     val isUser = message.role == "user"
     val attachments = remember(message.attachments) { parseAttachments(message.attachments) }
@@ -148,7 +150,7 @@ fun MessageBubble(
         ) {
             if (attachments.isNotEmpty()) {
                 attachments.forEach { att ->
-                    AttachmentPreview(att, resolveFile, onOpenFile)
+                    AttachmentPreview(att, resolveFile, onOpenFile, onDownload)
                     Spacer(Modifier.height(6.dp))
                 }
             }
@@ -195,6 +197,7 @@ private fun AttachmentPreview(
     att: Attachment,
     resolveFile: (String) -> File,
     onOpenFile: (String) -> Unit,
+    onDownload: (String) -> Unit,
 ) {
     // Lampiran SAF berupa URI content:// — tidak bisa diubah jadi File.
     // Path workspace lama tetap diresolusi relatif ke root workspace.
@@ -254,6 +257,26 @@ private fun AttachmentPreview(
                             color = Color.White.copy(alpha = 0.7f),
                         )
                     }
+                }
+            }
+
+            // Tombol unduh langsung dari bubble chat.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                IconButton(
+                    onClick = { onDownload(att.path) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Download,
+                        tr("Unduh", "Download", "ダウンロード"),
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }

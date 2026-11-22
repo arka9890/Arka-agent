@@ -212,6 +212,7 @@ fun ChatScreen(vm: MainViewModel) {
                             }
                         },
                         onCopy = onCopy,
+                        onDownload = { path -> vm.exportFile(path) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -454,6 +455,7 @@ private fun MessageList(
     resolveFile: (String) -> java.io.File,
     onOpenFile: (String) -> Unit,
     onCopy: (String) -> Unit,
+    onDownload: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -483,6 +485,7 @@ private fun MessageList(
                     resolveFile = resolveFile,
                     onOpenFile = onOpenFile,
                     onCopy = onCopy,
+                    onDownload = onDownload,
                 )
             }
             if (streaming.isNotEmpty()) {
@@ -498,6 +501,7 @@ private fun MessageList(
                         resolveFile = resolveFile,
                         onOpenFile = onOpenFile,
                         onCopy = onCopy,
+                        onDownload = onDownload,
                     )
                 }
             }
