@@ -34,7 +34,10 @@ class ArkaChatService : Service() {
         private const val CHANNEL_ID = "arka_chat"
         private const val NOTIFICATION_ID = 1001
         private const val WAKE_LOCK_TAG = "arka:chat"
-        private const val WAKE_LOCK_TIMEOUT_MS = 30 * 60 * 1000L
+        // Tugas panjang (clone + build + uji) bisa lebih dari 30 menit.
+        // Service menerima onStartCommand setiap chat dimulai, jadi lock
+        // diperbarui; timeout ini hanya jaring pengaman kalau release gagal.
+        private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 60 * 1000L
 
         /** Mulai/menghentikan service dari UI. Aman dipanggil berulang. */
         fun start(context: Context) {

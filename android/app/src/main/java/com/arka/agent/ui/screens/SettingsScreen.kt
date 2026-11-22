@@ -26,6 +26,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,8 +37,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.arka.agent.BatteryOptimization
 import com.arka.agent.BuildConfig
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.tr
@@ -290,6 +295,67 @@ fun SettingsScreen(vm: MainViewModel) {
                 if (customPrompt.isNotBlank()) {
                     TextButton(onClick = { vm.updateSetting("system_prompt", "") }) {
                         Text(tr("Kembalikan ke bawaan", "Reset to default", "標準に戻す"))
+                    }
+                }
+            }
+        }
+
+        item {
+            SettingCard(tr("Baterai & latar belakang", "Battery & background", "バッテリーとバックグラウンド")) {
+                // Status di-refresh tiap kali tab dibuka kembali dari dialog
+                // sistem, supaya tombol tidak menampilkan status lama.
+                val lifecycle = LocalLifecycleOwner.current.lifecycle
+                var ignoring by remember {
+                    mutableStateOf(BatteryOptimization.isIgnoring(context))
+                }
+                DisposableEffect(lifecycle) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            ignoring = BatteryOptimization.isIgnoring(context)
+                        }
+                    }
+                    lifecycle.addObserver(observer)
+                    onDispose { lifecycle.removeObserver(observer) }
+                }
+
+                InfoRow(
+                    tr("Optimasi baterai", "Battery optimization", "バッテリー最適化"),
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                        tr("tidak berlaku", "not applicable", "対象外")
+                    } else if (ignoring) {
+                        tr("Arka Agent dikecualikan ✓", "Arka Agent is exempt ✓", "Arka Agentは除外済み ✓")
+                    } else {
+                        tr("masih dibatasi", "still restricted", "まだ制限されています")
+                    },
+                )
+                Text(
+                    tr(
+                        "Supaya chat tidak mati saat layar dikunci/minimize, izinkan Arka Agent mengabaikan optimasi baterai. Di Xiaomi/OPPO/Vivo, aktifkan juga Auto-start di info aplikasi.",
+                        "To keep chat running when the screen is locked/minimized, allow Arka Agent to ignore battery optimization. On Xiaomi/OPPO/Vivo, also enable Auto-start in app info.",
+                        "画面ロック/最小化時にチャットを止めないため、Arka Agentをバッテリー最適化の対象外にしてください。Xiaomi/OPPO/Vivoではアプリ情報で自動起動も有効にしてください。",
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
+                Spacer(Modifier.height(Space.sm))
+                Row {
+                    TextButton(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(BatteryOptimization.requestIntent(context))
+                            }.onFailure {
+                                runCatching { context.startActivity(BatteryOptimization.settingsIntent()) }
+                            }
+                        },
+                        enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !ignoring,
+                    ) {
+                        Text(tr("Kecualikan", "Exempt", "除外する"))
+                    }
+                    Spacer(Modifier.width(Space.xs))
+                    TextButton(onClick = {
+                        runCatching { context.startActivity(BatteryOptimization.appDetailsIntent(context)) }
+                    }) {
+                        Text(tr("Info aplikasi", "App info", "アプリ情報"))
                     }
                 }
             }

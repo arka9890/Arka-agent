@@ -1,6 +1,8 @@
 package com.arka.agent
 
 import android.app.Application
+import android.content.Intent
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.arka.agent.core.ArkaRepo
@@ -105,6 +107,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Cegah auto-install dipicu dua kali dalam satu proses. */
     private var autoInstallStarted = false
+
+    /** Dialog pengecualian baterai hanya ditampilkan sekali per proses. */
+    private var batteryPromptShown = false
 
     init {
         viewModelScope.launch {
@@ -262,6 +267,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // kalau Activity dibuat ulang saat model masih menjawab, chat tidak
         // ikut terbatalkan. Foreground service menyalakan CPU + jaringan.
         val background = settings.value["background_run"] != "false"
+        if (background && !batteryPromptShown && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            !BatteryOptimization.isIgnoring(app)
+        ) {
+            batteryPromptShown = true
+            // Dialog sistem sekali jalan. Kalau pengguna menolak, masih bisa
+            // mengaktifkannya kapan saja di Setelan → Agent.
+            runCatching {
+                app.startActivity(
+                    BatteryOptimization.requestIntent(app)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
         var job: Job? = null
         job = ChatEngine.scope.launch {
             try {
