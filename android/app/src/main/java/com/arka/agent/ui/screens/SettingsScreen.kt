@@ -184,6 +184,23 @@ fun SettingsScreen(vm: MainViewModel) {
                     color = clay.muted,
                 )
                 Spacer(Modifier.height(Space.sm))
+                // Foreground service + wake lock: mencegah Android membekukan
+                // proses/stream saat layar dikunci atau aplikasi diminimize.
+                ToggleRow(
+                    label = tr("Jalan di latar belakang", "Run in background", "バックグラウンドで実行"),
+                    checked = settings["background_run"] != "false",
+                    onChange = { vm.updateSetting("background_run", it.toString()) },
+                )
+                Text(
+                    tr(
+                        "Chat tetap berjalan saat layar dikunci/minimize. Muncul notifikasi 'AI sedang menjawab'. Matikan untuk menghemat baterai.",
+                        "Chat keeps running when the screen is locked/minimized. Shows an 'AI is replying' notification. Turn off to save battery.",
+                        "画面をロック/最小化してもチャットは継続します。「AIが応答中」通知が表示されます。バッテリー節約のため無効にできます。",
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
+                Spacer(Modifier.height(Space.sm))
                 val budgetValue = settings["context_budget"]?.toIntOrNull() ?: 24000
                 Row(
                     Modifier.fillMaxWidth(),

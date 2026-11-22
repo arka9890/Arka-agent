@@ -13,6 +13,10 @@ class ArkaApp : Application() {
         initError = runCatching {
             Arka.nativeInit(filesDir.absolutePath, applicationInfo.nativeLibraryDir)
         }.exceptionOrNull()?.message
+
+        // Job chat hidup di scope Application, bukan di ViewModel, supaya
+        // tidak ikut mati saat Activity dibuat ulang.
+        ChatEngine.init(this)
     }
 
     companion object {
