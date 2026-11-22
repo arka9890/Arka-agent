@@ -1,11 +1,10 @@
 package com.arka.agent.core
 
-import android.content.Context
 import org.json.JSONObject
 
 /**
  * Helper untuk menyimpan/membaca provider dengan API key terenkripsi.
- * 
+ *
  * - Saat saveProvider: encrypt apiKey sebelum masuk ke DB.
  * - Saat testProvider / loadModels / chatStream: decrypt apiKey sebelum dipakai.
  * - Mendukung API key plaintext lama (auto-migrasi saat pertama decrypt).
@@ -13,16 +12,16 @@ import org.json.JSONObject
 object ProviderEditor {
 
     /**
-     * Simpan provider dengan apiKey terenkripsi.
+     * Enkripsi apiKey provider untuk disimpan ke database.
+     * Jika enkripsi gagal, lempar error (jangan pernah simpan plaintext).
      */
-    fun upsert(context: Context, provider: Provider): Provider {
+    fun upsert(provider: Provider): Provider {
         val encryptedKey = if (provider.apiKey.isBlank()) {
             ""
         } else {
             try {
-                ApiKeyEncryption.encrypt(context, provider.apiKey)
+                ApiKeyEncryption.encrypt(provider.apiKey)
             } catch (e: Exception) {
-                // Jika enkripsi gagal, jangan simpan plaintext
                 throw IllegalStateException("Gagal mengenkripsi API key: ${e.message}")
             }
         }
@@ -30,17 +29,16 @@ object ProviderEditor {
     }
 
     /**
-     * Ambil provider dan decrypt apiKey untuk digunakan.
-     * Mendukung API key plaintext lama (auto-migrasi saat pertama decrypt).
+     * Dekripsi apiKey provider untuk digunakan.
+     * API key plaintext lama otomatis dikembalikan apa adanya (migrasi).
      */
-    fun reveal(context: Context, provider: Provider): Provider {
+    fun reveal(provider: Provider): Provider {
         val decryptedKey = if (provider.apiKey.isBlank()) {
             ""
         } else {
             try {
-                ApiKeyEncryption.decrypt(context, provider.apiKey)
+                ApiKeyEncryption.decrypt(provider.apiKey)
             } catch (e: Exception) {
-                // Jika dekripsi gagal (misal API key lama plaintext), kembalikan apa adanya
                 provider.apiKey
             }
         }
@@ -48,11 +46,10 @@ object ProviderEditor {
     }
 
     /**
-     * Enkripsi JSON provider untuk disimpan ke database.
-     * Dipakai saat saveProvider.
+     * Enkripsi provider ke JSON untuk disimpan ke database (saveProvider).
      */
-    fun encryptForStorage(context: Context, provider: Provider): String {
-        val encrypted = upsert(context, provider)
+    fun encryptForStorage(provider: Provider): String {
+        val encrypted = upsert(provider)
         return JSONObject().apply {
             put("id", encrypted.id)
             put("name", encrypted.name)
@@ -66,10 +63,10 @@ object ProviderEditor {
     }
 
     /**
-     * Dekripsi provider dari JSON database untuk digunakan.
-     * Dipakai saat testProvider, loadModels, chatStream, dll.
+     * Dekripsi provider dari JSON database untuk digunakan
+     * (testProvider, loadModels, chatStream, dll).
      */
-    fun decryptFromStorage(context: Context, providerJson: String): Provider {
+    fun decryptFromStorage(providerJson: String): Provider {
         val json = JSONObject(providerJson)
         val encryptedProvider = Provider(
             id = json.getString("id"),
@@ -83,6 +80,6 @@ object ProviderEditor {
             },
             isDefault = json.getBoolean("is_default")
         )
-        return reveal(context, encryptedProvider)
+        return reveal(encryptedProvider)
     }
 }
