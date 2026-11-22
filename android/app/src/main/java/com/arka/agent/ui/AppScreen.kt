@@ -39,12 +39,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.arka.agent.ChatEngine
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.screens.ChatScreen
 import com.arka.agent.ui.screens.FilesScreen
@@ -92,6 +94,15 @@ fun AppScreen(vm: MainViewModel) {
         bottomBar = { ClayTabBar(current = tab, onSelect = { tab = it }) },
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
+        // ChatEngine hanya perlu tahu sesi mana yang *terlihat* supaya
+        // jawaban di tab lain / latar belakang memicu notifikasi.
+        val sessionId by vm.currentSessionId.collectAsState()
+        val inChat = tab == Tab.Chat
+        DisposableEffect(inChat, sessionId) {
+            ChatEngine.setVisible(if (inChat) sessionId else null)
+            onDispose {}
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()

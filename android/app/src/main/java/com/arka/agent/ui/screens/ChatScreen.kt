@@ -26,6 +26,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
@@ -50,6 +56,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -93,6 +101,7 @@ fun ChatScreen(vm: MainViewModel) {
     val messages by vm.messages.collectAsState()
     val streaming by vm.streamingText.collectAsState()
     val busy by vm.busy.collectAsState()
+    val thinking by vm.thinking.collectAsState()
     val settings by vm.settings.collectAsState()
     val providers by vm.providers.collectAsState()
 
@@ -201,6 +210,7 @@ fun ChatScreen(vm: MainViewModel) {
                         messages = messages,
                         streaming = streaming,
                         busy = busy,
+                        thinking = thinking,
                         autoScroll = settings["auto_scroll"] != "false",
                         resolveFile = vm::workspaceFile,
                         onOpenFile = { path ->
@@ -445,11 +455,61 @@ private fun EmptyChat(onStart: () -> Unit) {
     }
 }
 
+/**
+ * Indikator "AI sedang mengetik…" sebelum token pertama datang.
+ *
+ * Tiga titik yang berdenyut bergantian (bukan animasi teks) supaya terasa
+ * hidup tanpa memaksa recompose teks panjang, dan tetap terlihat jelas di
+ * tema terang maupun gelap.
+ */
+@Composable
+private fun TypingIndicator() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = clay.surface,
+            tonalElevation = 0.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val infinite = rememberInfiniteTransition(label = "typing")
+                repeat(3) { i ->
+                    val alpha by infinite.animateFloat(
+                        initialValue = 0.25f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(600, delayMillis = i * 150),
+                            repeatMode = RepeatMode.Reverse,
+                        ),
+                        label = "dot$i",
+                    )
+                    Box(
+                        Modifier
+                            .padding(horizontal = 2.dp)
+                            .size(6.dp)
+                            .alpha(alpha)
+                            .background(clay.accent, CircleShape),
+                    )
+                }
+                Spacer(Modifier.width(Space.sm))
+                Text(
+                    tr("AI sedang mengetik…", "AI is typing…", "AIが入力中…"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun MessageList(
     messages: List<Message>,
     streaming: String,
     busy: Boolean,
+    thinking: Boolean,
     autoScroll: Boolean,
     resolveFile: (String) -> java.io.File,
     onOpenFile: (String) -> Unit,
@@ -459,9 +519,16 @@ private fun MessageList(
     val listState = rememberLazyListState()
     val lastContent = streaming.ifEmpty { messages.lastOrNull()?.content.orEmpty() }
 
-    LaunchedEffect(messages.size, lastContent.length, autoScroll) {
+    // Selama "mengetik" ada item ekstra di akhir daftar, jadi target scroll
+    // harus ikut bergeser supaya indikatornya terlihat.
+    val showTyping = thinking && streaming.isEmpty()
+    LaunchedEffect(messages.size, lastContent.length, showTyping, autoScroll) {
         if (!autoScroll) return@LaunchedEffect
-        val target = if (streaming.isNotEmpty()) messages.size else messages.lastIndex.coerceAtLeast(0)
+        val target = when {
+            streaming.isNotEmpty() -> messages.size
+            showTyping -> messages.size
+            else -> messages.lastIndex.coerceAtLeast(0)
+        }
         if (target >= 0) listState.animateScrollToItem(target)
     }
 
@@ -485,6 +552,11 @@ private fun MessageList(
                     onCopy = onCopy,
                 )
             }
+            if (showTyping) {
+                item(key = "typing") {
+                    TypingIndicator()
+                }
+            }
             if (streaming.isNotEmpty()) {
                 item(key = "streaming") {
                     MessageBubble(
@@ -501,7 +573,7 @@ private fun MessageList(
                     )
                 }
             }
-            if (messages.isEmpty() && streaming.isEmpty()) {
+            if (messages.isEmpty() && streaming.isEmpty() && !showTyping) {
                 item {
                     Text(
                         if (busy) {

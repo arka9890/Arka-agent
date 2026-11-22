@@ -132,12 +132,11 @@ fun SettingsScreen(vm: MainViewModel) {
                     checked = settings["auto_scroll"] != "false",
                     onChange = { vm.updateSetting("auto_scroll", it.toString()) },
                 )
-                // Belum ada NotificationManager di aplikasi ini: tombol
-                // sengaja dinonaktifkan supaya tidak terlihat "rusak".
+                // Notifikasi hanya muncul kalau jawaban datang saat tab Chat
+                // tidak sedang dibuka (lihat Notifications + ChatEngine).
                 ToggleRow(
-                    label = tr("Notifikasi pesan baru (belum aktif)", "New message notifications (not active)", "新着通知（未実装）"),
+                    label = tr("Notifikasi pesan baru", "New message notifications", "新着メッセージ通知"),
                     checked = settings["notifications"] != "false",
-                    enabled = false,
                     onChange = { vm.updateSetting("notifications", it.toString()) },
                 )
             }

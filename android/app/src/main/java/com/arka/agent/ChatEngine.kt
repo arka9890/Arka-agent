@@ -5,6 +5,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +31,21 @@ object ChatEngine {
 
     private val jobs = mutableMapOf<String, Job>()
     private val buffers = mutableMapOf<String, StringBuilder>()
+    /** Sesi yang luarannya sedang terlihat di UI (tab Chat). */
+    private val visible = mutableSetOf<String>()
+
+    private val _finished = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** Nama sesi yang baru selesai dijawab (untuk notifikasi). */
+    val finished: SharedFlow<String> = _finished.asSharedFlow()
+
+    /**
+     * Dipanggil dari UI: sesi ini sedang tampil, jadi jawabannya tidak perlu
+     * dinotifikasikan. Mengosongkan berarti pengguna meninggalkan tab Chat.
+     */
+    fun setVisible(sessionId: String?) {
+        visible.clear()
+        if (sessionId != null) visible.add(sessionId)
+    }
 
     private val _running = MutableStateFlow<Set<String>>(emptySet())
     /** Id sesi yang sedang menerima jawaban. */
@@ -42,6 +60,9 @@ object ChatEngine {
     }
 
     fun isRunning(sessionId: String): Boolean = jobs[sessionId]?.isActive == true
+
+    /** True kalau jawaban sesi ini tidak sedang dilihat pengguna. */
+    fun isHidden(sessionId: String): Boolean = sessionId !in visible
 
     fun buffered(sessionId: String): String = buffers[sessionId]?.toString().orEmpty()
 
@@ -83,6 +104,7 @@ object ChatEngine {
         jobs.remove(sessionId)
         buffers.remove(sessionId)
         publish()
+        _finished.tryEmit(sessionId)
         if (_running.value.isEmpty()) ArkaChatService.stop(app)
     }
 

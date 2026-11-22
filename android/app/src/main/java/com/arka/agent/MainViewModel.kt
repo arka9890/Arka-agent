@@ -38,7 +38,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private val repo = ArkaRepo(app)
-
     /** Konteks Application untuk memulai dialog sistem dari luar Activity. */
     private val appContext: Application = app
 
@@ -62,6 +61,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    /**
+     * "AI sedang mengetik…": true sejak pesan dikirim sampai token pertama
+     * datang. Setelah itu bubble streaming sendiri yang jadi indikator.
+     */
+    private val _thinking = MutableStateFlow(false)
+    val thinking: StateFlow<Boolean> = _thinking.asStateFlow()
 
     private val _providers = MutableStateFlow<List<Provider>>(emptyList())
     val providers: StateFlow<List<Provider>> = _providers.asStateFlow()
@@ -130,6 +136,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _sessions.value.firstOrNull()?.let { selectSession(it.id) }
             autoInstallIfNeeded()
         }
+        // Notifikasi "pesan baru": jawaban sesi yang tidak sedang dilihat
+        // (pengguna pindah tab/sesi atau aplikasi di latar belakang).
+        viewModelScope.launch {
+            ChatEngine.finished.collect { finishedId ->
+                if (settings.value["notifications"] == "false") return@collect
+                // Hanya sesi yang memang tidak terlihat, supaya tidak ada
+                // notifikasi untuk jawaban yang sedang dibaca.
+                if (!ChatEngine.isHidden(finishedId)) return@collect
+                val last = runCatching { repo.messages(finishedId).lastOrNull() }.getOrNull()
+                if (last == null || last.role != "assistant") return@collect
+                val title = _sessions.value.firstOrNull { it.id == finishedId }?.title
+                    ?: "Arka Agent"
+                Notifications.newMessage(appContext, finishedId, title, last.content)
+            }
+        }
     }
 
     /**
@@ -186,6 +207,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // streaming-nya dan kunci tombol kirim jadi tombol berhenti.
         val running = ChatEngine.isRunning(id)
         _busy.value = running
+        // Sesi lain yang sedang jalan tidak punya indikator "mengetik" di UI
+        // ini; bubble streaming-nya muncul begitu token pertama tiba.
+        _thinking.value = false
         _streamingText.value = if (running) ChatEngine.buffered(id) else ""
         viewModelScope.launch {
             _messages.value = runCatching { repo.messages(id) }.getOrElse {
@@ -263,6 +287,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (ChatEngine.isRunning(sessionId)) return
 
         _busy.value = true
+        _thinking.value = _currentSessionId.value == sessionId
         _streamingText.value = ""
         ChatEngine.clearBuffer(sessionId)
 
@@ -337,6 +362,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // Simpan ke buffer global dulu supaya UI baru yang
                         // dibuat ulang tetap bisa menampilkan jawaban yang
                         // sedang berjalan.
+                        if (_currentSessionId.value == sessionId) _thinking.value = false
                         ChatEngine.onDelta(sessionId, delta)
                         // Tampilkan hanya jika sesi ini masih yang terbuka;
                         // kalau pengguna pindah sesi, jawaban tetap disimpan
@@ -373,6 +399,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 ChatEngine.finish(sessionId, job)
                 if (_currentSessionId.value == sessionId) {
                     _busy.value = false
+                    _thinking.value = false
                     _streamingText.value = ""
                 }
             }
@@ -390,6 +417,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ChatEngine.cancelJob(sessionId)
             if (_currentSessionId.value == sessionId) {
                 _busy.value = false
+                _thinking.value = false
                 _streamingText.value = ""
             }
         }
