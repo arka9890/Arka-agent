@@ -401,14 +401,22 @@ fn proot_run_tmp_dir() -> Result<PathBuf, String> {
 }
 
 /// Env untuk proses proot itu sendiri (bukan untuk guest).
-fn proot_env() -> Result<Vec<(String, String)>, String> {
+///
+/// `tmp` WAJIB diset di sini: proot (host) membaca `PROOT_TMP_DIR` untuk
+/// membuat direktori glue/f2fs sebelum rootfs dimount. Kalau hanya diset di
+/// dalam guest (`env -i ...` di [proot_argv]), host proot memakai path default
+/// hasil kompilasi (mis. `/data/data/com.termux/files/usr/tmp`) dan gagal.
+fn proot_env(tmp: &Path) -> Result<Vec<(String, String)>, String> {
     if let Err(e) = LIBS_READY.get_or_init(prepare_libs) {
         return Err(e.clone());
     }
     let libs = ctx::proot_libs_dir()?;
     let native_dir = &ctx::ctx()?.native_lib_dir;
     let ld_path = format!("{}:{}", libs.to_string_lossy(), native_dir.to_string_lossy());
-    let mut env = vec![("LD_LIBRARY_PATH".to_string(), ld_path)];
+    let mut env = vec![
+        ("LD_LIBRARY_PATH".to_string(), ld_path),
+        ("PROOT_TMP_DIR".to_string(), tmp.to_string_lossy().to_string()),
+    ];
     if let Some(loader) = ctx::loader_binary()? {
         env.push(("PROOT_LOADER".to_string(), loader.to_string_lossy().to_string()));
     }
@@ -465,7 +473,7 @@ fn spawn_proot(command: &str, tmp: &Path) -> Result<std::process::Child, String>
     let argv = proot_argv(command, tmp)?;
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]);
-    for (k, v) in proot_env()? {
+    for (k, v) in proot_env(tmp)? {
         cmd.env(k, v);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
