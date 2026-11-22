@@ -10,7 +10,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -326,10 +325,9 @@ private fun UriImageThumbnail(uri: String, name: String) {
             contentDescription = name,
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 240.dp)
-                .aspectRatio(image.width.toFloat() / image.height.toFloat())
+                .heightIn(min = 140.dp, max = 240.dp)
                 .clip(RoundedCornerShape(10.dp)),
-            contentScale = ContentScale.Fit,
+            contentScale = ContentScale.Crop,
         )
         failed -> Text(
             tr("Gambar tidak bisa dibaca", "Image could not be read", "画像を読み込めません"),
@@ -384,10 +382,9 @@ private fun ImageThumbnail(file: File) {
             contentDescription = "Lampiran gambar",
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 240.dp)
-                .aspectRatio(image.width.toFloat() / image.height.toFloat())
+                .heightIn(min = 140.dp, max = 240.dp)
                 .clip(RoundedCornerShape(10.dp)),
-            contentScale = ContentScale.Fit,
+            contentScale = ContentScale.Crop,
         )
     }
 }
