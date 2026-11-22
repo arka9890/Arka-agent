@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -155,6 +156,9 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
                 Modifier
                     .fillMaxSize()
                     .padding(12.dp)
+                    // Jangan sampai footer (tombol Unduh) tertutup gesture
+                    // navigation bar di perangkat android gesture-nav.
+                    .navigationBarsPadding()
                     .background(
                         clay.background.copy(alpha = 0.7f),
                         RoundedCornerShape(16.dp),
@@ -185,10 +189,15 @@ fun FilePreviewDialog(vm: MainViewModel, file: FileInfo, onDismiss: () -> Unit) 
 
                 Spacer(Modifier.height(Space.sm))
 
-                // Konten preview: mengisi sisa layar (full screen).
+                // Konten preview: pakai weight(1f), BUKAN fillMaxSize().
+                // fillMaxSize pada child Column mengambil seluruh tinggi card
+                // sehingga header+footer terdorong keluar layar dan tombol
+                // Unduh tidak pernah terlihat. weight(1f) menjamin preview
+                // hanya memakai sisa ruang setelah header & footer.
                 Box(
                     Modifier
-                        .fillMaxSize()
+                        .weight(1f)
+                        .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp)),
                 ) {
                     when {
