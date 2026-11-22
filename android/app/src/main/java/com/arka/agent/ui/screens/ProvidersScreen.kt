@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Analytics
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -46,11 +47,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.LocalLanguage
 import com.arka.agent.ui.tr
 import com.arka.agent.ui.trFor
 import com.arka.agent.core.Provider
+import com.arka.agent.core.ProviderStats
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.components.ClayPill
 import com.arka.agent.ui.theme.Space
@@ -62,11 +65,22 @@ import com.arka.agent.ui.theme.clay
  * API key ditampilkan sebagai pill "terisi"/"kosong" di daftar, bukan nilai
  * aslinya — layar ini sering terlihat di tempat umum.
  */
+/** Ringkas angka besar: 1234567 -> "1.2M". */
+private fun formatTokens(n: Long): String = when {
+    n >= 1_000_000 -> String.format("%.1fM", n / 1_000_000.0)
+    n >= 1_000 -> String.format("%.1fK", n / 1_000.0)
+    else -> n.toString()
+}
+
 @Composable
 fun ProvidersScreen(vm: MainViewModel) {
     val providers by vm.providers.collectAsState()
+    // Statistik diperbarui setiap kali masuk layar ini dan setelah chat selesai,
+    // karena nilainya berubah di sisi Rust saat pengguna memakai AI.
+    LaunchedEffect(Unit) { vm.refreshProviderStats() }
     var editing by remember { mutableStateOf<Provider?>(null) }
     var deleting by remember { mutableStateOf<Provider?>(null) }
+    val stats by vm.providerStats.collectAsState()
 
     Column(Modifier.fillMaxSize().padding(horizontal = Space.md)) {
         Row(
@@ -127,6 +141,25 @@ fun ProvidersScreen(vm: MainViewModel) {
                                 color = clay.muted,
                                 maxLines = 1,
                             )
+                            // Stats
+                            val pStats = stats.find { it.id == provider.id }
+                            if (pStats != null && (pStats.total_tokens > 0 || pStats.total_requests > 0)) {
+                                Spacer(Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Outlined.Analytics,
+                                        tr("Stats", "Stats", "統計"),
+                                        tint = clay.muted,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        "${formatTokens(pStats.total_tokens)} tokens · ${pStats.total_requests} req",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = clay.muted,
+                                    )
+                                }
+                            }
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             ClayPill(

@@ -95,6 +95,11 @@ class ArkaRepo(private val context: Context) {
         json.decodeFromString(Arka.refreshModels(providerId))
     }
 
+    /** Statistik penggunaan semua provider (id, total_tokens, total_requests, last_used_at). */
+    suspend fun providerStats(): List<ProviderStats> = io {
+        json.decodeFromString(Arka.providerStatsJson())
+    }
+
     // --------------------------------------------------------------- AI
 
     /**

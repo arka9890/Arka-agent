@@ -47,6 +47,12 @@ object Arka {
 
     /** Cek daftar model dari server (manual). Hasilnya disimpan di DB. */
     external fun refreshModels(providerId: String): String
+    /** Rekam penggunaan provider (dipakai Rust saat chat selesai). */
+    external fun recordProviderUsage(providerId: String, tokens: Long, requests: Long)
+
+    /** Statistik penggunaan semua provider (id, total_tokens, total_requests, last_used_at). */
+    external fun providerStatsJson(): String
+
 
     // --------------------------------------------------------------- AI
     /**

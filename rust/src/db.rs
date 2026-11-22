@@ -93,4 +93,12 @@ CREATE TABLE IF NOT EXISTS terminal_history (
     command    TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS provider_stats (
+    provider_id TEXT PRIMARY KEY,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    total_requests INTEGER NOT NULL DEFAULT 0,
+    last_used_at INTEGER,
+    FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+);
 "#;

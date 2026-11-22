@@ -207,3 +207,76 @@ pub fn delete(id: &str) -> Result<(), String> {
             .map(|_| ())
     })
 }
+
+// ------------------------------------------------------------ provider stats
+
+use crate::db::{with, now_ms};
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ProviderStats {
+    pub total_tokens: i64,
+    pub total_requests: i64,
+    pub last_used_at: Option<i64>,
+}
+
+/// Catat penggunaan provider (tokens & request). Dipanggil setelah chat selesai.
+pub fn record_usage(provider_id: &str, tokens: i64, requests: i64) -> Result<(), String> {
+    with(|c| {
+        c.execute(
+            "INSERT OR IGNORE INTO provider_stats (provider_id, total_tokens, total_requests)
+             VALUES (?1, 0, 0)",
+            rusqlite::params![provider_id],
+        ).map_err(|e| e.to_string())?;
+
+        c.execute(
+            "UPDATE provider_stats
+             SET total_tokens = total_tokens + ?1,
+                 total_requests = total_requests + ?2,
+                 last_used_at = ?3
+             WHERE provider_id = ?4",
+            rusqlite::params![tokens, requests, now_ms(), provider_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+/// Ambil statistik provider.
+#[allow(dead_code)]
+pub fn get_stats(provider_id: &str) -> Result<ProviderStats, String> {
+    with(|c| {
+        c.query_row(
+            "SELECT total_tokens, total_requests, last_used_at FROM provider_stats WHERE provider_id = ?1",
+            rusqlite::params![provider_id],
+            |row| Ok(ProviderStats {
+                total_tokens: row.get(0)?,
+                total_requests: row.get(1)?,
+                last_used_at: row.get::<_, Option<i64>>(2)?,
+            }),
+        ).map_err(|_| format!("Stats not found for provider {}", provider_id))
+    })
+}
+
+/// Ambil statistik semua provider (join dengan providers untuk urutan).
+pub fn get_all_stats() -> Result<Vec<(String, ProviderStats)>, String> {
+    with(|c| {
+        let mut stmt = c.prepare(
+            "SELECT p.id, COALESCE(ps.total_tokens, 0), COALESCE(ps.total_requests, 0), ps.last_used_at
+             FROM providers p
+             LEFT JOIN provider_stats ps ON p.id = ps.provider_id
+             ORDER BY p.is_default DESC, p.created_at ASC",
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ProviderStats {
+                    total_tokens: row.get(1)?,
+                    total_requests: row.get(2)?,
+                    last_used_at: row.get::<_, Option<i64>>(3)?,
+                },
+            ))
+        }).map_err(|e| e.to_string())?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    })
+}

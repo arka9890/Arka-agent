@@ -170,7 +170,13 @@ fn message_value(anthropic: bool, m: &ChatMsg) -> Value {
     v
 }
 
-fn request_body(anthropic: bool, model: &str, messages: &[ChatMsg], with_tools: bool) -> Value {
+fn request_body(
+    anthropic: bool,
+    model: &str,
+    messages: &[ChatMsg],
+    with_tools: bool,
+    include_usage: bool,
+) -> Value {
     let system = messages.iter().find(|m| m.role == "system").map(|m| m.content.clone());
     let msgs: Vec<Value> = messages.iter()
         .filter(|m| m.role != "system")
@@ -190,6 +196,13 @@ fn request_body(anthropic: bool, model: &str, messages: &[ChatMsg], with_tools: 
         v
     } else {
         let mut v = json!({"model": model, "stream": true, "messages": msgs});
+        // Minta laporan token di chunk terakhir supaya statistik provider
+        // bisa diisi. Endpoint lama yang tidak kenal `stream_options` akan
+        // menolak request — karena itu `include_usage` dicoba terpisah
+        // (lihat [ChatStream::open]).
+        if include_usage {
+            v["stream_options"] = json!({"include_usage": true});
+        }
         if with_tools {
             v["tools"] = tools_schema();
             v["tool_choice"] = json!("auto");
@@ -205,6 +218,8 @@ pub struct ChatStream {
     anthropic: bool,
     finished: bool,
     calls: Vec<ToolCall>,
+    /// Total token yang dilaporkan provider (kalau endpoint mengirim `usage`).
+    usage_tokens: i64,
 }
 
 impl ChatStream {
@@ -227,8 +242,13 @@ impl ChatStream {
             endpoint(provider, "chat/completions")
         };
         let mut last_error = "Gagal menghubungi provider".to_string();
-        for with_tools in [true, false] {
-            let body = request_body(anthropic, model, messages, with_tools);
+        // Coba 4 kombinasi: (tools?, usage?). Provider yang menolak
+        // `stream_options` akan bilang 400 — lalu dicoba tanpa usage supaya
+        // chat tetap jalan (statistik token hanya kosong di kasus itu).
+        for (with_tools, include_usage) in
+            [(true, true), (true, false), (false, false), (false, true)]
+        {
+            let body = request_body(anthropic, model, messages, with_tools, include_usage);
             let resp = auth_headers(client()?.post(&url).json(&body), provider)
                 .send()
                 .map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
@@ -238,13 +258,15 @@ impl ChatStream {
                     anthropic,
                     finished: false,
                     calls: Vec::new(),
+                    usage_tokens: 0,
                 });
             }
             let status = resp.status().as_u16();
             let text = resp.text().unwrap_or_default();
             last_error = describe_http_error(status, &text);
-            // 400/404/422 dari provider Biasanya berarti "tools tidak didukung".
-            if with_tools && (400..=422).contains(&status) {
+            // 400/422: biasanya "tools tidak didukung" atau
+            // "stream_options tidak dikenal" — coba variasi berikutnya.
+            if (400..=422).contains(&status) {
                 continue;
             }
             return Err(last_error);
@@ -255,6 +277,41 @@ impl ChatStream {
     /// Ambil tool call yang terkumpul (dipanggil setelah stream habis).
     pub fn take_tool_calls(&mut self) -> Vec<ToolCall> {
         std::mem::take(&mut self.calls)
+    }
+
+    /// Total token yang dilaporkan provider untuk permintaan ini.
+    /// 0 kalau provider tidak mengirim metadata `usage`.
+    pub fn usage_tokens(&self) -> i64 {
+        self.usage_tokens
+    }
+
+    /// Kumpulkan metadata `usage` dari chunk SSE.
+    ///
+    /// OpenAI mengirim `usage` di chunk terakhir kalau request memakai
+    /// `stream_options.include_usage`; beberapa gateway mengirimnya di chunk
+    /// pertama. Anthropic mengirim `input_tokens` di `message_start` dan
+    /// `output_tokens` di `message_delta`.
+    fn collect_usage(&mut self, json: &Value) {
+        let mut add = 0i64;
+        if let Some(total) = json.pointer("/usage/total_tokens").and_then(|v| v.as_i64()) {
+            add = add.max(total);
+        }
+        let prompt = json.pointer("/usage/prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let completion = json.pointer("/usage/completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        if add == 0 && (prompt > 0 || completion > 0) {
+            add = prompt + completion;
+        }
+        // Anthropic: message_start (input) + message_delta (output)
+        let a_in = json.pointer("/message/usage/input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let a_out = json.pointer("/usage/output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        if add == 0 && (a_in > 0 || a_out > 0) {
+            add = a_in + a_out;
+        }
+        if add > 0 {
+            // Jangan menimpa nilai yang lebih besar (beberapa provider mengirim
+            // usage parsial di beberapa chunk).
+            self.usage_tokens = self.usage_tokens.max(add);
+        }
     }
 
     /// Potongan teks berikutnya. `None` = stream selesai.
@@ -292,6 +349,7 @@ impl ChatStream {
                 return Some(Err(format!("Provider menolak permintaan: {err}")));
             }
             collect_tool_calls(&mut self.calls, self.anthropic, &json);
+            self.collect_usage(&json);
             let delta = if self.anthropic {
                 json.pointer("/delta/text").and_then(|t| t.as_str())
             } else {

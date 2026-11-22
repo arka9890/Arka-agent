@@ -9,6 +9,7 @@ import com.arka.agent.core.DistroStatus
 import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
 import com.arka.agent.core.Provider
+import com.arka.agent.core.ProviderStats
 import com.arka.agent.core.Session
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +60,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _providers = MutableStateFlow<List<Provider>>(emptyList())
     val providers: StateFlow<List<Provider>> = _providers.asStateFlow()
+
+    private val _providerStats = MutableStateFlow<List<ProviderStats>>(emptyList())
+    val providerStats: StateFlow<List<ProviderStats>> = _providerStats.asStateFlow()
 
     private val _files = MutableStateFlow<List<FileInfo>>(emptyList())
     val files: StateFlow<List<FileInfo>> = _files.asStateFlow()
@@ -118,6 +122,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // baru) supaya state di bawah sudah terisi saat dipakai.
             _settings.value = runCatching { repo.settings() }.getOrDefault(emptyMap())
             _providers.value = runCatching { repo.providers() }.getOrDefault(emptyList())
+            _providerStats.value = runCatching { repo.providerStats() }.getOrDefault(emptyList())
             _sessions.value = runCatching { repo.sessions() }.getOrDefault(emptyList())
             _distro.value = runCatching { repo.distroStatus() }.getOrDefault(DistroStatus())
             _files.value = runCatching { repo.files("") }.getOrDefault(emptyList())
@@ -340,6 +345,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // --------------------------------------------------------- provider
+
+    fun refreshProviderStats() = viewModelScope.launch {
+        _providerStats.value = runCatching { repo.providerStats() }.getOrElse { emptyList() }
+    }
 
     fun refreshProviders() = viewModelScope.launch {
         _providers.value = runCatching { repo.providers() }.getOrElse {

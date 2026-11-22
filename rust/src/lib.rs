@@ -370,6 +370,39 @@ fn tail_chars(text: String, max: usize) -> String {
 ///
 /// Blocking: panggil dari `Dispatchers.IO`.
 #[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_recordProviderUsage<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    provider_id: JString<'local>,
+    tokens: jlong,
+    requests: jlong,
+) {
+    let provider_id = ju::arg_str(&mut env, &provider_id);
+    unit_result(&mut env, || {
+        provider::record_usage(&provider_id, tokens, requests)
+    })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_providerStatsJson<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JString<'local> {
+    json_result(&mut env, || {
+        let stats = provider::get_all_stats()
+            .map(|v| v.into_iter().map(|(id, s)| {
+                serde_json::json!({
+                    "id": id,
+                    "total_tokens": s.total_tokens,
+                    "total_requests": s.total_requests,
+                    "last_used_at": s.last_used_at
+                })
+            }).collect::<Vec<_>>())?;
+        serde_json::to_string(&stats).map_err(|e| e.to_string())
+    })
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -416,6 +449,9 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     let max_tool_rounds = settings::max_tool_rounds();
     let mut final_text = String::new();
     let mut rounds = 0usize;
+    // Token dari setiap putaran dijumlahkan: satu jawaban bisa terdiri dari
+    // puluhan panggilan provider (tiap putaran tool = 1 permintaan).
+    let mut total_tokens: i64 = 0;
 
     loop {
         let mut stream = match ai::ChatStream::open(&p, &model, &msgs) {
@@ -442,6 +478,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                 }
             }
         }
+        total_tokens += stream.usage_tokens();
+
         // Simpan semua teks dari tiap putaran (bukan hanya terakhir): kalau
         // ditimpa, jawaban yang tampil di stream mendadak menyusut setelah
         // reload dan terlihat seperti "model berhenti di tengah".
@@ -535,6 +573,11 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         ju::emit_str(&mut env, &cb, "onError", msg);
         return JString::default();
     }
+
+    // Statistik provider: jawaban dihitung 1 permintaan, plus tiap putaran
+    // tool yang sudah dijalankan. Kalau provider tidak mengirim metadata usage
+    // (provider::record_usage hanya menambah request), token-nya 0.
+    let _ = provider::record_usage(&p.id, total_tokens, 1 + rounds as i64);
 
     match session::add_message(&session_id, "assistant", &final_text, "[]") {
         Ok(m) => {

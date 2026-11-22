@@ -43,6 +43,14 @@ data class Provider(
     @SerialName("created_at") val createdAt: Long = 0,
 )
 
+@Serializable
+data class ProviderStats(
+    val id: String = "",
+    val total_tokens: Long = 0,
+    val total_requests: Long = 0,
+    val last_used_at: Long? = null,
+)
+
 /** Satu entri di tab File. [path] relatif terhadap workspace. */
 @Serializable
 data class FileInfo(
