@@ -259,6 +259,7 @@ private fun AttachmentPreview(
                     }
                 }
             }
+        }
 
             // Tombol unduh langsung dari bubble chat.
             Row(
@@ -279,7 +280,6 @@ private fun AttachmentPreview(
                     )
                 }
             }
-        }
     }
 }
 
