@@ -288,7 +288,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val attachmentJson = attachments.joinToString(",", "[", "]") { it.toJson() }
                 val userMsg = repo.addMessage(sessionId, "user", body, attachmentJson)
-                _messages.value = _messages.value + userMsg
+                // Jangan tampilkan pesan dari sesi latar belakang di chat
+                // sesi lain. Saat sesinya dibuka, riwayat dibaca ulang dari DB.
+                if (_currentSessionId.value == sessionId) {
+                    _messages.value = _messages.value + userMsg
+                }
                 repo.autotitle(sessionId, body)
                 refreshSessions()
 
@@ -320,6 +324,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
+                // Terminal dipakai bersama oleh semua sesi, jadi beri label
+                // supaya output dua sesi yang jalan bersamaan tetap jelas.
+                val toolLabel = session?.title?.take(24) ?: sessionId.take(8)
+
                 val result = repo.chat(
                     sessionId = sessionId,
                     providerId = provider?.id,
@@ -339,9 +347,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     },
                     onTool = { command, output ->
                         // Perintah agent ditampilkan di Terminal supaya
-                        // pengguna melihat apa yang dijalankan model.
-                        appendTerminal("$ $command\n$output\n")
-                        ChatEngine.scope.launch { refreshFiles(_currentDir.value) }
+                        // pengguna melihat apa yang dijalankan model. Leading
+                        // newline mem-flush sisa baris dari sesi sebelumnya.
+                        appendTerminal("\n[$toolLabel] $ $command\n$output\n")
+                        // Refresh daftar file tanpa mengubah folder yang sedang
+                        // dibuka pengguna (dulu sesi latar bisa memindahkan
+                        // tab File ke direktori lain).
+                        ChatEngine.scope.launch {
+                            runCatching { _files.value = repo.files(_currentDir.value) }
+                        }
                     },
                 )
 

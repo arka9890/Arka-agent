@@ -51,6 +51,34 @@ fn new_chat_cancel(session_id: &str) -> Arc<AtomicBool> {
     flag
 }
 
+/// Hapus flag setelah run selesai. Hanya dihapus kalau masih flag yang sama
+/// (run baru pada sesi yang sama tidak ikut terhapus).
+fn remove_chat_cancel(session_id: &str, flag: &Arc<AtomicBool>) {
+    let Some(map) = CHAT_CANCELS.get() else { return };
+    if let Ok(mut guard) = map.lock() {
+        if guard
+            .get(session_id)
+            .map(|f| Arc::ptr_eq(f, flag))
+            .unwrap_or(false)
+        {
+            guard.remove(session_id);
+        }
+    }
+}
+
+/// Bersihkan flag cancel otomatis lewat `Drop`, termasuk saat fungsi return
+/// lebih awal karena error.
+struct ChatCancelGuard {
+    session_id: String,
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for ChatCancelGuard {
+    fn drop(&mut self) {
+        remove_chat_cancel(&self.session_id, &self.flag);
+    }
+}
+
 /// Set flag batal untuk run chat yang terdaftar pada [session_id].
 fn request_chat_cancel(session_id: &str) {
     let Some(flag) = CHAT_CANCELS.get()
@@ -445,6 +473,10 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
 
     // Flag batal khusus sesi ini; run lama pada sesi yang sama tidak terganggu.
     let cancel = new_chat_cancel(&session_id);
+    let _cancel_guard = ChatCancelGuard {
+        session_id: session_id.clone(),
+        flag: cancel.clone(),
+    };
 
     let prepared = (|| -> Result<(provider::Provider, Vec<ai::ChatMsg>), String> {
         let p = if provider_id.trim().is_empty() {

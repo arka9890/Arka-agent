@@ -19,8 +19,8 @@ use std::io::{BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// Rootfs resmi Ubuntu 24.04 (ubuntu-base, ±30 MB terkompresi / ±110 MB
@@ -365,9 +365,17 @@ fn refresh_lib(src: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Env untuk proses proot itu sendiri (bukan untuk guest).
-fn proot_env() -> Result<Vec<(String, String)>, String> {
-    let tmp = ctx::proot_tmp_dir()?;
+/// Siapkan pustaka proot sekali per proses.
+///
+/// Dulu `refresh_lib` (hapus lalu salin) dipanggil di **setiap** eksekusi
+/// perintah. Kalau dua sesi menjalankan tool bersamaan, satu proses bisa
+/// menghapus `libtalloc.so.2` yang sedang dimuat proses lain → proot crash
+/// dengan error "cannot open shared object". Sekarang persiapan dilakukan
+/// sekali (proses dimulai ulang setelah update aplikasi, jadi file tetap
+/// segar).
+static LIBS_READY: OnceLock<Result<(), String>> = OnceLock::new();
+
+fn prepare_libs() -> Result<(), String> {
     let libs = ctx::proot_libs_dir()?;
     if let Some(talloc) = ctx::native_lib("libtalloc.so")? {
         // libproot.so membutuhkan SONAME "libtalloc.so.2", bukan "libtalloc.so".
@@ -376,12 +384,31 @@ fn proot_env() -> Result<Vec<(String, String)>, String> {
     if let Some(shmem) = ctx::native_lib("libandroid-shmem.so")? {
         refresh_lib(&shmem, &libs.join("libandroid-shmem.so"))?;
     }
+    Ok(())
+}
+
+/// Folder sementara unik untuk satu eksekusi proot.
+///
+/// `PROOT_TMP_DIR` dipakai proot untuk file internal. Dua perintah bersamaan
+/// yang memakai satu folder berisiko menimpa file yang sama.
+static RUN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn proot_run_tmp_dir() -> Result<PathBuf, String> {
+    let seq = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = ctx::proot_tmp_dir()?.join(format!("run-{}-{}", std::process::id(), seq));
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Env untuk proses proot itu sendiri (bukan untuk guest).
+fn proot_env() -> Result<Vec<(String, String)>, String> {
+    if let Err(e) = LIBS_READY.get_or_init(prepare_libs) {
+        return Err(e.clone());
+    }
+    let libs = ctx::proot_libs_dir()?;
     let native_dir = &ctx::ctx()?.native_lib_dir;
     let ld_path = format!("{}:{}", libs.to_string_lossy(), native_dir.to_string_lossy());
-    let mut env = vec![
-        ("PROOT_TMP_DIR".to_string(), tmp.to_string_lossy().to_string()),
-        ("LD_LIBRARY_PATH".to_string(), ld_path),
-    ];
+    let mut env = vec![("LD_LIBRARY_PATH".to_string(), ld_path)];
     if let Some(loader) = ctx::loader_binary()? {
         env.push(("PROOT_LOADER".to_string(), loader.to_string_lossy().to_string()));
     }
@@ -389,7 +416,7 @@ fn proot_env() -> Result<Vec<(String, String)>, String> {
 }
 
 /// Rangkaian argumen proot untuk menjalankan [command] di dalam Ubuntu.
-fn proot_argv(command: &str) -> Result<Vec<String>, String> {
+fn proot_argv(command: &str, tmp: &Path) -> Result<Vec<String>, String> {
     let proot = ctx::proot_binary()?.ok_or("Binary proot tidak ada di APK ini")?;
     if !is_installed() {
         return Err("Ubuntu 24 belum dipasang".into());
@@ -397,7 +424,6 @@ fn proot_argv(command: &str) -> Result<Vec<String>, String> {
     let rootfs = ctx::rootfs_dir()?;
     let workspace = ctx::workspace_dir()?;
     let loader = ctx::loader_binary()?.ok_or("Loader proot tidak ada di APK ini")?;
-    let tmp = ctx::proot_tmp_dir()?;
 
     let mut argv: Vec<String> = vec![
         proot.to_string_lossy().to_string(),
@@ -435,8 +461,8 @@ fn proot_argv(command: &str) -> Result<Vec<String>, String> {
     Ok(argv)
 }
 
-fn spawn_proot(command: &str) -> Result<std::process::Child, String> {
-    let argv = proot_argv(command)?;
+fn spawn_proot(command: &str, tmp: &Path) -> Result<std::process::Child, String> {
+    let argv = proot_argv(command, tmp)?;
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     for (k, v) in proot_env()? {
@@ -451,13 +477,31 @@ fn spawn_proot(command: &str) -> Result<std::process::Child, String> {
     })
 }
 
+/// Semua perintah proot memakai rootfs, workspace (`/root/storage`), dan
+/// `/dev/shm` yang sama. Dua child yang jalan bersamaan bisa menimpa file
+/// (mis. `git checkout`, `apt`, atau `main.py`) dan merusak rootfs. Karena itu
+/// eksekusi diserialisasi di seluruh proses: chat tool, terminal manual,
+/// diagnostic, dan install_tools antre lewat lock ini.
+///
+/// Lock dipegang sampai child selesai, bukan cuma saat spawn. `JNIEnv` tetap
+/// milik thread pemanggil (tidak dipindah), jadi aman.
+static TOOL_LOCK: Mutex<()> = Mutex::new(());
+
 /// Jalankan perintah dan kembalikan (exit code, gabungan stdout+stderr).
 pub fn run_capture(
     command: &str,
     cancel: &AtomicBool,
     ui: Option<(&mut JNIEnv, &JObject)>,
 ) -> Result<(i32, String), String> {
-    let mut child = spawn_proot(command)?;
+    let _tool_guard = TOOL_LOCK.lock().map_err(|e| format!("Lock tool rusak: {e}"))?;
+    if cancel.load(Ordering::Relaxed) {
+        return Ok((-1, String::new()));
+    }
+    // Folder tmp unik per proses → dua tool dari sesi berbeda tidak saling
+    // menimpa file internal proot. Dibersihkan setelah child selesai.
+    let tmp = proot_run_tmp_dir()?;
+    let result = (|| -> Result<(i32, String), String> {
+    let mut child = spawn_proot(command, &tmp)?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -529,6 +573,11 @@ pub fn run_capture(
         return Ok((-1, collected));
     }
     Ok((status.code().unwrap_or(-1), collected))
+    })();
+    // Jangan hapus saat child masih hidup: proot bisa membaca file tmp-nya
+    // sampai proses benar-benar keluar.
+    let _ = fs::remove_dir_all(&tmp);
+    result
 }
 
 /// Jalankan perintah dengan output streaming ke Kotlin.
