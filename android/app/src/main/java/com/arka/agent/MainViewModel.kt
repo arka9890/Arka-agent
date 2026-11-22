@@ -39,6 +39,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = ArkaRepo(app)
 
+    /** Konteks Application untuk memulai dialog sistem dari luar Activity. */
+    private val appContext: Application = app
+
     // ------------------------------------------------------------- state
 
     private val _settings = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -268,14 +271,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // ikut terbatalkan. Foreground service menyalakan CPU + jaringan.
         val background = settings.value["background_run"] != "false"
         if (background && !batteryPromptShown && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !BatteryOptimization.isIgnoring(app)
+            !BatteryOptimization.isIgnoring(appContext)
         ) {
             batteryPromptShown = true
             // Dialog sistem sekali jalan. Kalau pengguna menolak, masih bisa
             // mengaktifkannya kapan saja di Setelan → Agent.
             runCatching {
-                app.startActivity(
-                    BatteryOptimization.requestIntent(app)
+                appContext.startActivity(
+                    BatteryOptimization.requestIntent(appContext)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }
