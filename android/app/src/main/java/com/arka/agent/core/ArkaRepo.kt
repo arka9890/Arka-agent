@@ -412,6 +412,9 @@ class ArkaRepo(private val context: Context) {
 
     suspend fun setSetting(key: String, value: String) = io { Arka.setSetting(key, value) }
 
+    /** Prompt sistem bawaan, untuk tombol "kembalikan default" di Setelan. */
+    suspend fun defaultSystemPrompt(): String = io { Arka.defaultSystemPrompt() }
+
     suspend fun terminalHistory(): List<String> = io {
         json.decodeFromString(Arka.terminalHistoryJson())
     }

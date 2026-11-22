@@ -84,6 +84,10 @@ object Arka {
     // --------------------------------------------------------- setting
     external fun settingsJson(): String
     external fun setSetting(key: String, value: String)
+
+    /** Prompt sistem bawaan Arka Agent (teks mentah, bukan JSON). */
+    external fun defaultSystemPrompt(): String
+
     external fun terminalHistoryJson(): String
     external fun pushTerminalHistory(command: String): String
     external fun clearTerminalHistory()

@@ -406,13 +406,14 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         }
     };
     if !msgs.iter().any(|m| m.role == "system") {
-        msgs.insert(0, plain_msg("system", ai::SYSTEM_PROMPT));
+        // Prompt kustom dari Setelan; kalau kosong, prompt bawaan Arka Agent.
+        msgs.insert(0, plain_msg("system", &settings::system_prompt()));
     }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
-    // Batas langkah agent dinaikkan jauh: tugas panjang (clone, build, uji)
-    // sering butuh belasan perintah. Dulu 6 → model berhenti di tengah jalan.
-    const MAX_TOOL_ROUNDS: usize = 40;
+    // Batas langkah agent bisa diatur di Setelan (default 40): tugas panjang
+    // (clone, build, uji) sering butuh belasan perintah.
+    let max_tool_rounds = settings::max_tool_rounds();
     let mut final_text = String::new();
     let mut rounds = 0usize;
 
@@ -455,7 +456,15 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
             break;
         }
         let calls = stream.take_tool_calls();
-        if calls.is_empty() || rounds >= MAX_TOOL_ROUNDS || cancel.load(Ordering::SeqCst) {
+        if calls.is_empty() || cancel.load(Ordering::SeqCst) {
+            break;
+        }
+        if rounds >= max_tool_rounds {
+            // Beri tahu pengguna kenapa model berhenti: batas ini bisa diubah
+            // di Setelan → Agent.
+            final_text.push_str(&format!(
+                "\n\n_(Batas {max_tool_rounds} putaran tool tercapai. Naikkan di Setelan → Agent kalau tugas belum selesai.)_"
+            ));
             break;
         }
         rounds += 1;
@@ -723,6 +732,16 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_diagnostic<'local>(
 }
 
 // -------------------------------------------------------------- settings
+
+/// Prompt sistem bawaan (dipakai UI sebagai isi awal saat pengguna ingin
+/// mengubahnya, dan sebagai fallback kalau setelan `system_prompt` kosong).
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_defaultSystemPrompt<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JString<'local> {
+    json_str(&mut env, ai::SYSTEM_PROMPT)
+}
 
 #[no_mangle]
 pub extern "system" fn Java_com_arka_agent_core_Arka_settingsJson<'local>(

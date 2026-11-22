@@ -603,4 +603,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _settings.value = repo.settings()
         }.onFailure { notify(it.message ?: "Gagal menyimpan pengaturan") }
     }
+
+    /** Muat prompt sistem bawaan (dipakai dialog Setelan → Agent). */
+    fun loadDefaultSystemPrompt(onResult: (String) -> Unit) = viewModelScope.launch {
+        onResult(runCatching { repo.defaultSystemPrompt() }.getOrDefault(""))
+    }
 }

@@ -12,12 +12,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.arka.agent.BuildConfig
 import com.arka.agent.MainViewModel
@@ -54,6 +59,10 @@ fun SettingsScreen(vm: MainViewModel) {
 
     var stats by remember { mutableStateOf<SystemStats?>(null) }
     var workspaceBytes by remember { mutableStateOf(0L) }
+    var showRoundsDialog by remember { mutableStateOf(false) }
+    var roundsDraft by remember { mutableStateOf("40") }
+    var showPromptDialog by remember { mutableStateOf(false) }
+    var promptDraft by remember { mutableStateOf("") }
 
     // Dimuat ulang setelah rootfs selesai dipasang supaya angka ukuran tidak
     // tertinggal di 0 B.
@@ -122,6 +131,81 @@ fun SettingsScreen(vm: MainViewModel) {
                     enabled = false,
                     onChange = { vm.updateSetting("notifications", it.toString()) },
                 )
+            }
+        }
+
+        item {
+            SettingCard(tr("Agent", "Agent", "エージェント")) {
+                // Batas putaran tool: nilai ini dipakai agent loop di Rust
+                // (`settings::max_tool_rounds`). Terlalu kecil membuat tugas
+                // panjang (clone/build) berhenti di tengah jalan.
+                val roundsValue = settings["max_tool_rounds"]?.toIntOrNull() ?: 40
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Batas putaran tool", "Max tool rounds", "ツール呼び出しの上限"), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            tr(
+                                "Jumlah maksimal perintah yang dijalankan model dalam satu balasan (1–200).",
+                                "Maximum commands the model may run in one reply (1–200).",
+                                "1回の返信でモデルが実行できるコマンドの最大数（1〜200）。",
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = clay.muted,
+                        )
+                    }
+                    Spacer(Modifier.width(Space.sm))
+                    TextButton(onClick = { roundsDraft = roundsValue.toString(); showRoundsDialog = true }) {
+                        Text("$roundsValue")
+                    }
+                }
+                Spacer(Modifier.height(Space.sm))
+                // System prompt kustom: kosong = prompt bawaan Arka Agent.
+                val customPrompt = settings["system_prompt"].orEmpty()
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("System prompt", "System prompt", "システムプロンプト"), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (customPrompt.isBlank()) {
+                                tr("Memakai prompt bawaan Arka Agent.", "Using the built-in Arka Agent prompt.", "Arka Agentの標準プロンプトを使用中。")
+                            } else {
+                                tr(
+                                    "Kustom · ${customPrompt.length} karakter",
+                                    "Custom · ${customPrompt.length} characters",
+                                    "カスタム · ${customPrompt.length}文字",
+                                )
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = clay.muted,
+                        )
+                    }
+                    Spacer(Modifier.width(Space.sm))
+                    TextButton(onClick = {
+                        if (customPrompt.isBlank()) {
+                            // Isi awal dengan prompt bawaan supaya pengguna
+                            // bisa mengubah sedikit-sedikit, bukan mulai kosong.
+                            vm.loadDefaultSystemPrompt { text ->
+                                promptDraft = text
+                                showPromptDialog = true
+                            }
+                        } else {
+                            promptDraft = customPrompt
+                            showPromptDialog = true
+                        }
+                    }) { Text(tr("Ubah", "Edit", "編集")) }
+                }
+                if (customPrompt.isNotBlank()) {
+                    TextButton(onClick = { vm.updateSetting("system_prompt", "") }) {
+                        Text(tr("Kembalikan ke bawaan", "Reset to default", "標準に戻す"))
+                    }
+                }
             }
         }
 
@@ -199,6 +283,90 @@ fun SettingsScreen(vm: MainViewModel) {
                 )
             }
         }
+    }
+
+    if (showRoundsDialog) {
+        val parsed = roundsDraft.trim().toIntOrNull()
+        val valid = parsed != null && parsed in 1..200
+        AlertDialog(
+            onDismissRequest = { showRoundsDialog = false },
+            title = { Text(tr("Batas putaran tool", "Max tool rounds", "ツール呼び出しの上限")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = roundsDraft,
+                        onValueChange = { roundsDraft = it.filter(Char::isDigit).take(3) },
+                        singleLine = true,
+                        label = { Text(tr("Jumlah putaran", "Number of rounds", "回数")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        tr(
+                            "1–200. Default 40. Naikkan untuk tugas panjang seperti clone atau build.",
+                            "1–200. Default 40. Raise it for long tasks like clone or build.",
+                            "1〜200。既定値は40。cloneやbuildなど長い作業では増やしてください。",
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = valid,
+                    onClick = {
+                        vm.updateSetting("max_tool_rounds", parsed.toString())
+                        showRoundsDialog = false
+                    },
+                ) { Text(tr("Simpan", "Save", "保存")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRoundsDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
+            },
+        )
+    }
+
+    if (showPromptDialog) {
+        AlertDialog(
+            onDismissRequest = { showPromptDialog = false },
+            title = { Text(tr("System prompt", "System prompt", "システムプロンプト")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = promptDraft,
+                        onValueChange = { promptDraft = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 320.dp),
+                        textStyle = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        tr(
+                            "Kosongkan lalu simpan untuk kembali ke prompt bawaan. Berlaku untuk chat berikutnya.",
+                            "Clear and save to return to the built-in prompt. Applies to the next chat.",
+                            "空にして保存すると標準プロンプトに戻ります。次のチャットから適用されます。",
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.updateSetting("system_prompt", promptDraft.trim())
+                    showPromptDialog = false
+                }) { Text(tr("Simpan", "Save", "保存")) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        vm.loadDefaultSystemPrompt { promptDraft = it }
+                    }) { Text(tr("Muat bawaan", "Load default", "標準を読込")) }
+                    TextButton(onClick = { showPromptDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
+                }
+            },
+        )
     }
 }
 
