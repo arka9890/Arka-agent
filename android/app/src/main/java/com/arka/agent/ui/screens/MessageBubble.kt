@@ -326,6 +326,7 @@ private fun UriImageThumbnail(uri: String, name: String) {
             contentDescription = name,
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = 240.dp)
                 .aspectRatio(image.width.toFloat() / image.height.toFloat())
                 .clip(RoundedCornerShape(10.dp)),
             contentScale = ContentScale.Fit,
@@ -383,6 +384,7 @@ private fun ImageThumbnail(file: File) {
             contentDescription = "Lampiran gambar",
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = 240.dp)
                 .aspectRatio(image.width.toFloat() / image.height.toFloat())
                 .clip(RoundedCornerShape(10.dp)),
             contentScale = ContentScale.Fit,
