@@ -620,48 +620,26 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         for call in calls {
             let args: serde_json::Value = serde_json::from_str(&call.arguments)
                 .unwrap_or_else(|_| json!({}));
-            let is_install_skill = call.name == "install_skill";
-            let (tool_label, display, output) = if is_install_skill {
-                // Tool baru: pasang skill dari link repo/file yang diberikan
-                // pengguna di chat. Tidak menjalankan proot.
-                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let label = format!("install_skill {url}");
-                let msg = if url.trim().is_empty() {
-                    "URL skill kosong.".to_string()
-                } else {
-                    match skill::install_from_url(&url) {
-                        Ok(m) => m,
-                        Err(e) => format!("Gagal memasang skill: {e}"),
-                    }
-                };
-                (label, msg.clone(), msg)
-            } else {
-                let command = args
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if command.trim().is_empty() {
-                    continue;
+            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if command.trim().is_empty() {
+                continue;
+            }
+            let (display, output) = match proot_manager::run_capture(&command, &cancel, None) {
+                Ok((code, out)) => {
+                    let full = format!("exit {code}\n{out}");
+                    // Terminal boleh menampilkan lebih banyak; konteks model
+                    // dibatasi supaya tidak cepat penuh.
+                    (
+                        tail_chars(full.clone(), 20_000),
+                        tail_chars(full, tool_output_chars),
+                    )
                 }
-                let (display, output) = match proot_manager::run_capture(&command, &cancel, None) {
-                    Ok((code, out)) => {
-                        let full = format!("exit {code}\n{out}");
-                        // Terminal boleh menampilkan lebih banyak; konteks
-                        // model dibatasi supaya tidak cepat penuh.
-                        (
-                            tail_chars(full.clone(), 20_000),
-                            tail_chars(full, tool_output_chars),
-                        )
-                    }
-                    Err(e) => {
-                        let msg = format!("Gagal menjalankan perintah: {e}");
-                        (msg.clone(), msg)
-                    }
-                };
-                (command, display, output)
+                Err(e) => {
+                    let msg = format!("Gagal menjalankan perintah: {e}");
+                    (msg.clone(), msg)
+                }
             };
-            ju::emit_str_str(&mut env, &cb, "onTool", &tool_label, &display);
+            ju::emit_str_str(&mut env, &cb, "onTool", &command, &display);
 
             if p.kind == "anthropic" {
                 msgs.push(ai::ChatMsg {
