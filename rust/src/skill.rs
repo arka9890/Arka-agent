@@ -229,13 +229,19 @@ pub fn install_from_url(url: &str) -> Result<String, String> {
         .build()
         .map_err(|e| format!("Gagal membuat klien HTTP: {e}"))?;
 
+    // I3: deteksi rate limit GitHub (403/429) dengan pesan yang jelas.
+    // Tanpa token, API GitHub membatasi ~60 request/jam per IP.
     let fetch_json = |u: &str| -> Result<Value, String> {
-        client
-            .get(u)
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json::<Value>())
-            .map_err(|e| format!("Gagal menghubungi GitHub: {e}"))
+        let resp = client.get(u).send().map_err(|e| format!("Gagal menghubungi GitHub: {e}"))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(
+                "Rate limit GitHub API tercapai (403/429). Coba lagi dalam beberapa menit,                  atau set token GitHub (env GITHUB_TOKEN) untuk batas lebih tinggi."
+                    .into(),
+            );
+        }
+        let resp = resp.error_for_status().map_err(|e| format!("Gagal menghubungi GitHub: {e}"))?;
+        resp.json::<Value>().map_err(|e| format!("Gagal membaca respons GitHub: {e}"))
     };
 
     let (repo, files): (Option<(String, String, String)>, Vec<String>) =
@@ -262,7 +268,17 @@ pub fn install_from_url(url: &str) -> Result<String, String> {
             if found.is_empty() {
                 return Err("Repo tidak berisi SKILL.md.".into());
             }
-            found.truncate(20);
+            // I2: jangan memotong diam-diam. Proses SEMUA SKILL.md, atau beri
+            // peringatan eksplisit bila melebihi batas. Di sini kita proses semua
+            // agar tidak ada skill yang terlewat tanpa sepengetahuan pengguna.
+            const MAX_SKILLS: usize = 50;
+            if found.len() > MAX_SKILLS {
+                return Err(format!(
+                    "Repo berisi {} SKILL.md (lebih dari batas {}). Persempit                      sumber atau gunakan path file .md langsung.",
+                    found.len(),
+                    MAX_SKILLS
+                ));
+            }
             (Some((owner.to_string(), name.to_string(), branch)), found)
         } else {
             (None, vec![url.to_string()])
