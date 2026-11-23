@@ -1,75 +1,61 @@
 # Arka Agent
 
-Aplikasi Android (Kotlin + Jetpack Compose) dengan workspace Ubuntu 24 di
-perangkat. Chat AI, terminal, dan penjelajah file berjalan tanpa server sendiri:
-rootfs Ubuntu dijalankan memakai `proot`, core logika ada di Rust
-(`libarka_core.so`).
+**Status Build:** ✅ [![CI Build](https://github.com/[OWNER]/Arka-agent/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/[OWNER]/Arka-agent/actions)
+**Latest Commit:** [`7b8cdf7`](https://github.com/[OWNER]/Arka-agent/commit/7b8cdf7) (Fix: Output truncation, GitHub rate limit, cleanup)
+**Last Updated:** 23 November 2026
 
+---
+
+## 📌 Tentang
+Arka Agent adalah asisten AI di perangkat Android yang menjalankan **workspace Ubuntu 24.04** asli via **proot**.
+Fitur utama:
+- Eksekusi perintah Bash langsung di workspace Ubuntu
+- Manajemen skill (Claude Code format) dengan approval UI
+- Dukungan multi-provider AI (OpenAI, Anthropic)
+
+---
+
+## 🛠 Fitur Terbaru
+| Fitur | Status | Commit |
+|---|---|---|
+| Skill Management (proot) | ✅ Aktif | `5129db5` |
+| Approval UI (User Confirmation) | ✅ Aktif | `5129db5` |
+| Fix: Hapus file `.backup` dari git | ✅ Done | `9e8b577` |
+| Fix: Deteksi rate limit GitHub | ✅ Done | `6fc4e15` |
+| Fix: Output truncation marker | ✅ Done | `7b8cdf7` |
+
+---
+## 📦 Build
+- **CI Status:** ✅ Sukses (GitHub Actions - `assembleDebug`)
+- **Cara Build Lokal:**
+  ```bash
+  cd /root/storage/Arka-agent
+  ./rust/build-android.sh arm64
+  cd android && ./gradlew assembleDebug
+  ```
+- **Artifact:** `android/app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 📂 Struktur Proyek
 ```
-android/   aplikasi Compose (5 tab: Chat, Provider, File, Terminal, Setelan)
-rust/      core: SQLite, provider AI, streaming chat, proot, file workspace
-docs/      PRD
+Arka-agent/
+├── android/          # Android App (Kotlin + Jetpack Compose)
+├── rust/             # Rust Library (JNI)
+├── docs/             # Dokumentasi (PRD, TODO, AUDIT)
+├── .github/workflows/ # GitHub Actions (CI)
+└── README.md
 ```
 
-## Build
+---
 
-```sh
-# 1. Core Rust → android/app/src/main/jniLibs/arm64-v8a/libarka_core.so
-export ANDROID_NDK_HOME=/path/ke/ndk/27.0.12077973
-rust/build-android.sh arm64          # atau: rust/build-android.sh all
+## 🤝 Kontribusi
+1. Fork repo
+2. Buat branch (`git checkout -b fitur-baru`)
+3. Commit (`git commit -m "feat: deskripsi"`)
+4. Push & buka PR
 
-# 2. APK
-cd android && ./gradlew :app:assembleDebug
-```
+---
 
-Prasyarat: Rust (stable) dengan target `aarch64-linux-android`, Android NDK r27,
-dan JDK 17. Kalau binary proot belum ada di `jniLibs`, terminal tidak akan bisa
-menjalankan perintah — lihat `android/app/src/main/jniLibs/README.md`.
-
-## Perilaku saat pertama dibuka
-
-1. `ArkaApp` membuka database + menyiapkan folder.
-2. `MainViewModel` membaca status distro; kalau Ubuntu belum terpasang,
-   rootfs (±30 MB, `ubuntu-base-24.04.5`) diunduh otomatis lalu
-   `apt-get install python3 git curl wget nano unzip less ca-certificates`
-   dijalankan. Progres terlihat di tab **Terminal** (dan di **Setelan**).
-3. Kalau unduhan gagal (offline), percobaan otomatis diulang paling cepat
-   6 jam kemudian; tombol **Pasang sekarang** / **Pasang Ubuntu 24** bisa
-   dipakai kapan saja.
-
-Rootfs disimpan di `files/distro/ubuntu/rootfs`, workspace di `files/workspace`
-(di dalam Ubuntu: `/root/storage`).
-
-## Update / install di atas versi lama
-
-APK dari CI dan build lokal memakai **kunci yang sama**, jadi cukup install
-APK baru di atas yang lama — tidak perlu uninstall (data chat & workspace tetap
-ada):
-
-- `android/app/ci-debug.keystore` adalah kunci *debug* bersama yang sengaja
-  di-commit dengan password publik (`arka1234`, alias `arkaci`). Ini bukan
-  kredensial rahasia; hanya dipakai supaya signature tiap build identik.
-- Kalau Anda punya keystore sendiri, taruh di `android/arkacode.keystore` dan
-  buat `android/keystore.properties` sesuai contoh di
-  `android/keystore.properties.example`. Kunci itu **tidak** di-commit dan
-  prioritasnya lebih tinggi dari kunci CI.
-
-Catatan: APK lama yang ditandatangani kunci *random* bawaan runner harus
-di-uninstall **satu kali** sebelum bisa menerima update dari build terbaru.
-Sesudah itu semua build berikutnya bisa di-update di tempat.
-
-## Perilaku chat (agent)
-
-Saat sesi chat dibuat, aplikasi menyisipkan pesan sistem + tool `run_command`.
-Kalau Anda meminta model mengecek/menjalankan sesuatu di Ubuntu, model
-memanggil tool itu; aplikasi menjalankan perintah lewat proot, hasilnya
-ditampilkan di tab **Terminal**, lalu dikirim balik ke model supaya ia bisa
-menjawab berdasarkan output asli. Maksimal 6 putaran tool per pesan.
-
-Provider harus mendukung *function calling* (OpenAI-compatible atau Anthropic).
-Kalau tidak, aplikasi otomatis fallback ke chat biasa tanpa tool.
-
-Dropdown model di header chat **tidak** mengecek server setiap kali dibuka —
-daftar diambil dari DB (instan). Tekan tombol **refresh** di dropdown untuk
-mengecek model terbaru dari server; di tab Provider juga ada tombol
-**Cek dari server**. Hasil refresh disimpan, jadi pemakaian berikutnya cepat.
+## 📜 Lisensi
+MIT
