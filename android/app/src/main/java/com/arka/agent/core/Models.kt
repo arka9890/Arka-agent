@@ -107,7 +107,10 @@ data class QuestionRequest(
     val id: String = "",
     val question: String = "",
     val options: List<String> = emptyList(),
+    /** Kompatibel dengan versi lama: file pertama. */
     val file: FilePreview? = null,
+    /** Daftar pratinjau file (maksimal 5). */
+    val files: List<FilePreview> = emptyList(),
 )
 
 @Serializable

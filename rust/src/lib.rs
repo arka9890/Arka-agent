@@ -129,7 +129,7 @@ fn ask_question(
     cb: &JObject,
     question: &str,
     options: &[String],
-    file: Option<serde_json::Value>,
+    files: Vec<serde_json::Value>,
     cancel: &AtomicBool,
 ) -> Result<Option<usize>, String> {
     let id = next_ui_id("qst");
@@ -143,7 +143,14 @@ fn ask_question(
         env,
         cb,
         "onQuestion",
-        &json!({ "id": id, "question": question, "options": options, "file": file }).to_string(),
+        &json!({
+            "id": id,
+            "question": question,
+            "options": options,
+            "files": files,
+            "file": files.first().cloned(),
+        })
+        .to_string(),
     );
     let deadline = Instant::now() + Duration::from_secs(300);
     let answer = loop {
@@ -867,7 +874,26 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                             &cb,
                             &question,
                             &options,
-                            file_preview(&arg("file")),
+                            {
+                                let mut paths: Vec<String> = args
+                                    .get("files")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(str::to_string))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let single = arg("file");
+                                if !single.trim().is_empty() {
+                                    paths.push(single);
+                                }
+                                paths.truncate(5);
+                                paths
+                                    .iter()
+                                    .filter_map(|p| file_preview(p))
+                                    .collect()
+                            },
                             &cancel,
                         ) {
                             Ok(Some(index)) => format!(

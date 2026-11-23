@@ -144,9 +144,10 @@ fun QuestionCardDialog(
                 )
                 Spacer(Modifier.height(Space.sm))
                 Text(request.question, style = MaterialTheme.typography.bodyMedium)
-                request.file?.let { preview ->
+                val previews = request.files.ifEmpty { listOfNotNull(request.file) }
+                previews.take(5).forEach { preview ->
                     Spacer(Modifier.height(Space.sm))
-                    FilePreviewBlock(preview)
+                    FilePreviewBlock(preview, autoplay = previews.size == 1)
                 }
                 Spacer(Modifier.height(Space.md))
                 Column(
@@ -182,7 +183,7 @@ fun QuestionCardDialog(
 
 /** Pratinjau lampiran pada kartu pertanyaan: gambar, video, suara, atau file. */
 @Composable
-private fun FilePreviewBlock(preview: FilePreview) {
+private fun FilePreviewBlock(preview: FilePreview, autoplay: Boolean = false) {
     val context = LocalContext.current
     Column(
         Modifier
@@ -223,7 +224,7 @@ private fun FilePreviewBlock(preview: FilePreview) {
                         VideoView(ctx).apply {
                             setVideoURI(uri)
                             setMediaController(MediaController(ctx))
-                            setOnPreparedListener { start() }
+                            if (autoplay) setOnPreparedListener { start() }
                         }
                     },
                     modifier = Modifier
