@@ -102,6 +102,9 @@ object Arka {
     external fun importSkill(raw: String, fallbackName: String): String
     external fun deleteSkill(id: String)
     external fun setSkillEnabled(id: String, enabled: Boolean)
+    external fun skillConfigJson(id: String): String
+    external fun setSkillConfig(skill: String, key: String, value: String): String
+    external fun deleteSkillConfig(id: String, key: String)
 
     /** Prompt sistem bawaan Arka Agent (teks mentah, bukan JSON). */
     external fun defaultSystemPrompt(): String

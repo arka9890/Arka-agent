@@ -297,6 +297,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { notify(it.message ?: "Gagal mengubah skill") }
     }
 
+    /** Simpan/mubah satu kunci konfigurasi skill. */
+    fun setSkillConfig(id: String, key: String, value: String) = viewModelScope.launch {
+        runCatching { repo.setSkillConfig(id, key, value) }
+            .onSuccess {
+                _skills.value = runCatching { repo.skills() }.getOrDefault(_skills.value)
+                notify("Konfigurasi skill tersimpan.")
+            }
+            .onFailure { notify(it.message ?: "Gagal menyimpan konfigurasi") }
+    }
+
+    fun deleteSkillConfig(id: String, key: String) = viewModelScope.launch {
+        runCatching { repo.deleteSkillConfig(id, key) }
+            .onSuccess {
+                _skills.value = _skills.value.map { skill ->
+                    if (skill.id == id) {
+                        skill.copy(config = skill.config - key)
+                    } else {
+                        skill
+                    }
+                }
+            }
+            .onFailure { notify(it.message ?: "Gagal menghapus konfigurasi") }
+    }
+
     // -------------------------------------------------------------- chat
 
     /**

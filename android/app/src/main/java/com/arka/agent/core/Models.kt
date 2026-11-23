@@ -92,6 +92,8 @@ data class Skill(
     val content: String = "",
     val enabled: Boolean = true,
     @SerialName("created_at") val createdAt: Long = 0,
+    /** Pengaturan skill, mis. `defaultMode = ultra`. */
+    val config: Map<String, String> = emptyMap(),
 )
 
 @Serializable

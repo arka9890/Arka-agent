@@ -450,6 +450,18 @@ class ArkaRepo(private val context: Context) {
         Arka.setSkillEnabled(id, enabled)
     }
 
+    suspend fun skillConfig(id: String): Map<String, String> = io {
+        json.decodeFromString(Arka.skillConfigJson(id))
+    }
+
+    suspend fun setSkillConfig(skill: String, key: String, value: String) = io {
+        json.decodeFromString<Map<String, String>>(Arka.setSkillConfig(skill, key, value))
+    }
+
+    suspend fun deleteSkillConfig(id: String, key: String) = io {
+        Arka.deleteSkillConfig(id, key)
+    }
+
     suspend fun terminalHistory(): List<String> = io {
         json.decodeFromString(Arka.terminalHistoryJson())
     }
