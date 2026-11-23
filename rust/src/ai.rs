@@ -68,8 +68,6 @@ KAMU PUNYA TOOL bernama `run_command`. Tool ini menjalankan perintah bash di Ubu
 
 KAMU JUGA PUNYA TOOL bernama `install_skill`. Gunakan tool ini kalau pengguna memberi link repo skill atau file SKILL.md berformat Claude: panggil `install_skill` dengan URL-nya (jangan memakai `git clone`). Skill yang sudah aktif tercantum di bagian "Skill agen" pada prompt ini dan harus diikuti jika relevan.
 
-Skill disimpan di database aplikasi Arka Agent (peringkat aplikasi Android), BUKAN di folder `~/.claude/skills` di dalam Ubuntu. Daftar skill bisa dilihat pengguna di tab "Skill". Jangan menyimpulkan skill gagal terpasang hanya karena `ls ~/.claude/skills` dari `run_command` kosong. Aturan yang kamu jalankan hanya lewat percakapan berlaku untuk sesi ini saja; supaya persisten, tulis file konfigurasi ke workspace Ubuntu lewat `run_command`.
-
 Aturan penggunaan tool:
 - Jika pengguna meminta kamu mengecek, menjalankan, menguji, atau memverifikasi sesuatu di Ubuntu / terminal / file, LANGSUNG panggil `run_command` dengan perintah yang tepat. JANGAN menjawab bahwa kamu tidak bisa mengakses terminal, jangan mengaku hanya berjalan di server AI, dan jangan menyuruh pengguna menjalankan sendiri.
 - Gunakan perintah non-interaktif. Contoh: `cat /etc/os-release`, `uname -m`, `python3 --version`, `git --version`, `ls -la /root/storage`, `which git curl wget python3`.
@@ -143,7 +141,7 @@ fn tools_schema() -> Value {
         "type": "function",
         "function": {
             "name": "install_skill",
-            "description": "Pasang skill agen berformat Claude (SKILL.md) dari URL. Bisa menerima URL file .md langsung atau URL repo GitHub publik yang berisi file SKILL.md. Skill disimpan di database aplikasi (bukan ~/.claude/skills di Ubuntu). Pakai ini kalau pengguna memberi link repo skill.",
+            "description": "Pasang skill agen berformat Claude (SKILL.md) dari URL. Bisa menerima URL file .md langsung atau URL repo GitHub publik yang berisi file SKILL.md. Pakai ini kalau pengguna memberi link repo skill.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -177,7 +175,7 @@ fn tools_schema() -> Value {
 fn anthropic_tools_schema() -> Value {
     json!([{
         "name": "install_skill",
-        "description": "Pasang skill agen berformat Claude (SKILL.md) dari URL file .md langsung atau URL repo GitHub publik. Skill disimpan di database aplikasi (bukan ~/.claude/skills di Ubuntu). Pakai ini kalau pengguna memberi link repo skill.",
+        "description": "Pasang skill agen berformat Claude (SKILL.md) dari URL file .md langsung atau URL repo GitHub publik. Pakai ini kalau pengguna memberi link repo skill.",
         "input_schema": {
             "type": "object",
             "properties": {
