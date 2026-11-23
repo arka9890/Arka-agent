@@ -35,10 +35,6 @@ pub struct Skill {
     pub content: String,
     pub enabled: bool,
     pub created_at: i64,
-    /// Konfigurasi skill (mis. `defaultMode: ultra`), disimpan terpisah agar
-    /// tidak ikut tertimpa saat SKILL.md diimpor ulang.
-    #[serde(default)]
-    pub config: HashMap<String, String>,
 }
 
 fn unquote(s: &str) -> String {
@@ -149,7 +145,6 @@ pub fn import(raw: &str, fallback_name: &str) -> Result<Skill, String> {
         content,
         enabled: true,
         created_at: db::now_ms(),
-        config: HashMap::new(),
     };
     db::with(|c| {
         c.execute(
@@ -187,18 +182,10 @@ pub fn list() -> Result<Vec<Skill>, String> {
                     content: r.get(3)?,
                     enabled: r.get::<_, i64>(4)? != 0,
                     created_at: r.get(5)?,
-                    config: HashMap::new(),
                 })
             })
             .map_err(|e| e.to_string())?;
-        let mut skills = rows
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        // Config diambil sekali per skill (jumlah skill kecil).
-        for skill in &mut skills {
-            skill.config = config_of(&skill.id).unwrap_or_default();
-        }
-        Ok(skills)
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     })
 }
 
@@ -218,60 +205,6 @@ pub fn delete(id: &str) -> Result<(), String> {
         c.execute("DELETE FROM skills WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())
             .map(|_| ())
-    })
-}
-
-/// Cari id skill dari nama (case-insensitive) atau id.
-pub fn resolve_id(name_or_id: &str) -> Result<String, String> {
-    let all = list()?;
-    all.iter()
-        .find(|s| s.id == name_or_id || s.name.eq_ignore_ascii_case(name_or_id))
-        .map(|s| s.id.clone())
-        .ok_or_else(|| format!("Skill '{name_or_id}' tidak ditemukan."))
-}
-
-/// Baca konfigurasi satu skill.
-pub fn config_of(id: &str) -> Result<HashMap<String, String>, String> {
-    db::with(|c| {
-        let mut stmt = c
-            .prepare("SELECT key, value FROM skill_config WHERE skill_id = ?1 ORDER BY key")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<HashMap<_, _>, _>>()
-            .map_err(|e| e.to_string())
-    })
-}
-
-/// Set satu kunci konfigurasi skill. Dipanggil tool `configure_skill` maupun
-/// UI tab Skill.
-pub fn set_config(skill: &str, key: &str, value: &str) -> Result<(String, String, String), String> {
-    let id = resolve_id(skill)?;
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Kunci konfigurasi wajib diisi.".into());
-    }
-    db::with(|c| {
-        c.execute(
-            "INSERT INTO skill_config (skill_id, key, value) VALUES (?1, ?2, ?3)
-             ON CONFLICT(skill_id, key) DO UPDATE SET value = ?3",
-            params![id, key, value],
-        )
-        .map_err(|e| e.to_string())
-        .map(|_| ())
-    })?;
-    Ok((id, key.to_string(), value.to_string()))
-}
-
-pub fn delete_config(id: &str, key: &str) -> Result<(), String> {
-    db::with(|c| {
-        c.execute(
-            "DELETE FROM skill_config WHERE skill_id = ?1 AND key = ?2",
-            params![id, key],
-        )
-        .map_err(|e| e.to_string())
-        .map(|_| ())
     })
 }
 
@@ -401,15 +334,6 @@ pub fn system_prompt_section() -> String {
         }
         used += block.len();
         out.push_str(&block);
-        if !s.config.is_empty() {
-            let mut cfg = s.config.iter().collect::<Vec<_>>();
-            cfg.sort_by_key(|(k, _)| *k);
-            let pairs: Vec<String> = cfg
-                .into_iter()
-                .map(|(k, v)| format!("{k}: {v}"))
-                .collect();
-            out.push_str(&format!("Konfigurasi: {}.\n", pairs.join(", ")));
-        }
     }
     out
 }

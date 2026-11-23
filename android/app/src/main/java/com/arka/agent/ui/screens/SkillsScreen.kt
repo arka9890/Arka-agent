@@ -16,20 +16,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -106,8 +101,6 @@ fun SkillsScreen(vm: MainViewModel) {
                 skill = skill,
                 onEnabledChange = { vm.setSkillEnabled(skill.id, it) },
                 onDelete = { vm.deleteSkill(skill.id) },
-                onSetConfig = { key, value -> vm.setSkillConfig(skill.id, key, value) },
-                onDeleteConfig = { key -> vm.deleteSkillConfig(skill.id, key) },
             )
         }
     }
@@ -118,13 +111,7 @@ private fun SkillCard(
     skill: Skill,
     onEnabledChange: (Boolean) -> Unit,
     onDelete: () -> Unit,
-    onSetConfig: (String, String) -> Unit,
-    onDeleteConfig: (String) -> Unit,
 ) {
-    var showConfigDialog by remember { mutableStateOf(false) }
-    var configKey by remember { mutableStateOf("") }
-    var configValue by remember { mutableStateOf("") }
-
     ClayCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -151,80 +138,11 @@ private fun SkillCard(
                 maxLines = 4,
             )
         }
-        // Konfigurasi skill (mis. defaultMode = ultra). Bisa juga diatur
-        // model lewat tool configure_skill dari chat.
-        if (skill.config.isNotEmpty()) {
-            Spacer(Modifier.height(Space.xs))
-            skill.config.toSortedMap().forEach { (key, value) ->
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "$key = $value",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = clay.accent,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = { onDeleteConfig(key) }) {
-                        Icon(Icons.Outlined.Delete, null, tint = clay.danger)
-                    }
-                }
-            }
-        }
-
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = {
-                configKey = ""
-                configValue = ""
-                showConfigDialog = true
-            }) {
-                Text(tr("Tambah konfigurasi", "Add config", "設定を追加"))
-            }
             TextButton(onClick = onDelete) {
                 Icon(Icons.Outlined.Delete, null, tint = clay.danger)
                 Text(tr("Hapus", "Delete", "削除"), color = clay.danger)
             }
         }
-    }
-
-    if (showConfigDialog) {
-        AlertDialog(
-            onDismissRequest = { showConfigDialog = false },
-            title = { Text(tr("Konfigurasi skill", "Skill config", "スキル設定")) },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = configKey,
-                        onValueChange = { configKey = it },
-                        singleLine = true,
-                        label = { Text(tr("Kunci", "Key", "キー")) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(Space.xs))
-                    OutlinedTextField(
-                        value = configValue,
-                        onValueChange = { configValue = it },
-                        singleLine = true,
-                        label = { Text(tr("Nilai", "Value", "値")) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = configKey.isNotBlank(),
-                    onClick = {
-                        onSetConfig(configKey.trim(), configValue)
-                        showConfigDialog = false
-                    },
-                ) { Text(tr("Simpan", "Save", "保存")) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConfigDialog = false }) {
-                    Text(tr("Batal", "Cancel", "キャンセル"))
-                }
-            },
-        )
     }
 }

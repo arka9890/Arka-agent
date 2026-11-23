@@ -620,33 +620,8 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         for call in calls {
             let args: serde_json::Value = serde_json::from_str(&call.arguments)
                 .unwrap_or_else(|_| json!({}));
-            let (tool_label, display, output) = if call.name == "configure_skill" {
-                // Simpan konfigurasi per skill ke DB aplikasi, bukan ke file
-                // di Ubuntu, supaya pengguna bisa melihat/ubah di tab Skill.
-                let skill_name = args
-                    .get("skill")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let key = args
-                    .get("key")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let value = match args.get("value") {
-                    Some(serde_json::Value::String(s)) => s.clone(),
-                    Some(v) => v.to_string(),
-                    None => String::new(),
-                };
-                let label = format!("configure_skill {skill_name} {key}={value}");
-                let msg = match skill::set_config(&skill_name, &key, &value) {
-                    Ok((id, k, v)) => format!(
-                        "Konfigurasi skill '{id}' tersimpan: {k} = {v}. Dipakai mulai request berikutnya."
-                    ),
-                    Err(e) => format!("Gagal mengatur skill: {e}"),
-                };
-                (label, msg.clone(), msg)
-            } else if call.name == "install_skill" {
+            let is_install_skill = call.name == "install_skill";
+            let (tool_label, display, output) = if is_install_skill {
                 // Tool baru: pasang skill dari link repo/file yang diberikan
                 // pengguna di chat. Tidak menjalankan proot.
                 let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -1031,48 +1006,6 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_setSkillEnabled<'local>(
 ) {
     let id = ju::arg_str(&mut env, &id);
     unit_result(&mut env, || skill::set_enabled(&id, enabled != 0));
-}
-
-/// Konfigurasi skill (JSON object).
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_skillConfigJson<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    id: JString<'local>,
-) -> JString<'local> {
-    let id = ju::arg_str(&mut env, &id);
-    json_result(&mut env, || {
-        serde_json::to_string(&skill::config_of(&id)?).map_err(|e| e.to_string())
-    })
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_setSkillConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    skill: JString<'local>,
-    key: JString<'local>,
-    value: JString<'local>,
-) -> JString<'local> {
-    let skill = ju::arg_str(&mut env, &skill);
-    let key = ju::arg_str(&mut env, &key);
-    let value = ju::arg_str(&mut env, &value);
-    json_result(&mut env, || {
-        let (id, key, value) = skill::set_config(&skill, &key, &value)?;
-        Ok(json!({ "skill_id": id, "key": key, "value": value }).to_string())
-    })
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_deleteSkillConfig<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    id: JString<'local>,
-    key: JString<'local>,
-) {
-    let id = ju::arg_str(&mut env, &id);
-    let key = ju::arg_str(&mut env, &key);
-    unit_result(&mut env, || skill::delete_config(&id, &key));
 }
 
 #[no_mangle]

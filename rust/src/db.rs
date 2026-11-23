@@ -123,12 +123,4 @@ CREATE TABLE IF NOT EXISTS skills (
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  INTEGER NOT NULL
 );
-
--- Konfigurasi per skill, mis. ponytail -> defaultMode = ultra.
-CREATE TABLE IF NOT EXISTS skill_config (
-    skill_id TEXT NOT NULL,
-    key      TEXT NOT NULL,
-    value    TEXT NOT NULL,
-    PRIMARY KEY (skill_id, key)
-);
 "#;
