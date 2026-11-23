@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.arka.agent.core.ApprovalRequest
 import com.arka.agent.core.ArkaRepo
 import com.arka.agent.core.AttachmentRef
 import com.arka.agent.core.DistroStatus
@@ -12,6 +13,7 @@ import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
 import com.arka.agent.core.Provider
 import com.arka.agent.core.ProviderStats
+import com.arka.agent.core.QuestionRequest
 import com.arka.agent.core.Session
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -95,6 +97,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Hasil "Tes distro" terakhir (ditampilkan di tab Setelan). */
     val diagnostic: StateFlow<String?> = _diagnostic.asStateFlow()
 
+    /** Kartu persetujuan aksi skill yang sedang menunggu pengguna. */
+    private val _approval = MutableStateFlow<ApprovalRequest?>(null)
+    val approval: StateFlow<ApprovalRequest?> = _approval.asStateFlow()
+
+    /** Kartu pertanyaan pilihan ganda dari model. */
+    private val _question = MutableStateFlow<QuestionRequest?>(null)
+    val question: StateFlow<QuestionRequest?> = _question.asStateFlow()
+
     private val _notice = MutableStateFlow<String?>(null)
 
     /** Pesan sekali-tampil (snackbar): error atau konfirmasi aksi. */
@@ -162,6 +172,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearNotice() {
         _notice.value = null
+    }
+
+    /** Jawab kartu persetujuan skill (Izinkan / Tolak). */
+    fun resolveApproval(id: String, approved: Boolean) = viewModelScope.launch {
+        _approval.value = null
+        runCatching { repo.resolveApproval(id, approved) }
+            .onFailure { notify(it.message ?: "Gagal menjawab persetujuan") }
+    }
+
+    /** Jawab kartu pertanyaan pilihan ganda. */
+    fun answerQuestion(id: String, choice: Int) = viewModelScope.launch {
+        _question.value = null
+        runCatching { repo.answerQuestion(id, choice) }
+            .onFailure { notify(it.message ?: "Gagal menjawab pertanyaan") }
     }
 
     // ------------------------------------------------------------- sesi
@@ -357,6 +381,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             runCatching { _files.value = repo.files(_currentDir.value) }
                         }
                     },
+                    onApproval = { request ->
+                        // Callback datang dari thread native; StateFlow aman
+                        // ditulis dari thread mana pun.
+                        _approval.value = request
+                    },
+                    onQuestion = { request -> _question.value = request },
                 )
 
                 result.onFailure { notify(it.message ?: "Gagal menghubungi AI") }
@@ -371,6 +401,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 notify(e.message ?: "Terjadi kesalahan")
             } finally {
                 ChatEngine.finish(sessionId, job)
+                // Chat selesai: kartu yang masih menggantung tidak relevan lagi.
+                _approval.value = null
+                _question.value = null
                 if (_currentSessionId.value == sessionId) {
                     _busy.value = false
                     _streamingText.value = ""

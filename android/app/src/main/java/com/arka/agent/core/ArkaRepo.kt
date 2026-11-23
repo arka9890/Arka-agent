@@ -129,6 +129,8 @@ class ArkaRepo(private val context: Context) {
         history: List<Message>,
         onDelta: (String) -> Unit,
         onTool: (String, String) -> Unit = { _, _ -> },
+        onApproval: (ApprovalRequest) -> Unit = {},
+        onQuestion: (QuestionRequest) -> Unit = {},
     ): Result<String> = io {
         runCatching {
             val payload = json.encodeToString(
@@ -148,6 +150,12 @@ class ArkaRepo(private val context: Context) {
                         error = message
                     }
                     override fun onTool(command: String, output: String) = onTool(command, output)
+                    override fun onApproval(requestJson: String) = onApproval(
+                        json.decodeFromString(requestJson)
+                    )
+                    override fun onQuestion(requestJson: String) = onQuestion(
+                        json.decodeFromString(requestJson)
+                    )
                 },
             )
             error?.let { throw IllegalStateException(it) }
@@ -156,6 +164,14 @@ class ArkaRepo(private val context: Context) {
     }
 
     suspend fun cancelChat(sessionId: String) = io { Arka.cancelChat(sessionId) }
+
+    suspend fun resolveApproval(id: String, approved: Boolean) = io {
+        Arka.resolveApproval(id, approved)
+    }
+
+    suspend fun answerQuestion(id: String, choice: Int) = io {
+        Arka.answerQuestion(id, choice)
+    }
 
     // ------------------------------------------------------------ file
 

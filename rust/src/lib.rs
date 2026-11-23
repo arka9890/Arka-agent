@@ -18,19 +18,112 @@ mod proot_manager;
 mod provider;
 mod session;
 mod settings;
+mod skill;
 mod terminal;
 
 use jni_util as ju;
 use serde_json::json;
 
 use jni::objects::{JByteArray, JClass, JObject, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 static CHAT_CANCELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+
+// Permintaan persetujuan / pertanyaan dari model ke pengguna. Tool di agent
+// loop mem-blok sampai UI menjawab lewat JNI, supaya model tidak pernah
+// mengklaim berhasil sebelum pengguna menyetujui.
+static UI_SEQ: AtomicU64 = AtomicU64::new(0);
+static APPROVALS: OnceLock<Mutex<HashMap<String, mpsc::Sender<bool>>>> = OnceLock::new();
+static QUESTIONS: OnceLock<Mutex<HashMap<String, mpsc::Sender<usize>>>> = OnceLock::new();
+
+fn next_ui_id(prefix: &str) -> String {
+    format!("{}-{}", prefix, UI_SEQ.fetch_add(1, Ordering::SeqCst))
+}
+
+/// Tampilkan kartu persetujuan dan tunggu jawaban (maks 5 menit → ditolak).
+fn ask_approval(
+    env: &mut JNIEnv,
+    cb: &JObject,
+    action: &str,
+    target: &str,
+    detail: &str,
+    cancel: &AtomicBool,
+) -> Result<bool, String> {
+    let id = next_ui_id("apv");
+    let (tx, rx) = mpsc::channel();
+    APPROVALS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(id.clone(), tx);
+    ju::emit_str(
+        env,
+        cb,
+        "onApproval",
+        &json!({ "id": id, "action": action, "target": target, "detail": detail }).to_string(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let answer = loop {
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(v) => break Ok(v),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(false),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                    break Ok(false);
+                }
+            }
+        }
+    };
+    if let Ok(mut map) = APPROVALS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        map.remove(&id);
+    }
+    answer
+}
+
+/// Tampilkan pertanyaan pilihan ganda dan tunggu indeks jawaban (maks 5 menit).
+fn ask_question(
+    env: &mut JNIEnv,
+    cb: &JObject,
+    question: &str,
+    options: &[String],
+    cancel: &AtomicBool,
+) -> Result<Option<usize>, String> {
+    let id = next_ui_id("qst");
+    let (tx, rx) = mpsc::channel();
+    QUESTIONS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(id.clone(), tx);
+    ju::emit_str(
+        env,
+        cb,
+        "onQuestion",
+        &json!({ "id": id, "question": question, "options": options }).to_string(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let answer = loop {
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(index) => break Ok(Some(index)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                    break Ok(None);
+                }
+            }
+        }
+    };
+    if let Ok(mut map) = QUESTIONS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        map.remove(&id);
+    }
+    answer
+}
+
 static EXEC_CANCEL: OnceLock<AtomicBool> = OnceLock::new();
 static INSTALL_CANCEL: OnceLock<AtomicBool> = OnceLock::new();
 
@@ -498,7 +591,14 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     };
     if !msgs.iter().any(|m| m.role == "system") {
         // Prompt kustom dari Setelan; kalau kosong, prompt bawaan Arka Agent.
-        msgs.insert(0, plain_msg("system", &settings::system_prompt()));
+        // Skill dari ~/.claude/skills di proot ikut disisipkan.
+        let mut system_prompt = settings::system_prompt();
+        let skills = skill::system_prompt_section();
+        if !skills.is_empty() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&skills);
+        }
+        msgs.insert(0, plain_msg("system", &system_prompt));
     }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
@@ -611,26 +711,151 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
         for call in calls {
             let args: serde_json::Value = serde_json::from_str(&call.arguments)
                 .unwrap_or_else(|_| json!({}));
-            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if command.trim().is_empty() {
-                continue;
-            }
-            let (display, output) = match proot_manager::run_capture(&command, &cancel, None) {
-                Ok((code, out)) => {
-                    let full = format!("exit {code}\n{out}");
-                    // Terminal boleh menampilkan lebih banyak; konteks model
-                    // dibatasi supaya tidak cepat penuh.
-                    (
-                        tail_chars(full.clone(), 20_000),
-                        tail_chars(full, tool_output_chars),
-                    )
+            let arg = |key: &str| {
+                args.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+
+            let (tool_label, display, output) = match call.name.as_str() {
+                "install_skill" => {
+                    let url = arg("url");
+                    let label = format!("install_skill {url}");
+                    let msg = if url.trim().is_empty() {
+                        "URL skill kosong.".to_string()
+                    } else {
+                        match ask_approval(
+                            &mut env,
+                            &cb,
+                            "Pasang skill",
+                            &url,
+                            "Unduh SKILL.md / repo dan simpan ke ~/.claude/skills di Ubuntu.",
+                            &cancel,
+                        ) {
+                            Ok(true) => match skill::install_from_url(&url) {
+                                Ok(m) => m,
+                                Err(e) => format!("Gagal memasang skill: {e}"),
+                            },
+                            Ok(false) => "Ditolak pengguna.".to_string(),
+                            Err(e) => format!("Gagal meminta persetujuan: {e}"),
+                        }
+                    };
+                    (label, msg.clone(), msg)
                 }
-                Err(e) => {
-                    let msg = format!("Gagal menjalankan perintah: {e}");
-                    (msg.clone(), msg)
+                "delete_skill" => {
+                    let name = arg("name");
+                    let label = format!("delete_skill {name}");
+                    let msg = match ask_approval(
+                        &mut env,
+                        &cb,
+                        "Hapus skill",
+                        &name,
+                        "Folder skill dan konfigurasinya akan dihapus dari Ubuntu.",
+                        &cancel,
+                    ) {
+                        Ok(true) => match skill::delete(&name) {
+                            Ok(()) => format!("Skill '{name}' dihapus."),
+                            Err(e) => format!("Gagal menghapus skill: {e}"),
+                        },
+                        Ok(false) => "Ditolak pengguna.".to_string(),
+                        Err(e) => format!("Gagal meminta persetujuan: {e}"),
+                    };
+                    (label, msg.clone(), msg)
+                }
+                "edit_skill" => {
+                    let name = arg("name");
+                    let content = arg("content");
+                    let label = format!("edit_skill {name}");
+                    let msg = match ask_approval(
+                        &mut env,
+                        &cb,
+                        "Ubah skill",
+                        &name,
+                        &format!("Timpa SKILL.md. Isi baru:\n{}", tail_chars(content.clone(), 800)),
+                        &cancel,
+                    ) {
+                        Ok(true) => match skill::edit(&name, &content) {
+                            Ok(m) => format!("Skill diperbarui: {m}."),
+                            Err(e) => format!("Gagal mengubah skill: {e}"),
+                        },
+                        Ok(false) => "Ditolak pengguna.".to_string(),
+                        Err(e) => format!("Gagal meminta persetujuan: {e}"),
+                    };
+                    (label, msg.clone(), msg)
+                }
+                "set_skill_config" => {
+                    let name = arg("name");
+                    let key = arg("key");
+                    let value = arg("value");
+                    let label = format!("set_skill_config {name} {key}={value}");
+                    let msg = match ask_approval(
+                        &mut env,
+                        &cb,
+                        "Ubah konfigurasi skill",
+                        &name,
+                        &format!("{key} = {value} (disimpan di ~/.config/{name}/config.json)"),
+                        &cancel,
+                    ) {
+                        Ok(true) => match skill::set_config(&name, &key, &value) {
+                            Ok(v) => format!("Konfigurasi tersimpan: {v}."),
+                            Err(e) => format!("Gagal menyimpan konfigurasi: {e}"),
+                        },
+                        Ok(false) => "Ditolak pengguna.".to_string(),
+                        Err(e) => format!("Gagal meminta persetujuan: {e}"),
+                    };
+                    (label, msg.clone(), msg)
+                }
+                "ask_user" => {
+                    let question = arg("question");
+                    let options: Vec<String> = args
+                        .get("options")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let label = format!("ask_user: {question}");
+                    let msg = if options.len() < 2 {
+                        "Minimal dua pilihan jawaban diperlukan.".to_string()
+                    } else {
+                        match ask_question(&mut env, &cb, &question, &options, &cancel) {
+                            Ok(Some(index)) => format!(
+                                "Pengguna memilih: {}",
+                                options.get(index).cloned().unwrap_or_default()
+                            ),
+                            Ok(None) => "Tidak ada jawaban dari pengguna.".to_string(),
+                            Err(e) => format!("Gagal bertanya: {e}"),
+                        }
+                    };
+                    (label, msg.clone(), msg)
+                }
+                _ => {
+                    let command = arg("command");
+                    if command.trim().is_empty() {
+                        continue;
+                    }
+                    let (display, output) = match proot_manager::run_capture(&command, &cancel, None) {
+                        Ok((code, out)) => {
+                            let full = format!("exit {code}\n{out}");
+                            // Terminal boleh menampilkan lebih banyak; konteks
+                            // model dibatasi supaya tidak cepat penuh.
+                            (
+                                tail_chars(full.clone(), 20_000),
+                                tail_chars(full, tool_output_chars),
+                            )
+                        }
+                        Err(e) => {
+                            let msg = format!("Gagal menjalankan perintah: {e}");
+                            (msg.clone(), msg)
+                        }
+                    };
+                    (command, display, output)
                 }
             };
-            ju::emit_str_str(&mut env, &cb, "onTool", &command, &display);
+            ju::emit_str_str(&mut env, &cb, "onTool", &tool_label, &display);
 
             if p.kind == "anthropic" {
                 msgs.push(ai::ChatMsg {
@@ -719,6 +944,46 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_cancelChat<'local>(
 ) {
     let session_id = ju::arg_str(&mut env, &session_id);
     request_chat_cancel(&session_id);
+}
+
+/// Jawaban kartu persetujuan dari UI (Izinkan / Tolak).
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_resolveApproval<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    id: JString<'local>,
+    approved: jboolean,
+) {
+    let id = ju::arg_str(&mut env, &id);
+    if let Some(map) = APPROVALS.get() {
+        if let Ok(mut guard) = map.lock() {
+            if let Some(tx) = guard.remove(&id) {
+                let _ = tx.send(approved != 0);
+            }
+        }
+    }
+}
+
+/// Jawaban pertanyaan pilihan ganda dari UI (indeks pilihan).
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_answerQuestion<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    id: JString<'local>,
+    choice: jint,
+) {
+    let id = ju::arg_str(&mut env, &id);
+    if let Some(map) = QUESTIONS.get() {
+        if let Ok(mut guard) = map.lock() {
+            if let Some(tx) = guard.remove(&id) {
+                // choice < 0 = Batal: tidak mengirim jawaban, channel
+                // tertutup → agent loop menganggap tidak ada jawaban.
+                if choice >= 0 {
+                    let _ = tx.send(choice as usize);
+                }
+            }
+        }
+    }
 }
 
 // ----------------------------------------------------------------- files

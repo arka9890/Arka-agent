@@ -83,6 +83,23 @@ data class AttachmentRef(
         "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
+/** Permintaan persetujuan aksi skill dari model ke pengguna. */
+@Serializable
+data class ApprovalRequest(
+    val id: String = "",
+    val action: String = "",
+    val target: String = "",
+    val detail: String = "",
+)
+
+/** Pertanyaan pilihan ganda dari model ke pengguna. */
+@Serializable
+data class QuestionRequest(
+    val id: String = "",
+    val question: String = "",
+    val options: List<String> = emptyList(),
+)
+
 @Serializable
 data class DistroStatus(
     val installed: Boolean = false,

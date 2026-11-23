@@ -75,6 +75,12 @@ object Arka {
 
     external fun cancelChat(sessionId: String)
 
+    /** Jawab kartu persetujuan skill (dipanggil dari UI). */
+    external fun resolveApproval(id: String, approved: Boolean)
+
+    /** Jawab kartu pertanyaan pilihan ganda (indeks pilihan). */
+    external fun answerQuestion(id: String, choice: Int)
+
     // ------------------------------------------------------------ file
     external fun filesJson(path: String): String
     external fun readText(path: String): String
@@ -112,6 +118,12 @@ object Arka {
 
         /** Model meminta menjalankan perintah di Ubuntu (agent tool call). */
         fun onTool(command: String, output: String)
+
+        /** Model meminta persetujuan untuk mengubah skill. */
+        fun onApproval(requestJson: String)
+
+        /** Model bertanya dengan beberapa pilihan jawaban. */
+        fun onQuestion(requestJson: String)
     }
 
     /** Callback progres unduh/pasang Ubuntu 24. */

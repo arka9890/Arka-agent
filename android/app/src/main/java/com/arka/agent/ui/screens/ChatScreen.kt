@@ -95,6 +95,8 @@ fun ChatScreen(vm: MainViewModel) {
     val busy by vm.busy.collectAsState()
     val settings by vm.settings.collectAsState()
     val providers by vm.providers.collectAsState()
+    val approval by vm.approval.collectAsState()
+    val question by vm.question.collectAsState()
 
     var drawer by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
@@ -256,6 +258,21 @@ fun ChatScreen(vm: MainViewModel) {
 
         preview?.let { file ->
             FilePreviewDialog(vm = vm, file = file, onDismiss = { preview = null })
+        }
+
+        approval?.let { request ->
+            ApprovalCardDialog(
+                request = request,
+                onApprove = { vm.resolveApproval(request.id, true) },
+                onReject = { vm.resolveApproval(request.id, false) },
+            )
+        }
+
+        question?.let { request ->
+            QuestionCardDialog(
+                request = request,
+                onAnswer = { choice -> vm.answerQuestion(request.id, choice) },
+            )
         }
 
         modelInput?.let { draft ->
