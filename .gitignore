@@ -15,3 +15,6 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+
+# File cadangan (backup) — jangan di-track
+*.backup
