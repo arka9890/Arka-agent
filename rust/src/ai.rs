@@ -72,7 +72,7 @@ Aturan penggunaan tool:
 - Setelah tool mengembalikan hasil, analisis output itu dan jawab dalam bahasa pengguna. Kalau perintah gagal, coba perbaiki perintahnya (maksimal beberapa kali).
 - Untuk pertanyaan umum yang tidak perlu dieksekusi, jawab biasa tanpa tool.
 
-Tool lain: `install_skill`, `delete_skill`, `edit_skill`, `set_skill_config`, dan `ask_user`. Empat tool skill Membutuhkan persetujuan pengguna: UI akan menampilkan kartu berisi aksi dan detail, lalu kamu harus menunggu jawaban sebelum mengklaim berhasil. Kalau pengguna menolak, katakan dengan jujur bahwa aksi dibatalkan. Gunakan `ask_user` kalau kamu butuh memilih salah satu dari beberapa opsi; sampaikan pilihan yang dipilih pengguna dalam jawabanmu. Skill tersimpan di `~/.claude/skills/<nama>/SKILL.md` di Ubuntu dan config-nya di `~/.config/<nama>/config.json`.
+Tool lain: `install_skill`, `delete_skill`, `edit_skill`, `set_skill_config`, dan `ask_user`. Empat tool skill Membutuhkan persetujuan pengguna: UI akan menampilkan kartu berisi aksi dan detail, lalu kamu harus menunggu jawaban sebelum mengklaim berhasil. Kalau pengguna menolak, katakan dengan jujur bahwa aksi dibatalkan. Gunakan `ask_user` kalau kamu butuh memilih salah satu dari beberapa opsi; sampaikan pilihan yang dipilih pengguna dalam jawabanmu. `ask_user` juga menerima argumen `file` berisi path file di `/root/storage` (mis. gambar, video, atau suara) supaya kartu pertanyaan menampilkan pratinjau file itu sebelum pengguna menjawab. Skill tersimpan di `~/.claude/skills/<nama>/SKILL.md` di Ubuntu dan config-nya di `~/.config/<nama>/config.json`.
 - Jangan mengaku sedang berjalan di dalam Ubuntu; katakan kamu menjalankan perintah di Ubuntu milik pengguna lewat tool Arka Agent.
 - Jawab dalam bahasa pengguna (default Bahasa Indonesia). Jika ditanya siapa kamu, jawab: "Aku Arka Agent, asisten AI di aplikasi Arka Agent yang bisa menjalankan perintah di workspace Ubuntu-mu."#;
 
@@ -224,6 +224,10 @@ fn tools_schema() -> Value {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "Daftar pilihan jawaban (minimal 2).",
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": "Opsional: path file di workspace Ubuntu untuk ditampilkan sebagai preview (gambar/video/suara), mis. /root/storage/foto.png",
                     }
                 },
                 "required": ["question", "options"],
@@ -292,7 +296,8 @@ fn anthropic_tools_schema() -> Value {
             "type": "object",
             "properties": {
                 "question": { "type": "string", "description": "Pertanyaan." },
-                "options": { "type": "array", "items": { "type": "string" }, "description": "Pilihan jawaban." }
+                "options": { "type": "array", "items": { "type": "string" }, "description": "Pilihan jawaban." },
+                "file": { "type": "string", "description": "Opsional: path file di workspace untuk preview gambar/video/suara." }
             },
             "required": ["question", "options"],
         }

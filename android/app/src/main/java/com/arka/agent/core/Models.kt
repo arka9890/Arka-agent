@@ -92,12 +92,22 @@ data class ApprovalRequest(
     val detail: String = "",
 )
 
+/** Lampiran file yang ikut ditampilkan pada kartu pertanyaan. */
+@Serializable
+data class FilePreview(
+    val path: String = "",
+    @SerialName("hostPath") val hostPath: String = "",
+    val kind: String = "file",
+    val name: String = "",
+)
+
 /** Pertanyaan pilihan ganda dari model ke pengguna. */
 @Serializable
 data class QuestionRequest(
     val id: String = "",
     val question: String = "",
     val options: List<String> = emptyList(),
+    val file: FilePreview? = null,
 )
 
 @Serializable

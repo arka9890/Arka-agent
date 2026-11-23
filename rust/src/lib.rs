@@ -45,6 +45,44 @@ fn next_ui_id(prefix: &str) -> String {
     format!("{}-{}", prefix, UI_SEQ.fetch_add(1, Ordering::SeqCst))
 }
 
+/// Data lampiran untuk kartu pertanyaan. Path guest `/root/storage/...`
+/// dipetakan ke folder workspace host supaya Android bisa membacanya.
+fn file_preview(path: &str) -> Option<serde_json::Value> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let guest = if raw.starts_with('/') {
+        raw.to_string()
+    } else {
+        format!("/root/storage/{raw}")
+    };
+    let host = if let Some(rest) = guest.strip_prefix("/root/storage/") {
+        ctx::workspace_dir().ok()?.join(rest)
+    } else if let Some(rest) = guest.strip_prefix("/root/") {
+        ctx::rootfs_dir().ok()?.join("root").join(rest)
+    } else {
+        std::path::PathBuf::from(&guest)
+    };
+    if !host.is_file() {
+        return None;
+    }
+    let name = host.file_name()?.to_string_lossy().to_string();
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    let kind = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => "image",
+        "mp4" | "webm" | "mkv" | "3gp" | "avi" => "video",
+        "mp3" | "wav" | "ogg" | "m4a" | "aac" | "flac" => "audio",
+        _ => "file",
+    };
+    Some(json!({
+        "path": guest,
+        "hostPath": host.to_string_lossy(),
+        "kind": kind,
+        "name": name,
+    }))
+}
+
 /// Tampilkan kartu persetujuan dan tunggu jawaban (maks 5 menit → ditolak).
 fn ask_approval(
     env: &mut JNIEnv,
@@ -91,6 +129,7 @@ fn ask_question(
     cb: &JObject,
     question: &str,
     options: &[String],
+    file: Option<serde_json::Value>,
     cancel: &AtomicBool,
 ) -> Result<Option<usize>, String> {
     let id = next_ui_id("qst");
@@ -104,7 +143,7 @@ fn ask_question(
         env,
         cb,
         "onQuestion",
-        &json!({ "id": id, "question": question, "options": options }).to_string(),
+        &json!({ "id": id, "question": question, "options": options, "file": file }).to_string(),
     );
     let deadline = Instant::now() + Duration::from_secs(300);
     let answer = loop {
@@ -823,7 +862,14 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
                     let msg = if options.len() < 2 {
                         "Minimal dua pilihan jawaban diperlukan.".to_string()
                     } else {
-                        match ask_question(&mut env, &cb, &question, &options, &cancel) {
+                        match ask_question(
+                            &mut env,
+                            &cb,
+                            &question,
+                            &options,
+                            file_preview(&arg("file")),
+                            &cancel,
+                        ) {
                             Ok(Some(index)) => format!(
                                 "Pengguna memilih: {}",
                                 options.get(index).cloned().unwrap_or_default()

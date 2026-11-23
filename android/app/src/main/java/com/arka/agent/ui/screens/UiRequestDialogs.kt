@@ -1,5 +1,11 @@
 package com.arka.agent.ui.screens
 
+import android.graphics.BitmapFactory
+import android.media.MediaPlayer
+import android.net.Uri
+import android.widget.MediaController
+import android.widget.VideoView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,14 +27,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import com.arka.agent.core.ApprovalRequest
+import com.arka.agent.core.FilePreview
 import com.arka.agent.core.QuestionRequest
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.theme.Space
@@ -127,6 +144,10 @@ fun QuestionCardDialog(
                 )
                 Spacer(Modifier.height(Space.sm))
                 Text(request.question, style = MaterialTheme.typography.bodyMedium)
+                request.file?.let { preview ->
+                    Spacer(Modifier.height(Space.sm))
+                    FilePreviewBlock(preview)
+                }
                 Spacer(Modifier.height(Space.md))
                 Column(
                     Modifier
@@ -158,3 +179,97 @@ fun QuestionCardDialog(
         }
     }
 }
+
+/** Pratinjau lampiran pada kartu pertanyaan: gambar, video, suara, atau file. */
+@Composable
+private fun FilePreviewBlock(preview: FilePreview) {
+    val context = LocalContext.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(clay.surface)
+            .padding(Space.sm),
+    ) {
+        Text(preview.name, style = MaterialTheme.typography.labelSmall, color = clay.muted)
+        Spacer(Modifier.height(Space.xs))
+        when (preview.kind) {
+            "image" -> {
+                val bitmap = remember(preview.hostPath) {
+                    runCatching { BitmapFactory.decodeFile(preview.hostPath) }.getOrNull()
+                }
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = preview.name,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 260.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                        contentScale = ContentScale.Fit,
+                    )
+                } else {
+                    Text(
+                        tr("Pratinjau gambar tidak tersedia", "Image preview unavailable", "画像を表示できません"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.danger,
+                    )
+                }
+            }
+            "video" -> {
+                val uri = remember(preview.hostPath) { uriFor(context, preview.hostPath) }
+                AndroidView(
+                    factory = { ctx ->
+                        VideoView(ctx).apply {
+                            setVideoURI(uri)
+                            setMediaController(MediaController(ctx))
+                            setOnPreparedListener { start() }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+            }
+            "audio" -> {
+                val uri = remember(preview.hostPath) { uriFor(context, preview.hostPath) }
+                AudioPreview(uri)
+            }
+            else -> Text(
+                tr("File: ", "File: ", "ファイル: ") + preview.name,
+                style = MaterialTheme.typography.labelSmall,
+                color = clay.accent,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AudioPreview(uri: Uri) {
+    val context = LocalContext.current
+    var playing by remember { mutableStateOf(false) }
+    val player = remember { MediaPlayer() }
+    DisposableEffect(uri) {
+        runCatching {
+            player.setDataSource(context, uri)
+            player.prepare()
+        }
+        onDispose { player.release() }
+    }
+    Button(onClick = {
+        runCatching {
+            if (playing) player.pause() else player.start()
+            playing = !playing
+        }
+    }) {
+        Text(if (playing) tr("Jeda", "Pause", "一時停止") else tr("Putar suara", "Play audio", "音声を再生"))
+    }
+}
+
+private fun uriFor(context: android.content.Context, hostPath: String): Uri =
+    FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.files",
+        java.io.File(hostPath),
+    )
