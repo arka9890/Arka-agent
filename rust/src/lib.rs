@@ -505,7 +505,9 @@ fn tail_chars(text: String, max: usize) -> String {
     if chars.len() <= max {
         return text;
     }
-    chars[chars.len() - max..].iter().collect()
+    // M2: tandai output yang dipotong supaya model/pengguna tahu sebagian
+    // hasil tidak ditampilkan, bukan sekadar "hilang".
+    format!("…(terpotong, {n} karakter sebelumnya)\n{}", chars[chars.len() - max..].iter().collect::<String>(), n = chars.len() - max)
 }
 
 /// Kirim percakapan dan alirkan jawaban ke `cb.onDelta(text)`.
