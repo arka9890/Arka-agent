@@ -433,23 +433,6 @@ class ArkaRepo(private val context: Context) {
     /** Prompt sistem bawaan, untuk tombol "kembalikan default" di Setelan. */
     suspend fun defaultSystemPrompt(): String = io { Arka.defaultSystemPrompt() }
 
-    // ----------------------------------------------------------- skill
-
-    suspend fun skills(): List<Skill> = io {
-        json.decodeFromString(Arka.skillsJson())
-    }
-
-    /** Impor isi SKILL.md; mengembalikan skill yang tersimpan. */
-    suspend fun importSkill(raw: String, fallbackName: String): Skill = io {
-        json.decodeFromString(Arka.importSkill(raw, fallbackName))
-    }
-
-    suspend fun deleteSkill(id: String) = io { Arka.deleteSkill(id) }
-
-    suspend fun setSkillEnabled(id: String, enabled: Boolean) = io {
-        Arka.setSkillEnabled(id, enabled)
-    }
-
     suspend fun terminalHistory(): List<String> = io {
         json.decodeFromString(Arka.terminalHistoryJson())
     }

@@ -18,14 +18,13 @@ mod proot_manager;
 mod provider;
 mod session;
 mod settings;
-mod skill;
 mod terminal;
 
 use jni_util as ju;
 use serde_json::json;
 
 use jni::objects::{JByteArray, JClass, JObject, JString};
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
@@ -499,15 +498,7 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_chatStream<'local>(
     };
     if !msgs.iter().any(|m| m.role == "system") {
         // Prompt kustom dari Setelan; kalau kosong, prompt bawaan Arka Agent.
-        let mut system_prompt = settings::system_prompt();
-        // Skill aktif (format SKILL.md Claude) jadi bagian system prompt,
-        // supaya model tahu kapan dan bagaimana memakainya.
-        let skills = skill::system_prompt_section();
-        if !skills.is_empty() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&skills);
-        }
-        msgs.insert(0, plain_msg("system", &system_prompt));
+        msgs.insert(0, plain_msg("system", &settings::system_prompt()));
     }
     let model = if model.trim().is_empty() { p.model.clone() } else { model };
 
@@ -933,57 +924,6 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_setSetting<'local>(
     let key = ju::arg_str(&mut env, &key);
     let value = ju::arg_str(&mut env, &value);
     unit_result(&mut env, || settings::set(&key, &value));
-}
-
-// ---------------------------------------------------------------- skills
-
-/// Daftar semua skill (JSON array).
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_skillsJson<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-) -> JString<'local> {
-    json_result(&mut env, || {
-        serde_json::to_string(&skill::list()?).map_err(|e| e.to_string())
-    })
-}
-
-/// Impor skill dari isi `SKILL.md`. `fallback_name` dipakai kalau frontmatter
-/// tidak punya `name:` (diisi nama file dari UI).
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_importSkill<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    raw: JString<'local>,
-    fallback_name: JString<'local>,
-) -> JString<'local> {
-    let raw = ju::arg_str(&mut env, &raw);
-    let fallback_name = ju::arg_str(&mut env, &fallback_name);
-    json_result(&mut env, || {
-        let s = skill::import(&raw, &fallback_name)?;
-        serde_json::to_string(&s).map_err(|e| e.to_string())
-    })
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_deleteSkill<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    id: JString<'local>,
-) {
-    let id = ju::arg_str(&mut env, &id);
-    unit_result(&mut env, || skill::delete(&id));
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_setSkillEnabled<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    id: JString<'local>,
-    enabled: jboolean,
-) {
-    let id = ju::arg_str(&mut env, &id);
-    unit_result(&mut env, || skill::set_enabled(&id, enabled != 0));
 }
 
 #[no_mangle]

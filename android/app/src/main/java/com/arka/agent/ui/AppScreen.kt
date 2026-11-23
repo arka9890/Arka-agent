@@ -23,7 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Terminal
@@ -53,11 +52,10 @@ import com.arka.agent.ui.screens.ChatScreen
 import com.arka.agent.ui.screens.FilesScreen
 import com.arka.agent.ui.screens.ProvidersScreen
 import com.arka.agent.ui.screens.SettingsScreen
-import com.arka.agent.ui.screens.SkillsScreen
 import com.arka.agent.ui.screens.TerminalScreen
 import com.arka.agent.ui.theme.clay
 
-/** Tab utama: Chat, Provider, File, Skill, Terminal, Setelan. */
+/** Lima tab sesuai PRD. */
 enum class Tab(
     val label: String,
     val labelEn: String,
@@ -67,7 +65,6 @@ enum class Tab(
     Chat("Chat", "Chat", "チャット", Icons.Outlined.Chat),
     Provider("Provider", "Provider", "プロバイダー", Icons.Outlined.Hub),
     File("File", "Files", "ファイル", Icons.Outlined.Description),
-    Skill("Skill", "Skills", "スキル", Icons.Outlined.Extension),
     Terminal("Terminal", "Terminal", "ターミナル", Icons.Outlined.Terminal),
     Settings("Setelan", "Settings", "設定", Icons.Outlined.Settings),
 }
@@ -116,7 +113,6 @@ fun AppScreen(vm: MainViewModel) {
                 Tab.Chat -> ChatScreen(vm)
                 Tab.Provider -> ProvidersScreen(vm)
                 Tab.File -> FilesScreen(vm)
-                Tab.Skill -> SkillsScreen(vm)
                 Tab.Terminal -> TerminalScreen(vm)
                 Tab.Settings -> SettingsScreen(vm)
             }
