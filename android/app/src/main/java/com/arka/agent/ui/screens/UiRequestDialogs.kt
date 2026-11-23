@@ -145,9 +145,19 @@ fun QuestionCardDialog(
                 Spacer(Modifier.height(Space.sm))
                 Text(request.question, style = MaterialTheme.typography.bodyMedium)
                 val previews = request.files.ifEmpty { listOfNotNull(request.file) }
-                previews.take(5).forEach { preview ->
+                if (previews.isNotEmpty()) {
                     Spacer(Modifier.height(Space.sm))
-                    FilePreviewBlock(preview, autoplay = previews.size == 1)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(Space.sm),
+                    ) {
+                        previews.take(5).forEach { preview ->
+                            FilePreviewBlock(preview, autoplay = previews.size == 1)
+                        }
+                    }
                 }
                 Spacer(Modifier.height(Space.md))
                 Column(
