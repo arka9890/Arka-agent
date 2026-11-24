@@ -1,9 +1,16 @@
 name: Build & Test
 
-# Dua job di setiap push ke main (+ bisa dijalankan manual dari tab Actions):
-#   rust -> `cargo check`/`cargo test` untuk logika inti di crates/arka-core.
-#   apk  -> build APK debug; memvalidasi Kotlin/Compose. Binary proot dan
-#           libarka_core.so sudah ada di jniLibs, jadi NDK tidak dibutuhkan.
+# Empat job di setiap push ke main (+ bisa dijalankan manual dari tab Actions):
+#   rust          -> `cargo check`/`cargo test` workspace di Linux (logika inti).
+#   rust-windows  -> `arka_core` harus tetap bisa dicompile untuk Windows.
+#   rust-android  -> bangun `libarka_core.so` untuk arm64-v8a + armeabi-v7a.
+#   apk           -> pakai .so hasil rust-android, lalu assembleDebug.
+#
+# Job `apk` WAJIB bergantung pada `rust-android`: sebelumnya CI memakai
+# libarka_core.so yang ter-commit di jniLibs, jadi APK yang dihasilkan berisi
+# kode native lama (sebelum crate JNI dipisah). Sekarang .so selalu dibangun
+# dari sumber di commit yang sama, sekaligus memvalidasi path baru
+# `crates/arka-core/build-android.sh` setelah `rust/` dipindah.
 on:
   push:
     branches: [main]
@@ -12,14 +19,17 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: 27.0.12077973
+
 jobs:
   rust:
-    name: cargo check + test (arka-core)
+    name: cargo check + test (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -33,20 +43,97 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # Validasi logika inti (ai/memory/skill/db) tanpa perlu NDK.
       - name: cargo check
         run: cargo check --workspace --locked
 
       - name: cargo test
         run: cargo test --workspace --locked
 
+  rust-windows:
+    name: cargo check + test (windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # `arka_core` harus bebas dari kode khusus Unix/JNI. Crate `arka-android`
+      # sengaja tidak ikut: kode JNI + proot memakai std::os::unix.
+      - name: cargo check arka_core
+        run: cargo check -p arka_core --locked
+
+      - name: cargo test arka_core
+        run: cargo test -p arka_core --locked
+
+      - name: Tolak prompt Linux di build desktop
+        run: cargo test -p arka_core --locked prompt::tests -- --nocapture
+
+  rust-android:
+    name: libarka_core.so (arm64 + armv7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust + target Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Set up Android SDK (NDK)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "ndk;${{ env.NDK_VERSION }}"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-android-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build .so untuk semua ABI
+        run: |
+          # setup-android mengekspor ANDROID_HOME saat runtime, jadi NDK path
+          # dihitung di shell (bukan lewat ekspresi ${{ env.* }}).
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          echo "NDK: $ANDROID_NDK_HOME"
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          chmod +x crates/arka-core/build-android.sh
+          crates/arka-core/build-android.sh all
+          # Bukti path baru benar: file harus mendarat di jniLibs dengan nama
+          # yang dibaca System.loadLibrary("arka_core").
+          test -s android/app/src/main/jniLibs/arm64-v8a/libarka_core.so
+          test -s android/app/src/main/jniLibs/armeabi-v7a/libarka_core.so
+
+      - name: Upload .so
+        uses: actions/upload-artifact@v4
+        with:
+          name: jniLibs
+          path: android/app/src/main/jniLibs/*/libarka_core.so
+          if-no-files-found: error
+          retention-days: 7
+
   apk:
     name: assembleDebug
+    needs: rust-android
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -54,21 +141,32 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Menyediakan cmdline-tools + menerima lisensi, lalu memasang paket yang
-      # dibutuhkan build.gradle.kts (compileSdk 35, build-tools 35, NDK r27).
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: "platforms;android-35 build-tools;35.0.0 ndk;27.0.12077973 platform-tools"
+          packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      # .so hasil job rust-android, bukan yang ter-commit di repo.
+      - name: Ambil libarka_core.so
+        uses: actions/download-artifact@v4
+        with:
+          name: jniLibs
+          path: android/app/src/main/jniLibs
 
       - name: Build debug APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Pasang library di build asli?
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$APK" | grep -E 'lib/.*/libarka_core\.so'
+          test "$(unzip -l "$APK" | grep -c 'libarka_core\.so')" -ge 2
 
       - name: Verifikasi signature APK
         run: |

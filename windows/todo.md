@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅** — M2 (shell PowerShell) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅** — M2 (shell PowerShell) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -160,13 +160,17 @@ Arka-agent/
 - [x] Pindahkan `rust/` → `crates/arka-core` via `git mv` (history terjaga); `Cargo.lock` dipindah ke root
 - [x] `crate-type = ["cdylib", "rlib"]` supaya bin desktop bisa memakai logika yang sama
 - [x] `cargo check --workspace` & `cargo test --workspace` hijau (15 test lulus)
-- [x] `crates/arka-core/build-android.sh` diperbarui (`WORKSPACE_ROOT`, `TARGET_DIR`, `--package arka_core`)
+- [x] `crates/arka-core/build-android.sh` diperbarui (`WORKSPACE_ROOT`, `TARGET_DIR`, `--package arka-android` setelah M1)
 - [x] `.gitignore`: `rust/target/` → `target/`
 - [x] `.github/workflows/android.yml` jadi **Build & Test** + job `rust` (`cargo check`/`test --locked`)
 - [x] Semua referensi `rust/` di README, `docs/PRD.md`, `docs/TODO.md`, `build.gradle.kts`, `jniLibs/README.md` diperbarui
 - [ ] `crates/arka-android` (pemisahan JNI) → **dilakukan di M1**, karena `proot_manager.rs` memakai `std::os::unix`
       (crate ini belum bisa dicompile untuk Windows sampai pemisahan itu selesai)
 **Selesai bila:** ✅ APK masih bisa dibuild dari CI setelah pemindahan, tanpa perubahan kode Kotlin.
+> ⚠️ Catatan audit: klaim di atas awalnya **tidak** terverifikasi. Job `apk` di CI lama tidak
+> pernah menjalankan cargo — ia memakai `libarka_core.so` yang ter-commit di `jniLibs`
+> (build sebelum `rust/` dipindah), jadi APK-nya membawa kode native lama. Diperbaiki di
+> "CI-1" di bawah: sekarang `.so` selalu dibangun dari sumber pada commit yang sama.
 
 ### M1 — Core portable + prompt pack (3 hari) ✅ SELESAI
 - [x] Hapus semua ketergantungan JNI dari `arka-core`: callback diganti trait
@@ -202,6 +206,22 @@ Arka-agent/
 > Verifikasi Windows **belum** dijalankan di mesin ini: target `x86_64-pc-windows-*` dan `rustfmt`/`clippy`
 > tidak terpasang di workspace Android ini. Yang terbukti hijau: `cargo check/test --workspace` di Linux
 > dan tidak ada lagi `std::os::unix` maupun `jni` di `arka-core` (dicek dengan grep + dependensi crate).
+
+### CI-1 — Pipeline build diperbaiki & diverifikasi (¼ hari) ✅ SELESAI
+- [x] Job baru `rust-android`: `dtolnay/rust-toolchain` (target `aarch64-linux-android`, `armv7-linux-androideabi`) + `setup-android` (NDK 27.0.12077973)
+- [x] `crates/arka-core/build-android.sh all` dijalankan di CI → memvalidasi **path baru** setelah `rust/` dipindah
+- [x] Asersi `test -s jniLibs/{arm64-v8a,armeabi-v7a}/libarka_core.so` (nama file harus sama dengan `System.loadLibrary("arka_core")`)
+- [x] `.so` di-upload sebagai artifact `jniLibs`, lalu job `apk` `needs: rust-android` + `download-artifact` menimpanya
+- [x] Asersi isi APK: `unzip -l` harus memuat ≥2 entri `lib/*/libarka_core.so` (kalau .so hilang, build gagal bukan lolos diam-diam)
+- [x] `ANDROID_NDK_HOME` dihitung dari `$ANDROID_HOME` saat runtime (ekspresi `${{ env.ANDROID_HOME }}` kosong karena di-set `GITHUB_ENV`)
+- [x] Job baru `rust-windows` (`windows-latest`): `cargo check`/`test -p arka_core` + tes penjaga prompt → gerbang regresi kode Unix bocor ke core
+- [x] Job `apk` tidak lagi memasang `ndk;...` (NDK hanya dipakai job Rust), mempercepat build Kotlin
+- [x] YAML divalidasi parser (`python3 -c "import yaml; yaml.safe_load(...)"`)
+**Catatan:** `cargo check --target x86_64-pc-windows-msvc` **tidak bisa** dijalankan dari Linux —
+`ring` (lewat `reqwest`) mengompilasi C dan butuh `cl.exe`. Karena itu pemeriksaan Windows
+dijalankan di runner `windows-latest`, bukan cross-check dari Ubuntu.
+**Selesai bila:** ✅ push ke `main` menghasilkan APK yang `.so`-nya berasal dari commit itu sendiri,
+dan kegagalan build native menggagalkan job `apk` (tidak ada lagi artifact "sukses" dengan lib basi).
 
 ### M2 — Shell PowerShell (3–4 hari) ← sedang dikerjakan
 - [x] `trait Shell`: `status()`, `prepare(ev, cancel)`, `exec(cmd, cancel, on_chunk) -> ExecOutcome`, `diagnostic()`
@@ -284,7 +304,7 @@ Arka-agent/
 - [ ] Icon + metadata exe (`winres`/`embed-resource`), manifest DPI-aware
 - [ ] Installer: `cargo-wix` (MSI) **atau** NSIS; portable ZIP sebagai alternatif
 - [ ] CI `windows.yml`: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, build release, upload artifact
-- [ ] CI `android.yml` tetap hijau
+- [x] CI `android.yml` tetap hijau — kini juga membangun `.so` sendiri dan memeriksa `arka_core` di `windows-latest`
 - [ ] Hapus `rust/` lama; perbarui `README.md` (2 platform), `windows/build.md` (prasyarat: **tanpa WSL**, cukup VS Build Tools), `docs/PRD.md` (bagian Windows)
 - [ ] Rilis GitHub: `arka-agent-<ver>-windows-x64.msi`, `.zip`, APK
 **Selesai bila:** pengguna Windows baru bisa install → app membuat workspace → chat, `run_command`, terminal, file, skill langsung jalan tanpa memasang apa pun selain aplikasinya.
