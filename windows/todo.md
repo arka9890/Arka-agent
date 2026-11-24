@@ -429,8 +429,9 @@ pratinjau file.
 - [x] Kunci yang tak bisa dibuka DPAPI (DB dari mesin lain) ditandai `key_unreadable` dan **tidak** terhapus saat disimpan
 **Selesai bila:** API key tidak terbaca sebagai plaintext di `arka.db`, dan tes koneksi berhasil.
 
-Bukti (commit `M5`):
-- `cargo test --workspace` lokal: **131** test hijau (90 desktop + 41 core, 1 doctest).
+Bukti (commit `034afb9`, CI run [45347076737](https://github.com/arka9890/Arka-agent/actions/runs/45347076737) + [45347076704](https://github.com/arka9890/Arka-agent/actions/runs/45347076704) — 6/6 job hijau):
+- `cargo test --workspace` lokal: **131** test hijau (90 desktop + 40 core + 1 doctest).
+- **`windows-latest`: 84 test desktop hijau**, termasuk `dpapi::tests::dpapi_asli_bolak_balik ... ok` — satu-satunya test yang memanggil DPAPI sungguhan. Selisih 90−84 = 6 test khusus Unix (`/bin/sh`).
 - `dpapi.rs` diuji dengan `FakeProtector` di Linux + **satu test DPAPI asli** (`dpapi_asli_bolak_balik`, `#[cfg(windows)]`) yang berjalan di `windows-latest`: ciphertext ≠ plaintext, bolak-balik utuh, dua enkripsi menghasilkan ciphertext berbeda.
 - `provider.rs` (core): migrasi plaintext **sekali** (dipanggil ulang = 0), tidak menyentuh kunci kosong, Noop tidak mengubah apa pun, simpan form "kunci tak terbaca" mempertahankan kunci lama.
 - `gui/tests.rs`: daftar menampilkan status kunci & statistik tanpa membocorkan nilai; Tambah membuka form; Simpan mati tanpa nama; Batal menutup; Hapus minta konfirmasi; peringatan kunci tak terbaca tergambar.
