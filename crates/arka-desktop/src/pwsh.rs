@@ -128,7 +128,12 @@ impl PwshShell {
         Ok(clean)
     }
 
-    fn ps_info(&self) -> Result<Vec<(String, String)>, String> {
+    /// Versi/OS/arsitektur/ExecutionPolicy dalam satu proses.
+    ///
+    /// Dipublikkan untuk tab Terminal (kartu status shell). Setiap panggilan
+    /// **menjalankan satu proses PowerShell**, jadi pemanggil wajib menyimpan
+    /// hasilnya — jangan memanggilnya dari `draw`.
+    pub fn info(&self) -> Result<Vec<(String, String)>, String> {
         let raw = self.capture(
             r"'PSVersion=' + $PSVersionTable.PSVersion.ToString()
 'PSEdition=' + $PSVersionTable.PSEdition
@@ -177,7 +182,8 @@ pub fn detect() -> Result<Detected, String> {
     ))
 }
 
-fn dir_size(path: &Path) -> i64 {
+/// Total byte seluruh berkas di [path] (rekursif, tanpa mengikuti symlink).
+pub fn dir_size(path: &Path) -> i64 {
     let mut total = 0i64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -194,7 +200,8 @@ fn dir_size(path: &Path) -> i64 {
     total
 }
 
-fn dir_files(path: &Path) -> usize {
+/// Jumlah berkas di [path] (rekursif).
+pub fn dir_files(path: &Path) -> usize {
     let mut n = 0usize;
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -212,7 +219,7 @@ fn dir_files(path: &Path) -> usize {
 
 impl Shell for PwshShell {
     fn status(&self) -> Result<Value, String> {
-        let info = self.ps_info().unwrap_or_default();
+        let info = self.info().unwrap_or_default();
         let pick = |key: &str| {
             info.iter()
                 .find(|(k, _)| k == key)

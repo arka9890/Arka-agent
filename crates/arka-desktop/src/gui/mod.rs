@@ -11,11 +11,13 @@ pub mod bubble;
 pub mod dialogs;
 pub mod engine;
 pub mod fs_model;
+pub mod history;
 pub mod i18n;
 pub mod jobs;
 pub mod markdown;
 pub mod screens;
 pub mod state;
+pub mod term_job;
 pub mod theme;
 pub mod widgets;
 

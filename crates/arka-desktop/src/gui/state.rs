@@ -14,7 +14,9 @@ use crate::preview::PreviewState;
 use crate::pwsh::Detected;
 
 use super::engine::Engine;
+use super::history::History;
 use super::jobs::NetJob;
+use super::term_job::{ExitLine, Job, JobState, StatsJob, TaskKind, WsStats};
 use super::fs_model::FilesCache;
 use super::i18n::{tr, Lang};
 use super::theme::{FontScale, ThemeMode};
@@ -501,24 +503,97 @@ pub struct AppState {
     pub shell: ShellProbe,
     /// State tab Chat (pesan, streaming, provider, dialog).
     pub chat: ChatState,
+    /// State tab Terminal (kotak perintah, riwayat, output, status mesin).
+    pub term: TermState,
     /// State tab Provider (daftar, form, pekerjaan jaringan).
     pub provider: ProviderState,
     /// Kegagalan database terakhir; ditampilkan supaya "tidak ada sesi" tidak
     /// terlihat sama dengan "database rusak".
     pub db_error: Option<String>,
+    /// Saluran hasil deteksi PowerShell yang berjalan di thread latar.
+    ///
+    /// Deteksi **menjalankan proses** (`pwsh -v`, atau `powershell.exe`), jadi
+    /// memanggilnya dari `draw` membekukan jendela selama proses itu hidup.
+    /// Pola di sini sama dengan pekerjaan lain: thread + saluran + `poll`.
+    pub shell_probe_rx: Option<std::sync::mpsc::Receiver<Result<Detected, String>>>,
+}
+
+/// Status mesin yang diambil sekali lewat PowerShell (bukan tiap frame).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum InfoState {
+    #[default]
+    Unknown,
+    Ready(Vec<(String, String)>),
+    Missing(String),
+}
+
+impl InfoState {
+    pub fn get(&self, key: &str) -> Option<&str> {
+        match self {
+            InfoState::Ready(pairs) => pairs
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_str()),
+            _ => None,
+        }
+    }
+}
+
+/// Semua state tab Terminal.
+///
+/// Sengaja dipisah dari [`ChatState`]: `chat.terminal_log` adalah catatan
+/// perintah yang dijalankan **agent**, sedangkan output di sini adalah
+/// perintah yang **diketik pengguna** dan berjalan di thread terpisah.
+#[derive(Default)]
+pub struct TermState {
+    /// Isi kotak perintah.
+    pub input: String,
+    pub history: History,
+    /// Output perintah manual (terus bertambah selama proses berjalan).
+    pub output: String,
+    /// Perintah pengguna yang sedang berjalan; `None` = tidak ada.
+    pub job: Option<Job>,
+    /// Baris exit perintah terakhir.
+    pub exit: Option<ExitLine>,
+    /// Pengambilan status mesin (versi/OS/arch/policy).
+    pub info_job: Option<Job>,
+    /// Tombol "Tes shell" yang sedang berjalan.
+    pub diag_job: Option<Job>,
+    pub info: InfoState,
+    /// Info sudah pernah dicoba (berhasil **atau** gagal). Tanpa ini, setiap
+    /// frame akan mencoba menjalankan PowerShell lagi.
+    pub info_attempted: bool,
+    /// Hasil tombol "Tes shell".
+    pub diagnostic: Option<String>,
+    pub ws: Option<WsStats>,
+    pub stats_job: Option<StatsJob>,
+    pub focus_input: bool,
+    /// Dropdown riwayat perintah sedang terbuka.
+    pub show_history: bool,
+}
+
+impl TermState {
+    pub fn running(&self) -> bool {
+        self.job.as_ref().is_some_and(Job::running)
+    }
 }
 
 /// Hasil pemeriksaan PowerShell.
 #[derive(Clone, Debug, Default)]
 pub enum ShellProbe {
+    /// Belum diperiksa sama sekali.
     #[default]
     Unknown,
+    /// Pemeriksaan sedang berjalan di thread latar.
+    Probing,
     Ready(Detected),
     Missing(String),
 }
 
 impl ShellProbe {
     pub fn checked(&self) -> bool {
+        // `Probing` sudah "checked": tanpa ini `ensure_shell_probe` akan
+        // memulai pemeriksaan baru di setiap frame.
         !matches!(self, ShellProbe::Unknown)
     }
 }
@@ -554,8 +629,10 @@ impl AppState {
                 auto_scroll: persisted.auto_scroll,
                 ..Default::default()
             },
+            term: TermState::default(),
             provider: ProviderState::default(),
             db_error: None,
+            shell_probe_rx: None,
         }
     }
 
@@ -579,23 +656,253 @@ impl AppState {
     }
 
     /// Deteksi PowerShell sekali saja (mahal: menjalankan proses).
-    pub fn ensure_shell_probe(&mut self) {
-        if !self.shell.checked() {
-            self.refresh_shell_probe();
+    pub fn ensure_shell_probe(&mut self, ctx: &eframe::egui::Context) {
+        // Ambil hasil yang sudah siap lebih dulu.
+        if let Some(rx) = &self.shell_probe_rx {
+            match rx.try_recv() {
+                Ok(Ok(d)) => {
+                    self.shell = ShellProbe::Ready(d);
+                    self.shell_probe_rx = None;
+                }
+                Ok(Err(e)) => {
+                    self.shell = ShellProbe::Missing(e);
+                    self.shell_probe_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread mati tanpa mengirim hasil (panic). Tanpa ini,
+                    // kartu status berhenti di "Memeriksa…" selamanya.
+                    self.shell =
+                        ShellProbe::Missing("Deteksi shell berhenti tanpa hasil".to_string());
+                    self.shell_probe_rx = None;
+                }
+            }
+        }
+        if !self.shell.checked() && self.shell_probe_rx.is_none() {
+            self.start_shell_probe(ctx.clone());
         }
     }
 
-    pub fn refresh_shell_probe(&mut self) {
-        self.shell = match crate::pwsh::detect() {
-            Ok(d) => ShellProbe::Ready(d),
-            Err(e) => ShellProbe::Missing(e),
-        };
+    /// Deteksi ulang (tombol "Periksa ulang") — tetap di thread latar.
+    pub fn refresh_shell_probe(&mut self, ctx: &eframe::egui::Context) {
+        self.shell_probe_rx = None;
+        self.shell = ShellProbe::Unknown;
+        self.start_shell_probe(ctx.clone());
+    }
+
+    fn start_shell_probe(&mut self, ctx: eframe::egui::Context) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.shell = ShellProbe::Probing;
+        self.shell_probe_rx = Some(rx);
+        std::thread::spawn(move || {
+            // `detect()` bisa memakan ratusan milidetik (menjalankan proses).
+            // Inilah alasan jalur ini tidak boleh dipanggil dari `draw`.
+            let _ = tx.send(crate::pwsh::detect());
+            ctx.request_repaint();
+        });
     }
 
     /// Folder kerja agent. Di Windows: `%USERPROFILE%\ArkaAgent\workspace`.
     pub fn workspace(&self) -> PathBuf {
         self.paths.workspace.clone()
     }
+
+    // ── Terminal ───────────────────────────────────────────────────────────
+
+    /// Batas output perintah manual: lebih besar dari `Limits::default()`
+    /// karena pengguna sendiri yang menjalankan `dir /s`, bukan model.
+    fn term_limits() -> crate::pump::Limits {
+        crate::pump::Limits {
+            max_chars: crate::pwsh::RAW_OUTPUT_CAP,
+            timeout: crate::pwsh::DEFAULT_TIMEOUT,
+        }
+    }
+
+    /// Shell untuk eksekusi manual, atau pesan galat bila tidak ada.
+    fn term_shell(
+        &mut self,
+        ctx: &eframe::egui::Context,
+    ) -> Result<crate::pwsh::PwshShell, String> {
+        self.ensure_shell_probe(ctx);
+        match &self.shell {
+            ShellProbe::Ready(d) => {
+                // Workspace mungkin belum pernah dibuat (mis. pengguna baru
+                // menghapusnya). Tanpa ini PowerShell gagal dengan pesan
+                // "directory does not exist" yang membingungkan.
+                let ws = self.workspace();
+                std::fs::create_dir_all(&ws)
+                    .map_err(|e| format!("Gagal membuat workspace {}: {e}", ws.display()))?;
+                Ok(crate::pwsh::PwshShell::with(d.program.clone(), ws, Self::term_limits()))
+            }
+            ShellProbe::Missing(e) => Err(e.clone()),
+            ShellProbe::Probing => Err("Shell masih diperiksa".into()),
+            ShellProbe::Unknown => Err("Shell belum diperiksa".into()),
+        }
+    }
+
+    /// Jalankan isi kotak perintah di thread latar.
+    pub fn run_terminal(&mut self, ctx: &eframe::egui::Context) {
+        let cmd = self.term.input.trim().to_string();
+        if cmd.is_empty() {
+            return;
+        }
+        if self.term.running() {
+            self.notify(self.tr(
+                "Masih ada perintah berjalan. Tekan Stop dulu.",
+                "A command is still running. Press Stop first.",
+                "まだ実行中のコマンドがあります。先に Stop を押してください。",
+            ));
+            return;
+        }
+        match self.term_shell(ctx) {
+            Ok(shell) => {
+                // Riwayat dicatat **sebelum** dijalankan: perintah yang gagal
+                // spawn pun tetap layak diketik ulang dengan panah ↑.
+                self.term.history.push(&cmd);
+                self.term.output.clear();
+                self.term.exit = None;
+                self.term.input.clear();
+                self.term.focus_input = true;
+                self.term.show_history = false;
+                self.term.job = Some(super::term_job::start(TaskKind::Run, cmd, shell, ctx.clone()));
+            }
+            Err(e) => {
+                self.term.output = format!("! {e}");
+                self.term.exit = None;
+            }
+        }
+    }
+
+    /// Minta perintah yang sedang berjalan berhenti (tombol Stop).
+    pub fn stop_terminal(&mut self) {
+        if let Some(job) = &self.term.job {
+            job.cancel();
+        }
+    }
+
+    /// Ambil status mesin sekali saja (setiap panggilan = satu proses).
+    pub fn ensure_term_info(&mut self, ctx: &eframe::egui::Context) {
+        if self.term.info_attempted || self.term.info_job.is_some() {
+            return;
+        }
+        // Tanpa shell, tidak ada yang bisa ditanyakan — biarkan `Unknown`
+        // supaya UI menampilkan "—" alih-alih pesan galat kedua.
+        if !matches!(self.shell, ShellProbe::Ready(_)) {
+            return;
+        }
+        self.term.info_attempted = true;
+        match self.term_shell(ctx) {
+            Ok(shell) => {
+                self.term.info_job =
+                    Some(super::term_job::start(TaskKind::Info, String::new(), shell, ctx.clone()));
+            }
+            Err(e) => self.term.info = InfoState::Missing(e),
+        }
+    }
+
+    /// Tombol "Tes shell": satu proses yang hasilnya ditampilkan apa adanya.
+    pub fn run_terminal_diagnostic(&mut self, ctx: &eframe::egui::Context) {
+        if self.term.diag_job.is_some() {
+            return;
+        }
+        match self.term_shell(ctx) {
+            Ok(shell) => {
+                self.term.diagnostic = None;
+                self.term.diag_job = Some(super::term_job::start(
+                    TaskKind::Diagnostic,
+                    String::new(),
+                    shell,
+                    ctx.clone(),
+                ));
+            }
+            Err(e) => self.term.diagnostic = Some(format!("! {e}")),
+        }
+    }
+
+    /// Hitung isi workspace sekali (rekursif → harus di thread latar).
+    pub fn ensure_workspace_stats(&mut self, ctx: &eframe::egui::Context) {
+        if self.term.ws.is_some() || self.term.stats_job.is_some() {
+            return;
+        }
+        self.term.stats_job = Some(super::term_job::start_stats(self.workspace(), ctx.clone()));
+    }
+
+    /// Pindahkan hasil pekerjaan terminal yang sudah selesai ke state tampilan.
+    ///
+    /// Dipanggil sekali per frame dari layar Terminal. `Job` sendiri yang
+    /// mengakumulasi output selama berjalan; setelah selesai isinya dipindah ke
+    /// [`TermState::output`] supaya `Job` (dan salurannya) bisa dilepas.
+    pub fn poll_terminal(&mut self) {
+        // Perintah pengguna.
+        let mut finished: Option<(String, JobState, Option<ExitLine>)> = None;
+        if let Some(job) = self.term.job.as_mut() {
+            job.poll();
+            if !job.running() {
+                finished = Some((job.output.clone(), job.state.clone(), job.exit));
+            }
+        }
+        if let Some((output, state, exit)) = finished {
+            self.term.output = output;
+            self.term.exit = exit;
+            self.term.job = None;
+            if let JobState::Failed(e) = state {
+                if !self.term.output.is_empty() {
+                    self.term.output.push_str("\n\n");
+                }
+                self.term.output.push_str(&format!("! {e}"));
+                self.term.exit = None;
+            }
+        }
+
+        // Status mesin.
+        let mut info: Option<(Option<Vec<(String, String)>>, JobState)> = None;
+        if let Some(job) = self.term.info_job.as_mut() {
+            job.poll();
+            if !job.running() {
+                info = Some((job.info.clone(), job.state.clone()));
+            }
+        }
+        if let Some((pairs, state)) = info {
+            self.term.info_job = None;
+            self.term.info = match (pairs, state) {
+                (Some(v), _) => InfoState::Ready(v),
+                (None, JobState::Failed(e)) => InfoState::Missing(e),
+                _ => InfoState::Unknown,
+            };
+        }
+
+        // Diagnostik.
+        let mut diag: Option<(Option<String>, JobState)> = None;
+        if let Some(job) = self.term.diag_job.as_mut() {
+            job.poll();
+            if !job.running() {
+                diag = Some((job.diagnostic.clone(), job.state.clone()));
+            }
+        }
+        if let Some((text, state)) = diag {
+            self.term.diag_job = None;
+            self.term.diagnostic = match (text, state) {
+                (Some(t), _) => Some(t),
+                (None, JobState::Failed(e)) => Some(format!("! {e}")),
+                _ => None,
+            };
+        }
+
+        // Ukuran workspace.
+        if let Some(job) = self.term.stats_job.as_mut() {
+            if let Some(stats) = job.poll() {
+                self.term.ws = Some(stats);
+            }
+        }
+    }
+
+    /// "Bersihkan": buang output & hasil tes, bukan riwayat perintah.
+    pub fn clear_terminal(&mut self) {
+        self.term.output.clear();
+        self.term.exit = None;
+        self.term.diagnostic = None;
+    }
+
 
     // ── Data (arka_core) ────────────────────────────────────────────────────
 

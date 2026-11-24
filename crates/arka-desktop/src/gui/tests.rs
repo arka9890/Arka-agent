@@ -164,6 +164,17 @@ fn find_text(shapes: &[Shape], needle: &str) -> Rect {
     hits[0]
 }
 
+/// Warna teks yang benar-benar dilukis untuk `needle`.
+fn shape_color(shapes: &[Shape], needle: &str) -> Color32 {
+    shapes
+        .iter()
+        .find_map(|s| match s {
+            Shape::Text(t) if t.galley.job.text == needle => Some(t.fallback_color),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("teks {needle:?} tidak ditemukan"))
+}
+
 fn height_of(shapes: &[Shape], needle: &str) -> f32 {
     find_text(shapes, needle).height()
 }
@@ -746,4 +757,282 @@ fn provider_tombol_simpan_mati_tanpa_nama() {
         "klik Simpan tidak melakukan apa pun. Tergambar: {:?}",
         texts(&shapes).iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
     );
+}
+
+// ── M7: Terminal ────────────────────────────────────────────────────────────
+
+fn key(k: egui::Key) -> Event {
+    Event::Key {
+        key: k,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+/// Tab Terminal menampilkan kotak perintah sungguhan dan contoh perintah
+/// **PowerShell** (bukan bash) yang bisa diklik.
+#[test]
+fn terminal_punya_kotak_perintah_dan_contoh_powershell() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    let shapes = h.frame();
+
+    // Judul seksi dilukis huruf besar oleh `widgets::section`.
+    find_text(&shapes, "KOTAK PERINTAH");
+    find_text(&shapes, "CONTOH PERINTAH");
+    find_text(&shapes, "Jalankan");
+    // Hint dari daftar PowerShell; `ls -la` akan langsung gagal di Windows.
+    find_text(&shapes, "git status");
+    assert!(
+        texts(&shapes).iter().any(|(_, t)| t.contains("Get-ChildItem")),
+        "contoh perintah PowerShell tidak tergambar"
+    );
+}
+
+/// ↑ mengisi kotak perintah dari riwayat, ↓ kembali. Ini jalur yang paling
+/// sering dipakai saat mengulang perintah panjang.
+#[test]
+fn panah_atas_dan_bawah_menelusuri_riwayat() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.history.push("git status");
+    h.state_mut().term.history.push("Get-ChildItem");
+    h.state_mut().term.focus_input = true;
+    h.frame(); // permintaan fokus diproses di frame ini
+    h.frame(); // kotak perintah kini benar-benar punya fokus
+
+    h.frame_with(vec![key(egui::Key::ArrowUp)]);
+    assert_eq!(h.state().term.input, "Get-ChildItem", "↑ pertama = terbaru");
+
+    h.frame_with(vec![key(egui::Key::ArrowUp)]);
+    assert_eq!(h.state().term.input, "git status");
+
+    h.frame_with(vec![key(egui::Key::ArrowDown)]);
+    assert_eq!(h.state().term.input, "Get-ChildItem");
+
+    h.frame_with(vec![key(egui::Key::ArrowDown)]);
+    assert!(h.state().term.input.is_empty(), "melewati yang terbaru = kembali ke draft");
+    assert!(!h.state().term.history.is_navigating());
+}
+
+/// Saat perintah berjalan, yang tampil adalah Stop — bukan dua tombol yang
+/// bisa ditekan bersamaan.
+#[test]
+fn tombol_stop_menggantikan_jalankan_saat_berjalan() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.job = Some(crate::gui::term_job::Job::running_stub(
+        crate::gui::term_job::TaskKind::Run,
+        "git clone https://contoh/repo.git",
+    ));
+    let shapes = h.frame();
+
+    find_text(&shapes, "Stop");
+    assert!(
+        !texts(&shapes).iter().any(|(_, t)| t == "Jalankan"),
+        "tombol Jalankan harus hilang selama perintah berjalan"
+    );
+    // Perintah yang sedang berjalan ditampilkan sebagai gema `PS>`.
+    assert!(texts(&shapes)
+        .iter()
+        .any(|(_, t)| t.contains("git clone")));
+    // Output yang sudah keluar tetap terlihat selama berjalan.
+    assert!(texts(&shapes).iter().any(|(_, t)| t == "setengah jalan"));
+}
+
+/// Exit code ditampilkan; yang bukan nol berwarna bahaya, yang nol berwarna
+/// sukses. Warna dibuktikan dari bentuk yang dilukis.
+#[test]
+fn exit_code_ditampilkan_dengan_warna_yang_benar() {
+    use crate::gui::term_job::ExitLine;
+
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.output = "fatal: not a git repository".into();
+    // Tema dipatok eksplisit: `System` mengikuti tema OS, sehingga warna yang
+    // dilukis bergantung pada mesin yang menjalankan test. Percobaan pertama
+    // membandingkan dengan `DARK` tanpa mematok tema dan **gagal di Linux**
+    // (di sana OS dianggap terang). Yang ingin dibuktikan bukan "warnanya
+    // kebetulan sama", melainkan "warna keluar yang dilukis = warna bahaya /
+    // sukses dari tema yang sedang aktif".
+    for mode in [ThemeMode::Dark, ThemeMode::Light] {
+        h.state_mut().theme = mode;
+        let palette = mode.colors(false);
+
+        h.state_mut().term.exit = Some(ExitLine::new(128, false, false));
+        let shapes = h.frame();
+        find_text(&shapes, "exit 128");
+        assert_eq!(
+            shape_color(&shapes, "exit 128"),
+            palette.danger,
+            "exit bukan nol harus berwarna bahaya pada tema {mode:?}"
+        );
+
+        h.state_mut().term.exit = Some(ExitLine::new(0, false, false));
+        let shapes = h.frame();
+        find_text(&shapes, "exit 0");
+        assert_eq!(
+            shape_color(&shapes, "exit 0"),
+            palette.success,
+            "exit nol harus berwarna sukses pada tema {mode:?}"
+        );
+    }
+    h.state_mut().theme = ThemeMode::Dark;
+
+    h.state_mut().term.exit = Some(ExitLine::new(-1, true, false));
+    let shapes = h.frame();
+    find_text(&shapes, "exit -1 · dihentikan pengguna");
+}
+
+/// "Bersihkan output" benar-benar mengosongkan panel — dan tidak menyentuh
+/// riwayat perintah (itu tombol lain).
+#[test]
+fn bersihkan_output_tidak_menghapus_riwayat() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.output = "hasil lama".into();
+    h.state_mut().term.history.push("git status");
+    let shapes = h.frame();
+
+    h.click(find_text(&shapes, "Bersihkan output").center());
+    h.frame();
+
+    assert!(h.state().term.output.is_empty());
+    assert_eq!(h.state().term.history.len(), 1, "riwayat tidak boleh ikut terhapus");
+}
+
+/// Dropdown riwayat: perintah terbaru tampil paling atas dan bisa diklik
+/// untuk dimasukkan ke kotak perintah.
+#[test]
+fn riwayat_bisa_dibuka_dan_dipilih() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.history.push("git status");
+    h.state_mut().term.history.push("npm install");
+    let shapes = h.frame();
+
+    h.click(find_text(&shapes, "Riwayat (2)").center());
+    let shapes = h.frame();
+    let item = find_text(&shapes, "npm install");
+    h.click(item.center());
+    h.frame();
+
+    assert_eq!(h.state().term.input, "npm install");
+    assert!(!h.state().term.show_history, "dropdown menutup setelah dipilih");
+}
+
+/// Statistik workspace tampil setelah dihitung (di thread latar).
+#[test]
+fn isi_workspace_ditampilkan_setelah_dihitung() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.ws = Some(crate::gui::term_job::WsStats { files: 3, bytes: 2048 });
+
+    let shapes = h.frame();
+    assert!(
+        texts(&shapes)
+            .iter()
+            .any(|(_, t)| t.contains("berkas") && t.contains("2,0 KB")),
+        "statistik workspace tidak tergambar: {:?}",
+        texts(&shapes)
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .filter(|t| t.contains("KB") || t.contains("berkas"))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Kartu status menampilkan nilai PowerShell yang sudah diambil, bukan "—".
+/// Datanya diisi langsung supaya test tidak menjalankan proses apa pun.
+#[test]
+fn kartu_status_menampilkan_versi_powershell() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.info = crate::gui::state::InfoState::Ready(vec![
+        ("PSVersion".into(), "7.4.6".to_string()),
+        ("PSEdition".into(), "Core".to_string()),
+        ("Arch".into(), "X64".to_string()),
+    ]);
+
+    let shapes = h.frame();
+    for nilai in ["7.4.6", "Core", "X64"] {
+        find_text(&shapes, nilai);
+    }
+    // Tombol "Buka di Explorer" hanya ada di kartu ini.
+    find_text(&shapes, "Buka di Explorer");
+}
+
+/// Tombol "Tes shell" menampilkan hasil diagnostik apa adanya — termasuk saat
+/// shell belum terdeteksi, yang harus muncul sebagai pesan, bukan diam saja.
+#[test]
+fn tes_shell_menampilkan_hasil_diagnostik() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    // Shell dipatok ke keadaan "tidak ditemukan" supaya tata letak **tidak
+    // bergeser** saat deteksi latar selesai. Percobaan pertama membiarkannya
+    // `Unknown`: deteksi selesai di antara dua frame, kartu status tumbuh
+    // (pesan galat panjang), dan klik pada koordinat lama jadi meleset.
+    h.state_mut().shell =
+        crate::gui::state::ShellProbe::Missing("powershell.exe tidak ada (uji)".to_string());
+
+    let shapes = h.frame();
+    h.click(find_text(&shapes, "Tes shell").center());
+    let shapes = h.frame();
+
+    // Judul bagian digambar oleh `widgets::section` dalam huruf besar.
+    find_text(&shapes, "HASIL TES SHELL");
+    let teks = texts(&shapes);
+    // Di Linux `powershell.exe` tidak ada, jadi hasil tesnya pesan galat —
+    // yang penting pesan itu **sampai ke layar** dengan penanda `!`, bukan
+    // gagal diam-diam seperti percobaan pertama.
+    assert!(
+        teks.iter().any(|(_, t)| t.starts_with("! ")),
+        "pesan galat diagnostik tidak tergambar: {:?}",
+        teks.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
+    );
+
+    // Kartu bisa ditutup dan tidak muncul lagi.
+    h.click(find_text(&shapes, "Tutup").center());
+    let shapes = h.frame();
+    assert!(
+        !texts(&shapes).iter().any(|(_, t)| t == "HASIL TES SHELL"),
+        "kartu diagnostik harus hilang setelah ditutup"
+    );
+}
+
+/// Tombol "Ulangi" mengisi kotak dengan Perintah terakhir yang dijalankan.
+/// Percobaan pertama memakai potongan *output* sebagai label, sementara
+/// klik-nya mengulang perintah dari riwayat — label dan perbuatan berbeda.
+#[test]
+fn tombol_ulangi_mengisi_perintah_terakhir() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Terminal;
+    h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
+    h.state_mut().term.history.push("git status");
+    h.state_mut().term.output = "On branch main".into();
+
+    let shapes = h.frame();
+    let tombol = texts(&shapes)
+        .into_iter()
+        .find(|(_, t)| t.starts_with("Ulangi:"))
+        .unwrap_or_else(|| panic!("tombol Ulangi tidak ada: {:?}", texts(&shapes)));
+    assert!(
+        tombol.1.contains("git status"),
+        "label harus perintah terakhir, bukan output: {}",
+        tombol.1
+    );
+
+    h.click(tombol.0.center());
+    assert_eq!(h.state().term.input, "git status");
 }
