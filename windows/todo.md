@@ -342,6 +342,12 @@ Program bukti: `arka-agent --selftest` (ada di CI, bukan hanya di laptop).
    tema lain, jadi saat Windows beralih terang↔gelap sebagian widget kembali ke visual bawaan egui.
    Sekarang `set_visuals_of` untuk Dark **dan** Light, plus `set_theme` mengikuti pilihan pengguna.
 
+5. **Skala teks sempat disimpan di variabel global (`AtomicU32`).** Test lulus di Linux, tetapi
+   **gagal di CI Windows** (`skala_teks_mengubah_ukuran`): test berjalan paralel dalam satu proses,
+   jadi satu test mengubah skala yang sedang dibaca test lain. Sekarang skala disimpan di data
+   milik `egui::Context` (`theme::set_scale` / `scale_of`), jadi tiap jendela—dan tiap test—punya
+   skalanya sendiri. Ini juga menyiapkan jalan untuk multi-window.
+
 **Yang belum dibuktikan:** rupa akhir di layar Windows (butuh jendela + GPU). Test membuktikan
 tata letak, interaksi, warna yang dilukis, dan ukuran teks — bukan estetika. Tangkapan layar dari
 mesin Windows masih perlu ditambahkan di sini.

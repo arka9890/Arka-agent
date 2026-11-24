@@ -9,7 +9,7 @@ use crate::gui::widgets;
 
 pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(state.tr("Provider", "Providers", "プロバイダー")).size(fs(22.0)).strong());
+        ui.label(RichText::new(state.tr("Provider", "Providers", "プロバイダー")).size(fs(ui, 22.0)).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::clay_pill_button(
                 ui,
@@ -37,7 +37,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 "No providers yet",
                 "プロバイダーがありません",
             ))
-            .size(fs(16.0))
+            .size(fs(ui, 16.0))
             .strong(),
         );
         ui.add_space(theme::SP_XS);
@@ -47,7 +47,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 "Add an OpenAI-compatible or Anthropic endpoint. API keys are stored encrypted by Windows (DPAPI), never plaintext.",
                 "OpenAI 互換または Anthropic のエンドポイントを追加します。API キーは Windows (DPAPI) で暗号化して保存されます。",
             ))
-            .size(fs(13.0))
+            .size(fs(ui, 13.0))
             .color(colors.muted),
         );
     });
@@ -60,7 +60,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
             state.tr("Tes koneksi + daftar model", "Connection test + model list", "接続テストとモデル一覧"),
             state.tr("Simpan kunci lewat DPAPI", "Store keys via DPAPI", "DPAPI でキーを保存"),
         ] {
-            ui.label(RichText::new(format!("\u{2022} {line}")).size(fs(13.0)).color(colors.muted));
+            ui.label(RichText::new(format!("\u{2022} {line}")).size(fs(ui, 13.0)).color(colors.muted));
         }
     });
 }

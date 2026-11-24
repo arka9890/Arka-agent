@@ -15,7 +15,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     state.ensure_shell_probe();
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new(state.tr("Terminal", "Terminal", "ターミナル")).size(fs(22.0)).strong());
+        ui.label(RichText::new(state.tr("Terminal", "Terminal", "ターミナル")).size(fs(ui, 22.0)).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::clay_pill_button(
                 ui,
@@ -37,7 +37,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
         ShellProbe::Ready(d) => {
             ui.horizontal(|ui| {
                 widgets::clay_pill(ui, colors, &state.tr("Siap", "Ready", "準備完了"), colors.success);
-                ui.label(RichText::new(d.describe()).size(fs(15.0)).strong());
+                ui.label(RichText::new(d.describe()).size(fs(ui, 15.0)).strong());
             });
             ui.add_space(theme::SP_SM);
             widgets::kv(ui, colors, &state.tr("Path", "Path", "パス"), &d.program.display().to_string());
@@ -56,13 +56,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                     &state.tr("Tidak ditemukan", "Not found", "見つかりません"),
                     colors.danger,
                 );
-                ui.label(RichText::new(e).size(fs(13.0)).color(colors.danger));
+                ui.label(RichText::new(e).size(fs(ui, 13.0)).color(colors.danger));
             });
         }
         ShellProbe::Unknown => {
             ui.label(
                 RichText::new(state.tr("Memeriksa…", "Checking…", "確認中…"))
-                    .size(fs(13.0))
+                    .size(fs(ui, 13.0))
                     .color(colors.muted),
             );
         }
@@ -73,7 +73,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     widgets::clay_card(ui, colors, Some(colors.surface_raised), |ui| {
         ui.label(
             RichText::new(state.workspace().display().to_string())
-                .size(fs(13.0))
+                .size(fs(ui, 13.0))
                 .monospace()
                 .color(colors.on_surface),
         );
@@ -84,7 +84,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 "Every command runs in this folder.",
                 "すべてのコマンドはこのフォルダーで実行されます。",
             ))
-            .size(fs(12.0))
+            .size(fs(ui, 12.0))
             .color(colors.muted),
         );
     });
@@ -97,7 +97,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 "Interactive command box lands in M7. The shell engine (PowerShell, Job Objects, timeouts) is already done and tested on Windows in M2.",
                 "対話的なコマンド入力は M7 で利用可能になります。シェル本体 (PowerShell、Job Object、タイムアウト) は M2 で完了済みです。",
             ))
-            .size(fs(12.0))
+            .size(fs(ui, 12.0))
             .color(colors.muted),
         );
     });

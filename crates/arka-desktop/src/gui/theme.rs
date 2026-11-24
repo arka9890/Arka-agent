@@ -12,9 +12,8 @@
 
 use eframe::egui::{
     self, Color32, Context, CornerRadius, FontFamily, FontId, Shadow, Stroke, TextStyle, Theme,
-    ThemePreference, Visuals,
+    ThemePreference, Ui, Visuals,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 /// Jarak standar, sama dengan `object Space` di Kotlin.
@@ -83,21 +82,34 @@ pub const LIGHT: ClayColors = ClayColors {
 
 // ── Skala teks ──────────────────────────────────────────────────────────────
 
-/// Skala teks aktif, disimpan sebagai bit `f32`.
+/// Skala teks disimpan di **data milik `Context`**, bukan di variabel global.
 ///
-/// Global disengaja: UI egui berjalan di satu thread, dan skala adalah satu
-/// setelan aplikasi. Meneruskannya sebagai parameter ke setiap widget berarti
-/// mengubah tanda tangan ~40 fungsi hanya untuk satu angka.
-static SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000); // 1.0f32
-
-/// Ukuran teks (pt) yang mengikuti setelan "Ukuran teks".
-pub fn fs(base: f32) -> f32 {
-    base * f32::from_bits(SCALE.load(Ordering::Relaxed))
+/// Percobaan pertama memakai `AtomicU32` global dan test-nya gagal di CI
+/// Windows: test berjalan paralel dalam satu proses, jadi satu test bisa
+/// mengubah skala yang sedang dibaca test lain. Data per-`Context` membuat tiap
+/// jendela (dan tiap test) punya skalanya sendiri.
+fn scale_id() -> egui::Id {
+    egui::Id::new("arka.text_scale")
 }
 
-/// Skala yang sedang aktif (untuk ukuran non-teks seperti tinggi tombol).
-pub fn scale() -> f32 {
-    f32::from_bits(SCALE.load(Ordering::Relaxed))
+pub fn set_scale(ctx: &Context, scale: f32) {
+    ctx.data_mut(|d| d.insert_temp(scale_id(), scale));
+}
+
+/// Skala aktif; 1.0 bila belum pernah dipasang (mis. saat test memanggil
+/// widget tanpa `theme::apply`).
+pub fn scale_of(ctx: &Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(scale_id())).unwrap_or(1.0)
+}
+
+/// Ukuran teks (pt) yang mengikuti setelan "Ukuran teks".
+pub fn fs_of(ctx: &Context, base: f32) -> f32 {
+    base * scale_of(ctx)
+}
+
+/// Sama dengan [`fs_of`], untuk dipakai di dalam layar/widget.
+pub fn fs(ui: &Ui, base: f32) -> f32 {
+    fs_of(ui.ctx(), base)
 }
 
 /// Pilihan tema di Setelan. `System` = ikut tema Windows (padanan
@@ -275,7 +287,7 @@ fn visuals(c: &ClayColors, dark: bool) -> Visuals {
 /// Windows bermode terang — sebagian widget (kotak teks, scrollbar, menu)
 /// kembali ke visual bawaan egui.
 pub fn apply(ctx: &Context, scale: f32, mode: ThemeMode) {
-    SCALE.store(scale.to_bits(), Ordering::Relaxed);
+    set_scale(ctx, scale);
     ctx.set_theme(mode.preference());
 
     ctx.set_visuals_of(Theme::Dark, visuals(&DARK, true));
@@ -284,11 +296,11 @@ pub fn apply(ctx: &Context, scale: f32, mode: ThemeMode) {
     let s = scale;
     ctx.all_styles_mut(|style| {
         style.text_styles = [
-            (TextStyle::Heading, FontId::new(fs(26.0), FontFamily::Proportional)),
-            (TextStyle::Body, FontId::new(fs(15.0), FontFamily::Proportional)),
-            (TextStyle::Button, FontId::new(fs(15.0), FontFamily::Proportional)),
-            (TextStyle::Small, FontId::new(fs(12.0), FontFamily::Proportional)),
-            (TextStyle::Monospace, FontId::new(fs(14.0), FontFamily::Monospace)),
+            (TextStyle::Heading, FontId::new(26.0 * s, FontFamily::Proportional)),
+            (TextStyle::Body, FontId::new(15.0 * s, FontFamily::Proportional)),
+            (TextStyle::Button, FontId::new(15.0 * s, FontFamily::Proportional)),
+            (TextStyle::Small, FontId::new(12.0 * s, FontFamily::Proportional)),
+            (TextStyle::Monospace, FontId::new(14.0 * s, FontFamily::Monospace)),
         ]
         .into();
         style.spacing.item_spacing = egui::vec2(SP_SM * s, SP_SM * s);
@@ -356,18 +368,24 @@ mod tests {
 
     #[test]
     fn skala_teks_mengubah_ukuran() {
-        // Nilai awal 1.0.
-        assert!((fs(14.0) - 14.0).abs() < 0.001);
+        // Context sendiri: skala tidak lagi global, jadi test ini tidak bisa
+        // "dicemari" test lain yang berjalan paralel.
+        let ctx = Context::default();
 
-        SCALE.store(FontScale::Large.factor().to_bits(), Ordering::Relaxed);
-        assert!((fs(14.0) - 16.1).abs() < 0.001);
-        assert!((scale() - 1.15).abs() < 0.001);
+        // Sebelum dipasang, widget tetap bisa dipakai: skala 1.0.
+        assert!((scale_of(&ctx) - 1.0).abs() < 0.001);
+        assert!((fs_of(&ctx, 14.0) - 14.0).abs() < 0.001);
 
-        SCALE.store(FontScale::Small.factor().to_bits(), Ordering::Relaxed);
-        assert!((fs(20.0) - 17.0).abs() < 0.001);
+        set_scale(&ctx, FontScale::Large.factor());
+        assert!((fs_of(&ctx, 14.0) - 16.1).abs() < 0.001);
+        assert!((scale_of(&ctx) - 1.15).abs() < 0.001);
 
-        // Kembalikan supaya test lain tidak terpengaruh (test berbagi proses).
-        SCALE.store(1.0f32.to_bits(), Ordering::Relaxed);
+        set_scale(&ctx, FontScale::Small.factor());
+        assert!((fs_of(&ctx, 20.0) - 17.0).abs() < 0.001);
+
+        // Context lain tidak terpengaruh.
+        let other = Context::default();
+        assert!((fs_of(&other, 20.0) - 20.0).abs() < 0.001);
     }
 
     #[test]

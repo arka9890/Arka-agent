@@ -6,7 +6,7 @@ use eframe::egui::{self, RichText, Ui};
 
 use crate::gui::fs_model::human_size;
 use crate::gui::state::AppState;
-use crate::gui::theme::{self, fs, scale, ClayColors};
+use crate::gui::theme::{self, fs, scale_of, ClayColors};
 use crate::gui::widgets;
 
 pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
@@ -16,7 +16,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     state.files.ensure(&ws);
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new(state.tr("File", "Files", "ファイル")).size(fs(22.0)).strong());
+        ui.label(RichText::new(state.tr("File", "Files", "ファイル")).size(fs(ui, 22.0)).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::clay_pill_button(
                 ui,
@@ -34,7 +34,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     ui.add_space(theme::SP_XS);
     ui.label(
         RichText::new(ws.display().to_string())
-            .size(fs(12.0))
+            .size(fs(ui, 12.0))
             .color(colors.muted)
             .monospace(),
     );
@@ -51,7 +51,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                     "Workspace not created yet",
                     "ワークスペースが未作成です",
                 ))
-                .size(fs(16.0))
+                .size(fs(ui, 16.0))
                 .strong(),
             );
             ui.add_space(theme::SP_XS);
@@ -61,7 +61,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                     "This folder is created when you run your first command.",
                     "最初のコマンド実行時に作成されます。",
                 ))
-                .size(fs(13.0))
+                .size(fs(ui, 13.0))
                 .color(colors.muted),
             );
         });
@@ -70,7 +70,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 
     if let Some(e) = state.files.error.clone() {
         widgets::clay_card(ui, colors, Some(colors.surface_raised), |ui| {
-            ui.label(RichText::new(e).size(fs(13.0)).color(colors.danger));
+            ui.label(RichText::new(e).size(fs(ui, 13.0)).color(colors.danger));
         });
         return;
     }
@@ -79,7 +79,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
         widgets::clay_card(ui, colors, None, |ui| {
             ui.label(
                 RichText::new(state.tr("Folder kosong", "Folder is empty", "フォルダーは空です"))
-                    .size(fs(14.0))
+                    .size(fs(ui, 14.0))
                     .color(colors.muted),
             );
         });
@@ -99,15 +99,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 } else {
                     human_size(e.size)
                 };
-                let margin = (10.0 * scale()) as i8;
+                let margin = (10.0 * scale_of(ui.ctx())) as i8;
 
                 widgets::clay_panel(ui, colors, colors.surface, 16, margin, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(glyph).size(fs(16.0)));
-                        ui.label(RichText::new(&e.name).size(fs(14.0)).color(colors.on_surface));
+                        ui.label(RichText::new(glyph).size(fs(ui, 16.0)));
+                        ui.label(RichText::new(&e.name).size(fs(ui, 14.0)).color(colors.on_surface));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if !meta.is_empty() {
-                                ui.label(RichText::new(meta).size(fs(12.0)).color(colors.muted).monospace());
+                                ui.label(RichText::new(meta).size(fs(ui, 12.0)).color(colors.muted).monospace());
                             }
                         });
                     });

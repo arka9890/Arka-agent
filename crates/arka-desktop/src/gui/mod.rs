@@ -145,7 +145,7 @@ impl ArkaGui {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Arka Agent").size(theme::fs(18.0)).strong());
+                    ui.label(RichText::new("Arka Agent").size(theme::fs(ui, 18.0)).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("\u{2039}").clicked() {
                             open = false;
@@ -155,19 +155,19 @@ impl ArkaGui {
 
                 ui.add_space(theme::SP_MD);
                 let label = self.state.tr("Sesi", "Sessions", "セッション");
-                ui.label(RichText::new(label).size(theme::fs(11.0)).color(colors.muted).strong());
+                ui.label(RichText::new(label).size(theme::fs(ui, 11.0)).color(colors.muted).strong());
 
                 ui.add_space(theme::SP_XS);
                 if ui
                     .add_sized(
-                        [ui.available_width(), 34.0 * theme::scale()],
+                        [ui.available_width(), 34.0 * theme::scale_of(ui.ctx())],
                         egui::Button::new(
                             RichText::new(self.state.tr(
                                 "+ Sesi baru",
                                 "+ New session",
                                 "+ 新しいセッション",
                             ))
-                            .size(theme::fs(14.0)),
+                            .size(theme::fs(ui, 14.0)),
                         ),
                     )
                     .clicked()
@@ -191,7 +191,7 @@ impl ArkaGui {
                                     "No sessions yet.",
                                     "セッションはまだありません。",
                                 ))
-                                .size(theme::fs(13.0))
+                                .size(theme::fs(ui, 13.0))
                                 .color(colors.muted),
                             );
                         }
@@ -200,10 +200,10 @@ impl ArkaGui {
                         for row in rows {
                             let active = self.state.active_session == Some(row.id);
                             let resp = ui.add_sized(
-                                [ui.available_width(), 44.0 * theme::scale()],
+                                [ui.available_width(), 44.0 * theme::scale_of(ui.ctx())],
                                 egui::Button::new(
                                     RichText::new(&row.title)
-                                        .size(theme::fs(14.0))
+                                        .size(theme::fs(ui, 14.0))
                                         .color(if active { colors.accent } else { colors.on_surface }),
                                 )
                                 .fill(if active { colors.accent_soft } else { colors.surface_raised }),
@@ -222,12 +222,12 @@ impl ArkaGui {
                     let ws = self.state.workspace();
                     ui.label(
                         RichText::new(ws.display().to_string())
-                            .size(theme::fs(11.0))
+                            .size(theme::fs(ui, 11.0))
                             .color(colors.muted),
                     );
                     ui.label(
                         RichText::new(format!("Windows \u{00B7} {}", self.state.lang.native()))
-                            .size(theme::fs(11.0))
+                            .size(theme::fs(ui, 11.0))
                             .color(colors.muted),
                     );
                 });
@@ -259,7 +259,7 @@ impl ArkaGui {
                         let active = self.state.tab == tab;
                         let text = format!("{} {}", tab.glyph(), tab.label(self.state.lang));
                         let btn = egui::Button::new(
-                            RichText::new(text).size(theme::fs(14.0)).color(if active {
+                            RichText::new(text).size(theme::fs(ui, 14.0)).color(if active {
                                 colors.accent
                             } else {
                                 colors.muted
@@ -280,7 +280,7 @@ impl ArkaGui {
                         let icon = if dark { "\u{2600}" } else { "\u{1F319}" };
                         if ui
                             .add(
-                                egui::Button::new(RichText::new(icon).size(theme::fs(15.0)))
+                                egui::Button::new(RichText::new(icon).size(theme::fs(ui, 15.0)))
                                     .fill(colors.surface),
                             )
                             .on_hover_text(self.state.tr("Ganti tema", "Toggle theme", "テーマ切替"))
@@ -316,7 +316,7 @@ impl ArkaGui {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(text) = self.state.notice.clone() {
-                        ui.label(RichText::new(text).size(theme::fs(13.0)));
+                        ui.label(RichText::new(text).size(theme::fs(ui, 13.0)));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("\u{00D7}").clicked() {
@@ -340,13 +340,13 @@ impl ArkaGui {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
-                        ui.label(RichText::new("Arka Agent").size(theme::fs(18.0)).strong());
+                        ui.label(RichText::new("Arka Agent").size(theme::fs(ui, 18.0)).strong());
                         ui.label(
                             RichText::new(format!(
                                 "v{} \u{00B7} Windows \u{00B7} Rust",
                                 env!("CARGO_PKG_VERSION")
                             ))
-                            .size(theme::fs(13.0))
+                            .size(theme::fs(ui, 13.0))
                             .color(colors.muted),
                         );
                         ui.add_space(theme::SP_SM);
@@ -374,7 +374,7 @@ impl ArkaGui {
                                 "The session and all its messages will be deleted.",
                                 "セッションと全メッセージが削除されます。",
                             ))
-                            .size(theme::fs(14.0)),
+                            .size(theme::fs(ui, 14.0)),
                         );
                         ui.add_space(theme::SP_SM);
                         ui.horizontal(|ui| {

@@ -10,7 +10,7 @@ use crate::gui::widgets;
 pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     // Header layar.
     ui.horizontal(|ui| {
-        ui.label(RichText::new(state.tr("Chat", "Chat", "チャット")).size(fs(22.0)).strong());
+        ui.label(RichText::new(state.tr("Chat", "Chat", "チャット")).size(fs(ui, 22.0)).strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::clay_pill_button(
                 ui,
@@ -63,11 +63,11 @@ fn empty_state(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     ui.add_space(theme::SP_XL);
     widgets::clay_card(ui, colors, None, |ui| {
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("\u{1F44B}").size(fs(40.0)));
+            ui.label(RichText::new("\u{1F44B}").size(fs(ui, 40.0)));
             ui.add_space(theme::SP_SM);
             ui.label(
                 RichText::new(state.tr("Halo, aku Arka", "Hi, I'm Arka", "こんにちは、Arka です"))
-                    .size(fs(20.0))
+                    .size(fs(ui, 20.0))
                     .strong(),
             );
             ui.add_space(theme::SP_XS);
@@ -77,7 +77,7 @@ fn empty_state(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                     "I can run PowerShell commands on this PC.",
                     "この PC で PowerShell コマンドを実行できます。",
                 ))
-                .size(fs(14.0))
+                .size(fs(ui, 14.0))
                 .color(colors.muted),
             );
             ui.add_space(theme::SP_LG);

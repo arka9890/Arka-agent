@@ -12,7 +12,7 @@ use eframe::egui::{
     Shadow, Stroke, Ui, Vec2,
 };
 
-use super::theme::{fs, scale, ClayColors, SP_SM, SP_XS};
+use super::theme::{fs, scale_of, ClayColors, SP_SM, SP_XS};
 
 /// Bayangan clay: gelap di bawah (jatuh) + terang di atas (pantulan).
 fn clay_shadow(c: &ClayColors, elevation: u8) -> Shadow {
@@ -40,7 +40,7 @@ pub fn clay_card<R>(
         .fill(fill.unwrap_or(colors.surface))
         .corner_radius(CornerRadius::same(22))
         .stroke(hairline(colors))
-        .inner_margin(Margin::same((16.0 * scale()) as i8))
+        .inner_margin(Margin::same((16.0 * scale_of(ui.ctx())) as i8))
         .shadow(clay_shadow(colors, 10));
 
     frame.show(ui, add_contents).inner
@@ -68,13 +68,13 @@ pub fn clay_panel<R>(
 /// Galley satu baris untuk widget buatan sendiri (pill & tombol).
 fn galley(ui: &Ui, text: &str, size: f32, color: Color32) -> std::sync::Arc<egui::Galley> {
     ui.painter()
-        .layout_no_wrap(text.to_owned(), FontId::new(fs(size), FontFamily::Proportional), color)
+        .layout_no_wrap(text.to_owned(), FontId::new(fs(ui, size), FontFamily::Proportional), color)
 }
 
 /// `ClayPill` — label/status kecil berwarna lembut. Tidak bisa diklik.
 pub fn clay_pill(ui: &mut Ui, _colors: &ClayColors, text: &str, color: Color32) -> Response {
     let g = galley(ui, text, 12.0, color);
-    let size = g.size() + Vec2::new(20.0 * scale(), 8.0 * scale());
+    let size = g.size() + Vec2::new(20.0 * scale_of(ui.ctx()), 8.0 * scale_of(ui.ctx()));
 
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -94,7 +94,7 @@ pub fn clay_pill(ui: &mut Ui, _colors: &ClayColors, text: &str, color: Color32) 
 /// `ClayPill` yang bisa diklik (mis. "Sesi baru", "Lepas lampiran").
 pub fn clay_pill_button(ui: &mut Ui, _colors: &ClayColors, text: &str, color: Color32) -> Response {
     let g = galley(ui, text, 12.0, color);
-    let size = g.size() + Vec2::new(22.0 * scale(), 9.0 * scale());
+    let size = g.size() + Vec2::new(22.0 * scale_of(ui.ctx()), 9.0 * scale_of(ui.ctx()));
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
@@ -124,7 +124,7 @@ pub fn clay_pill_button(ui: &mut Ui, _colors: &ClayColors, text: &str, color: Co
 /// **tidak** bereaksi, sama seperti `enabled = false` di Compose.
 pub fn clay_button(ui: &mut Ui, colors: &ClayColors, text: &str, enabled: bool) -> Response {
     let g = galley(ui, text, 15.0, Color32::WHITE);
-    let size = Vec2::new(g.size().x + 32.0 * scale(), 36.0 * scale());
+    let size = Vec2::new(g.size().x + 32.0 * scale_of(ui.ctx()), 36.0 * scale_of(ui.ctx()));
     let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
     let (rect, response) = ui.allocate_exact_size(size, sense);
 
@@ -156,10 +156,10 @@ pub fn clay_button(ui: &mut Ui, colors: &ClayColors, text: &str, enabled: bool) 
 
 /// Judul bagian kecil di atas kartu (huruf besar, warna muted).
 pub fn section(ui: &mut Ui, colors: &ClayColors, title: &str) {
-    ui.add_space(SP_SM * scale());
+    ui.add_space(SP_SM * scale_of(ui.ctx()));
     ui.label(
         RichText::new(title.to_uppercase())
-            .size(fs(11.0))
+            .size(fs(ui, 11.0))
             .color(colors.muted)
             .strong(),
     );
@@ -169,9 +169,9 @@ pub fn section(ui: &mut Ui, colors: &ClayColors, title: &str) {
 /// Baris "label : nilai" rata kanan-kiri, dipakai kartu status.
 pub fn kv(ui: &mut Ui, colors: &ClayColors, key: &str, value: &str) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(key).size(fs(14.0)).color(colors.muted));
+        ui.label(RichText::new(key).size(fs(ui, 14.0)).color(colors.muted));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new(value).size(fs(14.0)).color(colors.on_surface));
+            ui.label(RichText::new(value).size(fs(ui, 14.0)).color(colors.on_surface));
         });
     });
 }
