@@ -19,7 +19,8 @@ use eframe::egui::{
 use arka_core::paths::AppPaths;
 
 use crate::gui::i18n::Lang;
-use crate::gui::state::{AppState, Modal, Persisted, Tab};
+use crate::gui::engine::Msg;
+use crate::gui::state::{AppState, ApprovalCard, Modal, MsgView, Persisted, SessionRow, Tab};
 use crate::gui::theme::{self, FontScale, ThemeMode};
 use crate::gui::ArkaGui;
 
@@ -378,4 +379,189 @@ fn setelan_bertahan_setelah_dibuka_ulang() {
     assert_eq!(b.lang, Lang::Ja);
     assert_eq!(b.tab, Tab::Terminal);
     assert!(!b.sidebar_open);
+}
+
+// ── Kriteria "selesai bila" M4 ──────────────────────────────────────────────
+
+fn pesan(id: &str, role: &str, content: &str) -> MsgView {
+    MsgView {
+        id: id.into(),
+        role: role.into(),
+        content: content.into(),
+        created_at: 0,
+        attachments: Vec::new(),
+    }
+}
+
+fn baris(id: &str, title: &str) -> SessionRow {
+    SessionRow {
+        id: id.into(),
+        title: title.into(),
+        subtitle: "0 pesan".into(),
+    }
+}
+
+/// "Bubble user/AI warna beda" — diperiksa dari warna yang benar-benar
+/// dilukis, bukan dari nama variabel.
+#[test]
+fn chat_menampilkan_bubble_user_dan_ai_dengan_warna_beda() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().theme = ThemeMode::Dark;
+    h.state_mut().chat.messages = vec![
+        pesan("1", "user", "Halo arka"),
+        pesan("2", "assistant", "Hai juga"),
+    ];
+
+    let shapes = h.frame();
+    find_text(&shapes, "Halo arka");
+    find_text(&shapes, "Hai juga");
+
+    assert!(
+        fill_count(&shapes, theme::DARK.user_bubble) >= 1,
+        "bubble user tidak memakai warna user_bubble"
+    );
+    assert!(
+        fill_count(&shapes, theme::DARK.ai_bubble) >= 1,
+        "bubble AI tidak memakai warna ai_bubble"
+    );
+}
+
+/// Blok kode harus tampil terpisah dari teks, lengkap dengan label bahasanya.
+#[test]
+fn chat_merender_blok_kode_terpisah() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().chat.messages = vec![pesan(
+        "1",
+        "assistant",
+        "Contoh:\n```rust\nfn main() {}\n```",
+    )];
+
+    let shapes = h.frame();
+    find_text(&shapes, "rust");
+    find_text(&shapes, "fn main() {}");
+}
+
+/// Indikator "sedang berpikir" muncul sebelum token pertama tiba.
+#[test]
+fn indikator_mengetik_muncul_sebelum_token() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().active_session = Some("s1".into());
+    h.state().chat.engine.mark_running("s1");
+
+    let shapes = h.frame();
+    find_text(&shapes, "AI sedang berpikir");
+}
+
+/// Tombol kirim tanpa sesi memberi tahu, bukan diam saja.
+#[test]
+fn kirim_tanpa_sesi_memberi_notice() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().draft = "halo".into();
+
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Kirim");
+    h.click(rect.center());
+    h.frame();
+
+    let notice = h.state().notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("Buat sesi"),
+        "notice tak sesuai: {notice:?}"
+    );
+    // Draf tidak boleh hilang saat pengiriman gagal.
+    assert_eq!(h.state().draft, "halo");
+}
+
+/// Drawer sesi: klik baris membuka sesi itu.
+#[test]
+fn sidebar_membuka_sesi_yang_diklik() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().sessions = vec![baris("a", "Sesi A"), baris("b", "Sesi B")];
+
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Sesi A");
+    h.click(rect.center());
+    h.frame();
+
+    assert_eq!(h.state().active_session.as_deref(), Some("a"));
+}
+
+/// Kartu persetujuan menggantung di atas layar dan tombolnya menjawab.
+#[test]
+fn kartu_persetujuan_bisa_disetujui() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().chat.approval = Some(ApprovalCard {
+        id: "apv-uji".into(),
+        action: "Jalankan perintah".into(),
+        target: "ls -la".into(),
+        detail: "menampilkan isi folder".into(),
+    });
+
+    // Satu frame untuk mengukur jendela (sama seperti dialog Tentang).
+    h.frame();
+    let shapes = h.frame();
+    find_text(&shapes, "Jalankan perintah");
+    let rect = find_text(&shapes, "Setujui");
+    h.click(rect.center());
+    h.frame();
+
+    assert!(h.state().chat.approval.is_none(), "kartu tidak tertutup");
+}
+
+/// Kejadian dari thread agent benar-benar masuk ke state tampilan.
+#[test]
+fn kejadian_agent_mengalir_ke_state_chat() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().active_session = Some("s1".into());
+    let ctx = h.ctx.clone();
+
+    h.gui.handle(
+        Msg::Delta {
+            session: "s1".into(),
+            text: "ha".into(),
+        },
+        &ctx,
+    );
+    h.gui.handle(
+        Msg::Delta {
+            session: "s1".into(),
+            text: "i".into(),
+        },
+        &ctx,
+    );
+    assert_eq!(h.state().chat.streaming, "hai");
+
+    // Token dari sesi lain tidak boleh bocor ke sesi yang sedang dibuka.
+    h.gui.handle(
+        Msg::Delta {
+            session: "s2".into(),
+            text: "BOCO R".into(),
+        },
+        &ctx,
+    );
+    assert_eq!(h.state().chat.streaming, "hai");
+
+    h.gui.handle(
+        Msg::Tool {
+            session: "s1".into(),
+            label: "[Sesi A] PS>".into(),
+            display: "Get-ChildItem".into(),
+        },
+        &ctx,
+    );
+    assert!(h.state().chat.terminal_log.contains("Get-ChildItem"));
+
+    h.gui.handle(
+        Msg::Approval {
+            id: "apv-1".into(),
+            action: "Jalankan".into(),
+            target: "ls".into(),
+            detail: String::new(),
+        },
+        &ctx,
+    );
+    assert!(h.state().chat.approval.is_some());
+
+    h.gui.handle(Msg::Finished { session: "s1".into() }, &ctx);
+    assert!(h.state().chat.streaming.is_empty());
 }

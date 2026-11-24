@@ -90,6 +90,49 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     });
 
     ui.add_space(theme::SP_MD);
+    ui.horizontal(|ui| {
+        widgets::section(ui, colors, &state.tr("Log perintah", "Command log", "コマンドログ"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::clay_pill_button(
+                ui,
+                colors,
+                &state.tr("Bersihkan", "Clear", "クリア"),
+                colors.accent,
+            )
+            .clicked()
+            {
+                state.chat.terminal_log.clear();
+            }
+        });
+    });
+    widgets::clay_card(ui, colors, Some(colors.background), |ui| {
+        if state.chat.terminal_log.trim().is_empty() {
+            ui.label(
+                RichText::new(state.tr(
+                    "Perintah yang dijalankan agent akan muncul di sini.",
+                    "Commands the agent runs will show up here.",
+                    "エージェントが実行したコマンドがここに表示されます。",
+                ))
+                .size(fs(ui, 12.5))
+                .color(colors.muted),
+            );
+            return;
+        }
+        egui::ScrollArea::vertical()
+            .max_height(240.0 * theme::scale_of(ui.ctx()))
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(&state.chat.terminal_log)
+                        .size(fs(ui, 12.0))
+                        .monospace()
+                        .color(colors.on_surface),
+                );
+            });
+    });
+
+    ui.add_space(theme::SP_MD);
     widgets::clay_card(ui, colors, Some(colors.surface_raised), |ui| {
         ui.label(
             RichText::new(state.tr(

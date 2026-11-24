@@ -111,6 +111,14 @@ impl FilesCache {
         }
     }
 
+    /// Tandai isi folder sudah usang (mis. agent baru menulis berkas).
+    ///
+    /// Tidak membaca disk di sini: pemanggilnya jalur `update()` UI, dan
+    /// membaca folder di tengah frame adalah cara membuat UI tersendat.
+    pub fn invalidate(&mut self) {
+        self.loaded = false;
+    }
+
     /// Muat ulang hanya bila folder kerja berubah atau belum pernah dibaca.
     pub fn ensure(&mut self, dir: &Path) -> bool {
         if self.loaded && !self.is_stale(dir) {

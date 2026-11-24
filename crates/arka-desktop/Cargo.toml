@@ -38,4 +38,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
     # CreateJobObjectW memakai SECURITY_ATTRIBUTES.
     "Win32_Security",
+    # GetLocalTime/GetSystemTime: selisih zona waktu untuk cap waktu chat.
+    # (Keduanya ada di SystemInformation, bukan System\Time.)
+    "Win32_System_SystemInformation",
 ] }

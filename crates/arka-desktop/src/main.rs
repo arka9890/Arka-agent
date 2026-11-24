@@ -80,6 +80,19 @@ fn bootstrap() -> Result<(), String> {
     Ok(())
 }
 
+/// Siapkan database: folder data, skema, dan provider bawaan.
+///
+/// Gagal di sini **tidak** menggagalkan start: jendela tetap terbuka dan
+/// pesan errornya muncul di tab Chat (`AppState::db_error`). Yang tidak boleh
+/// terjadi adalah aplikasi menutup diri tanpa penjelasan.
+fn init_db(paths: &paths::AppPaths) -> Result<(), String> {
+    std::fs::create_dir_all(&paths.data_dir).map_err(|e| e.to_string())?;
+    let db = paths.data_dir.join("arka.db");
+    arka_core::db::init(&db.to_string_lossy())?;
+    arka_core::provider::seed_if_empty()?;
+    Ok(())
+}
+
 /// Buka jendela UI.
 ///
 /// Shell didaftarkan secara *best effort*: kalau PowerShell tidak ada (mis.
@@ -106,6 +119,11 @@ fn run_ui() -> i32 {
         }
     };
 
+    if let Err(e) = init_db(&app_paths) {
+        // Tidak fatal: UI tetap terbuka dan menampilkan pesan ini.
+        eprintln!("database tidak siap: {e}");
+    }
+
     let opts = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -120,7 +138,13 @@ fn run_ui() -> i32 {
     match eframe::run_native(
         "Arka Agent",
         opts,
-        Box::new(move |cc| Ok(Box::new(gui::ArkaGui::new(cc, app_paths)))),
+        Box::new(move |cc| {
+            let mut gui = gui::ArkaGui::new(cc, app_paths);
+            // Sambungkan ke database & buka sesi terakhir. Dipanggil di sini,
+            // bukan di `draw`, supaya test UI tetap jalan tanpa database.
+            gui.bootstrap_data();
+            Ok(Box::new(gui))
+        }),
     ) {
         Ok(()) => 0,
         Err(e) => {

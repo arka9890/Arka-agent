@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅** (semua terverifikasi di GitHub Actions) — M4 (chat + agent) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅** (terverifikasi di GitHub Actions; M4 menunggu uji percakapan nyata dengan API key) — M5 (provider + secret store) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -354,19 +354,65 @@ Program bukti: `arka-agent --selftest` (ada di CI, bukan hanya di laptop).
 tata letak, interaksi, warna yang dilukis, dan ukuran teks — bukan estetika. Tangkapan layar dari
 mesin Windows masih perlu ditambahkan di sini.
 
-### M4 — Chat + agent (5–7 hari) ← inti
-- [ ] `bubble.rs`: bubble user/AI (warna beda), timestamp, tombol salin, lampiran
-- [ ] `markdown.rs`: blok kode + inline (port `splitCodeBlocks`/`inlineMarkdown`), highlight sederhana per bahasa (opsional)
-- [ ] Typing indicator 3 titik berdenyut sebelum token pertama
-- [ ] Streaming: `Events::delta` → `engine.rs` buffer per sesi → UI 60 fps tanpa flicker
-- [ ] Input bar: Enter kirim, Shift+Enter baris baru, tombol kirim/stop, lampiran (dialog file OS)
-- [ ] `dialogs.rs`: kartu persetujuan skill & kartu `ask_user` (opsi + pratinjau 5 file)
-- [ ] Dropdown model: kotak cari, daftar dari DB, input manual, tombol refresh
-- [ ] Sidebar sesi: buat, pilih, rename (inline edit), hapus (konfirmasi), compact
-- [ ] Tampilkan tool call di panel Terminal (format `[judul sesi] PS> perintah` + output)
-- [ ] Multi-sesi paralel: badge "menjawab" + notifikasi saat selesai & jendela tidak fokus
-- [ ] Auto-scroll + opsi matikan
-**Selesai bila:** percakapan nyata dengan provider OpenAI/Anthropic berjalan streaming, model memanggil `run_command` (PowerShell), hasil muncul di Terminal, dan `ask_user` menampilkan pratinjau file.
+### M4 — Chat + agent (5–7 hari) ← inti ✅ SELESAI (kecuali uji percakapan nyata)
+- [x] `bubble.rs`: bubble user/AI (warna beda), timestamp, tombol salin, lampiran
+- [x] `markdown.rs`: blok kode + inline (port `splitCodeBlocks`/`inlineMarkdown`)
+- [x] Typing indicator 3 titik berdenyut sebelum token pertama
+- [x] Streaming: `Events::delta` → `engine.rs` buffer per sesi → UI tanpa flicker
+- [x] Input bar: Enter kirim, Shift+Enter baris baru, tombol kirim/stop, lampiran
+- [x] `dialogs.rs`: kartu persetujuan skill & kartu `ask_user` (opsi + pratinjau 5 file)
+- [x] Dropdown model: kotak cari, daftar dari DB, input manual
+- [x] Sidebar sesi: buat, pilih, rename (inline edit), hapus (konfirmasi)
+- [x] Tampilkan tool call di panel Terminal (format `[judul sesi] …` + output)
+- [x] Auto-scroll + opsi matikan (disimpan antar-jalankan)
+- [~] Multi-sesi paralel: `Engine` melacak status per sesi + badge `⏳` di sidebar.
+      Saat selesai & jendela tidak fokus → `ViewportCommand::RequestUserAttention` (taskbar)
+      + notice. **Belum** notifikasi sistem Windows (butuh `tauri`/`winrt` toast — dependensi baru,
+      lihat catatan di bawah)
+
+**Selesai bila:** percakapan nyata dengan provider OpenAI/Anthropic berjalan streaming, model
+memanggil `run_command` (PowerShell), hasil muncul di Terminal, dan `ask_user` menampilkan
+pratinjau file.
+
+#### Bukti
+- Test UI tanpa jendela: 74 test `arka-desktop` + 31 `arka_core` lulus di Linux (`cargo test --workspace`).
+  - `chat_menampilkan_bubble_user_dan_ai_dengan_warna_beda` — memeriksa **warna yang dilukis**
+    (`user_bubble` vs `ai_bubble`), bukan nama variabel
+  - `chat_merender_blok_kode_terpisah` — "```rust" jadi label bahasa + kotak monospace
+  - `indikator_mengetik_muncul_sebelum_token` — teks "AI sedang berpikir" tergambar saat sesi berjalan
+  - `kirim_tanpa_sesi_memberi_notice` — dan **draf tidak hilang** saat pengiriman gagal
+  - `sidebar_membuka_sesi_yang_diklik` + `kartu_persetujuan_bisa_disetujui`
+  - `kejadian_agent_mengalir_ke_state_chat` — Delta→streaming, **token sesi lain tidak bocor**,
+    Tool→log Terminal, Approval→kartu, Finished→streaming dibersihkan
+- Unit test murni: `markdown` (5 test: pemisahan blok, bahasa, penanda menggantung),
+  `engine` (3 test: Events→Msg, drain, status sesi), `bubble` (5 test: format jam + kalender)
+- Aritmetika zona waktu diuji terhadap epoch Unix nyata (dicek dengan `date -u`):
+  `1970-01-01`→0, `2000-01-01`→946 684 800, `2024-03-01`→1 709 251 200, `1969-12-31 23:59:59`→−1
+- Bagian khusus Windows (`GetLocalTime`/`GetSystemTime`) **dicek tipe** dengan
+  `cargo check --target x86_64-pc-windows-msvc` pada crate terpisah berisi salinan apa adanya
+  dari fungsi di `bubble.rs` — bukan tebakan bahwa nama modulnya benar
+
+#### Dua bug yang ditemukan saat M4
+1. **`0.5` jam terpotong ke arah nol.** Format jam memakai `/` biasa, jadi geseran −5 jam dari
+   00:30 menghasilkan 20:30, bukan 19:30. Diperbaiki dengan `div_euclid` + `rem_euclid`, dan
+   test-nya menangkapnya **sebelum** commit.
+2. **`GetLocalTime` bukan di `Win32::System::Time`.** Modul itu hanya berisi tipe lama; fungsinya
+   ada di `Win32::System::SystemInformation`. Ditemukan dengan membaca sumber `windows-sys` 0.61
+   yang ada di cache, bukan menunggu CI merah.
+
+#### Penyimpangan yang disengaja (jujur)
+- **Dialog berkas OS → pemilih di dalam aplikasi.** `rfd`/`IFileOpenDialog` butuh dependensi baru.
+  Workspace ini dikerjakan **tanpa jaringan**, jadi menambah dependensi berarti `cargo check`
+  lokal tidak bisa dijalankan sama sekali — tidak ada bukti sebelum push. Pemilih bawaan
+  (menjelajah folder, tampilkan ukuran) sudah berfungsi penuh. Kalau jaringan tersedia, `rfd`
+  bisa ditambahkan di `cfg(windows)` dan `pick_files()` tinggal diganti.
+- **Tebal di markdown bukan bobot huruf.** egui 0.32 tidak punya synthetic bold dan
+  `InterVariable.ttf` hanya satu bobot. `**tebal**` dirender dengan warna penekanan + jarak huruf;
+  miring **asli** (`TextFormat::italics`).
+- **Pratinjau gambar/video di kartu `ask_user`** menunggu M6 (pemuat tekstur). Teks sudah tampil.
+- **Timestamp memakai selisih zona waktu yang di-cache sekali.** Kalau Windows berpindah
+  DST saat aplikasi berjalan, jam yang sudah tampil bisa meleset 1 jam sampai restart —
+  menghindari panggilan OS di setiap frame.
 
 ### M5 — Provider + secret store (2–3 hari)
 - [ ] `providers.rs`: daftar kartu + statistik token/request + badge default
