@@ -18,6 +18,8 @@ mod dpapi;
 mod encode;
 mod gui;
 mod pump;
+mod platform;
+mod preview;
 mod pwsh;
 mod script;
 mod selftest;

@@ -15,6 +15,16 @@ serde_json = "1"
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 
+# Dekode gambar untuk pratinjau (M6). Murni Rust, tanpa DLL eksternal —
+# berbeda dengan pdfium/mupdf yang harus dibundel per arsitektur.
+image = { version = "0.25", default-features = false, features = [
+    "png", "jpeg", "gif", "webp", "bmp", "ico",
+] }
+
+# Jumlah halaman PDF dibaca tanpa merender. `default-features = false` membuang
+# rayon+chrono yang tidak dipakai di sini.
+lopdf = { version = "0.47", default-features = false }
+
 # egui/eframe: UI murni Rust, satu binary, tanpa WebView.
 [dependencies.eframe]
 version = "0.32"
@@ -43,4 +53,15 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_SystemInformation",
     # CryptProtectData/CryptUnprotectData untuk enkripsi API key (M5).
     "Win32_Security_Cryptography",
+    # ShellExecuteW ("buka dengan aplikasi lain") untuk berkas yang tidak bisa
+    # dipratinjau di dalam aplikasi (M6).
+    "Win32_UI_Shell",
 ] }
+
+# Dialog berkas OS (Impor / Simpan sebagai). Hanya dikompilasi di Windows —
+# di Linux rfd akan mencari GTK/portal yang tidak ada, padahal UI dikembangkan
+# di Linux tanpa GTK.
+[target.'cfg(windows)'.dependencies.rfd]
+version = "0.18"
+default-features = false
+features = ["common-controls-v6"]

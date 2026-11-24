@@ -6,7 +6,10 @@
 
 use std::path::PathBuf;
 
+use arka_core::file::FileInfo;
 use arka_core::paths::AppPaths;
+
+use crate::preview::PreviewState;
 
 use crate::pwsh::Detected;
 
@@ -437,6 +440,41 @@ mod tab_codec {
     }
 }
 
+/// State interaksi tab File (M6).
+///
+/// Dipisah dari [`FilesCache`] karena daftar berkas berasal dari disk
+/// (di-cache), sedangkan dialog/rename/preview murni state UI.
+pub struct FilesUi {
+    /// Folder yang sedang dibuka, relatif terhadap workspace (`""` = akar).
+    pub dir: String,
+    /// Berkas yang pratinjaunya terbuka.
+    pub preview: Option<PreviewState>,
+    /// Rename langsung di baris: `(path relatif, teks yang sedang diketik)`.
+    pub rename: Option<(String, String)>,
+    /// Isi kotak "Folder baru"; `Some` = dialog terbuka.
+    pub new_folder: Option<String>,
+    /// Konfirmasi sebelum dipindahkan ke sampah.
+    pub confirm_trash: Option<FileInfo>,
+    /// Folder yang sedang dijelajah di pemilih impor bawaan. `Some` = terbuka.
+    ///
+    /// Pemilih ini dipakai bila platform tidak punya dialog OS (Linux saat
+    /// pengembangan) — dan tetap berguna sebagai uji CI karena bisa diklik.
+    pub picker_dir: Option<PathBuf>,
+}
+
+impl Default for FilesUi {
+    fn default() -> Self {
+        Self {
+            dir: String::new(),
+            preview: None,
+            rename: None,
+            new_folder: None,
+            confirm_trash: None,
+            picker_dir: None,
+        }
+    }
+}
+
 pub struct AppState {
     pub tab: Tab,
     pub theme: ThemeMode,
@@ -456,6 +494,8 @@ pub struct AppState {
     pub modal: Modal,
     /// Isi folder kerja, dibaca ulang hanya saat diminta (bukan tiap frame).
     pub files: FilesCache,
+    /// Interaksi tab File (folder aktif, pratinjau, dialog).
+    pub files_ui: FilesUi,
     /// Hasil deteksi PowerShell, disimpan supaya tab Terminal tidak
     /// menjalankan proses baru di setiap frame.
     pub shell: ShellProbe,
@@ -508,6 +548,7 @@ impl AppState {
             notice: None,
             modal: Modal::None,
             files: FilesCache::new(),
+            files_ui: FilesUi::default(),
             shell: ShellProbe::Unknown,
             chat: ChatState {
                 auto_scroll: persisted.auto_scroll,

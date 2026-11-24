@@ -132,6 +132,8 @@ impl ArkaGui {
             self.notice_until = ctx.input(|i| i.time) + NOTICE_SECS;
         }
 
+        self.drop_files(ctx);
+
         self.sidebar(ctx, &colors);
         self.top_bar(ctx, &colors);
 
@@ -153,10 +155,85 @@ impl ArkaGui {
                 }
             });
 
+        self.drop_hint(ctx, &colors);
+
         // Kartu persetujuan/pertanyaan menggantung di atas semuanya.
         dialogs::show(ctx, &mut self.state, &colors);
 
         self.modal(ctx, &colors);
+    }
+
+    // ── Seret & lepas dari Explorer ─────────────────────────────────────────
+
+    /// Berkas yang dijatuhkan ke jendela: di tab File masuk ke folder yang
+    /// sedang dibuka; di tab lain jadi lampiran pesan yang sedang ditulis.
+    ///
+    /// Impor lewat jalur yang sama dengan tombol "Impor"
+    /// ([`screens::files::import_now`]) supaya guard traversal, nama bentrok,
+    /// dan penyegaran cache tidak punya dua versi.
+    fn drop_files(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if dropped.is_empty() {
+            return;
+        }
+        if self.state.tab == state::Tab::File {
+            screens::files::import_now(&mut self.state, &dropped);
+            return;
+        }
+        let n = dropped.len();
+        for p in dropped {
+            self.state
+                .chat
+                .attachments
+                .push(screens::chat::attachment_from(&p));
+        }
+        self.state.notify(format!(
+            "{} {}",
+            n,
+            self.state.tr(
+                "berkas dilampirkan",
+                "file(s) attached",
+                "件を添付しました"
+            )
+        ));
+    }
+
+    /// Tanda terlihat saat berkas diseret di atas jendela.
+    ///
+    /// Tanpa ini, pengguna tidak tahu apakah aplikasi menerima seret-lepas;
+    /// egui sendiri tidak menggambar apa pun.
+    fn drop_hint(&self, ctx: &egui::Context, colors: &theme::ClayColors) {
+        let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        if !hovering {
+            return;
+        }
+        let text = if self.state.tab == state::Tab::File {
+            self.state.tr(
+                "Lepaskan untuk mengimpor ke folder ini",
+                "Drop to import into this folder",
+                "ドロップしてこのフォルダーへインポート",
+            )
+        } else {
+            self.state.tr(
+                "Lepaskan untuk melampirkan ke pesan",
+                "Drop to attach to the message",
+                "ドロップしてメッセージに添付",
+            )
+        };
+        egui::Area::new(egui::Id::new("drop-hint"))
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .order(egui::Order::Tooltip)
+            .show(ctx, |ui| {
+                widgets::clay_card(ui, colors, Some(colors.surface_raised), |ui| {
+                    ui.label(RichText::new(text).size(theme::fs(ui, 16.0)).strong());
+                });
+            });
     }
 
     // ── Kejadian agent ──────────────────────────────────────────────────────
