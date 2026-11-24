@@ -17,9 +17,10 @@ pub const DEFAULT_WORKSPACE: &str = "/root/storage";
 /// membuat model berhenti di tengah jalan.
 pub const DEFAULT_MAX_TOOL_ROUNDS: usize = 40;
 
-/// Batas aman atas: mencegah salah ketik (mis. 4000) membuat satu chat
-/// berjalan sangat lama tanpa kendali.
-pub const MAX_TOOL_ROUNDS_LIMIT: usize = 200;
+/// Batas aman atas: mencegah salah ketik (mis. 100000) membuat satu chat
+/// berjalan sangat lama tanpa kendali. Batas waktu chat (60–7200 detik) tetap
+/// menjadi pengendali durasi sebenarnya, jadi angka besar di sini aman.
+pub const MAX_TOOL_ROUNDS_LIMIT: usize = 2000;
 
 /// Anggaran token konteks bawaan. Riwayat di atas angka ini diringkas lebih
 /// dulu sebelum dikirim, supaya model kecil (mis. anggota combo OmniRoute
@@ -187,6 +188,9 @@ mod tests {
     #[test]
     fn max_tool_rounds_falls_back_to_default() {
         assert_eq!(max_tool_rounds(), DEFAULT_MAX_TOOL_ROUNDS);
+        // Batas atas sengaja besar (2000); durasi sebenarnya dikendalikan
+        // oleh chat_timeout_secs, bukan oleh jumlah putaran.
+        assert_eq!(MAX_TOOL_ROUNDS_LIMIT, 2000);
     }
 
     #[test]

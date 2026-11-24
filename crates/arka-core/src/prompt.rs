@@ -205,6 +205,22 @@ pub fn tools_schema(platform: Platform) -> Value {
                 "required": ["question", "options"],
             }
         }
+    }, {
+        "type": "function",
+        "function": {
+            "name": "subagent",
+            "description": "Jalankan agent AI kedua secara paralel untuk satu tugas yang terpisah dan mandiri (mis. riset, telusuri repo besar, kerjakan bagian lain). Ia punya tool sendiri (run_command, skill, ask_user) dan mengembalikan ringkasan hasil + verifikasinya. Pakai untuk tugas yang bisa dikerjakan terpisah; tugas kecil cukup pakai run_command langsung.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Instruksi lengkap dan mandiri untuk sub agent: apa yang dikerjakan, di mana, dan bagaimana cara memverifikasinya.",
+                    }
+                },
+                "required": ["task"],
+            }
+        }
     }])
 }
 
@@ -296,6 +312,19 @@ pub fn anthropic_tools_schema(platform: Platform) -> Value {
             },
             "required": ["question", "options"],
         }
+    }, {
+        "name": "subagent",
+        "description": "Jalankan agent AI kedua secara paralel untuk satu tugas yang terpisah dan mandiri (mis. riset, telusuri repo besar, kerjakan bagian lain). Ia punya tool sendiri dan mengembalikan ringkasan hasil + verifikasinya. Tugas kecil cukup pakai run_command langsung.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Instruksi lengkap dan mandiri untuk sub agent: apa yang dikerjakan, di mana, dan bagaimana cara memverifikasinya.",
+                }
+            },
+            "required": ["task"],
+        }
     }])
 }
 
@@ -367,7 +396,8 @@ mod tests {
                     "delete_skill",
                     "edit_skill",
                     "set_skill_config",
-                    "ask_user"
+                    "ask_user",
+                    "subagent"
                 ]
             );
         }

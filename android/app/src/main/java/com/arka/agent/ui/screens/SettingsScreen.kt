@@ -159,9 +159,9 @@ fun SettingsScreen(vm: MainViewModel) {
                         Text(tr("Batas putaran tool", "Max tool rounds", "ツール呼び出しの上限"), style = MaterialTheme.typography.bodyMedium)
                         Text(
                             tr(
-                                "Jumlah maksimal perintah yang dijalankan model dalam satu balasan (1–200).",
-                                "Maximum commands the model may run in one reply (1–200).",
-                                "1回の返信でモデルが実行できるコマンドの最大数（1〜200）。",
+                                "Jumlah maksimal perintah yang dijalankan model dalam satu balasan (1–2000).",
+                                "Maximum commands the model may run in one reply (1–2,000).",
+                                "1回の返信でモデルが実行できるコマンドの最大数（1〜2,000）。",
                             ),
                             style = MaterialTheme.typography.labelSmall,
                             color = clay.muted,
@@ -464,7 +464,7 @@ fun SettingsScreen(vm: MainViewModel) {
 
     if (showRoundsDialog) {
         val parsed = roundsDraft.trim().toIntOrNull()
-        val valid = parsed != null && parsed in 1..200
+        val valid = parsed != null && parsed in 1..2000
         AlertDialog(
             onDismissRequest = { showRoundsDialog = false },
             title = { Text(tr("Batas putaran tool", "Max tool rounds", "ツール呼び出しの上限")) },
@@ -472,7 +472,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 Column {
                     OutlinedTextField(
                         value = roundsDraft,
-                        onValueChange = { roundsDraft = it.filter(Char::isDigit).take(3) },
+                        onValueChange = { roundsDraft = it.filter(Char::isDigit).take(4) },
                         singleLine = true,
                         label = { Text(tr("Jumlah putaran", "Number of rounds", "回数")) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -481,9 +481,9 @@ fun SettingsScreen(vm: MainViewModel) {
                     Spacer(Modifier.height(Space.xs))
                     Text(
                         tr(
-                            "1–200. Default 40. Naikkan untuk tugas panjang seperti clone atau build.",
-                            "1–200. Default 40. Raise it for long tasks like clone or build.",
-                            "1〜200。既定値は40。cloneやbuildなど長い作業では増やしてください。",
+                            "1–2000. Default 40. Naikkan untuk tugas panjang seperti clone atau build.",
+                            "1–2,000. Default 40. Raise it for long tasks like clone or build.",
+                            "1〜2,000。既定値は40。cloneやbuildなど長い作業では増やしてください。",
                         ),
                         style = MaterialTheme.typography.labelSmall,
                         color = clay.muted,

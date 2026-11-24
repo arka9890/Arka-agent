@@ -17,6 +17,7 @@ use crate::ui;
 use crate::{memory, paths, prompt, provider, session, settings, skill};
 
 use serde_json::json;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -108,12 +109,48 @@ fn platform() -> Platform {
 /// Error yang membuat sesi berhenti sudah dikirim lewat `ev.error(...)`;
 /// nilai `Err` dipakai pemanggil untuk berhenti tanpa mengulang pesan.
 pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
+    run_chat(req, ev, RunOpts::default())
+}
+
+/// Opsi pemanggilan internal — dipakai sub agent, bukan oleh UI.
+#[derive(Clone)]
+struct RunOpts {
+    /// Flag batal bersama induk: sub agent berhenti ketika induknya dibatalkan.
+    shared_cancel: Option<Arc<AtomicBool>>,
+    /// Kedalaman berjalan (0 = chat dari UI) untuk mencegah rekursi tak terbatas.
+    depth: u32,
+    /// Simpan jawaban ke DB. Sub agent tidak boleh membuat pesan di sesi induk.
+    persist: bool,
+}
+
+impl Default for RunOpts {
+    fn default() -> Self {
+        Self { shared_cancel: None, depth: 0, persist: true }
+    }
+}
+
+/// System prompt aktif (bisa diganti pengguna) + seluruh skill yang terpasang.
+fn system_prompt_with_skills() -> String {
+    let mut system_prompt = settings::system_prompt();
+    let skills = skill::system_prompt_section();
+    if !skills.is_empty() {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&skills);
+    }
+    system_prompt
+}
+
+fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, String> {
     let session_id = req.session_id.clone();
-    let cancel = new_chat_cancel(&session_id);
+    let cancel = opts
+        .shared_cancel
+        .clone()
+        .unwrap_or_else(|| new_chat_cancel(&session_id));
     let _guard = CancelGuard {
         session_id: session_id.clone(),
         flag: cancel.clone(),
     };
+    let depth = opts.depth;
 
     let (p, mut msgs) = match prepare(&req, &session_id) {
         Ok(v) => v,
@@ -123,14 +160,7 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
         }
     };
     if !msgs.iter().any(|m| m.role == "system") {
-        let mut system_prompt = settings::system_prompt();
-        // Skill dari folder skill ikut disisipkan ke system prompt.
-        let skills = skill::system_prompt_section();
-        if !skills.is_empty() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&skills);
-        }
-        msgs.insert(0, ChatMsg::plain("system", &system_prompt));
+        msgs.insert(0, ChatMsg::plain("system", &system_prompt_with_skills()));
     }
     let model = if req.model.trim().is_empty() {
         p.model.clone()
@@ -416,6 +446,19 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
                     };
                     (label, msg.clone(), msg)
                 }
+                "subagent" => {
+                    let task = arg("task");
+                    let label = format!("subagent {}", tail_chars(task.clone(), 100));
+                    if task.trim().is_empty() {
+                        let msg = "Tugas sub agent kosong.".to_string();
+                        ("subagent".to_string(), msg.clone(), msg)
+                    } else {
+                        let msg = run_subagent(
+                            &session_id, &p, &model, &task, depth, &cancel, ev, tool_output_chars,
+                        );
+                        (label, msg.clone(), msg)
+                    }
+                }
                 _ => {
                     let command = arg("command");
                     if command.trim().is_empty() {
@@ -447,15 +490,24 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
             ev.tool(&tool_label, &display);
 
             if p.kind == "anthropic" {
+                // Teks jawaban putaran ini disimpan bersama tool_call pertama.
+                // Tanpa ini model tidak melihat kalimat yang barusan ia tulis
+                // di dekat hasil tool-nya, sehingga giliran berikutnya ia tidak
+                // bisa mengoreksi klaimnya sendiri.
+                let mut blocks = Vec::new();
+                if tool_index == 0 && !answer.trim().is_empty() {
+                    blocks.push(json!({ "type": "text", "text": answer }));
+                }
+                blocks.push(json!({
+                    "type": "tool_use",
+                    "id": call.id.clone(),
+                    "name": call.name,
+                    "input": args,
+                }));
                 msgs.push(ChatMsg {
                     role: "assistant".into(),
                     content: String::new(),
-                    blocks: Some(json!([{
-                        "type": "tool_use",
-                        "id": call.id.clone(),
-                        "name": call.name,
-                        "input": args,
-                    }])),
+                    blocks: Some(json!(blocks)),
                     tool_calls: None,
                     tool_call_id: None,
                     id: None,
@@ -478,7 +530,9 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
                 let name = if call.name.is_empty() { "run_command" } else { &call.name };
                 msgs.push(ChatMsg {
                     role: "assistant".into(),
-                    content: String::new(),
+                    // Sama seperti cabang Anthropic: kalimat dari putaran ini
+                    // ikut terkirim supaya riwayat yang dilihat model lengkap.
+                    content: if tool_index == 0 { answer.clone() } else { String::new() },
                     tool_calls: Some(json!([{
                         "id": call.id.clone(),
                         "type": "function",
@@ -512,21 +566,179 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
         return Err(msg.to_string());
     }
 
+    // Penanda jujur: jawaban parsial setelah tombol Stop jangan terlihat
+    // seperti pekerjaan yang tuntas.
+    let canceled = cancel.load(Ordering::SeqCst);
+    if canceled {
+        final_text.push_str("\n\n_(Dihentikan pengguna sebelum selesai.)_");
+    }
+
     // Statistik provider: jawaban dihitung 1 permintaan, plus tiap putaran
     // tool yang dijalankan.
     let _ = provider::record_usage(&p.id, total_tokens, 1 + rounds as i64);
 
-    match session::add_message(&session_id, "assistant", &final_text, "[]") {
-        Ok(m) => {
-            ev.progress(100, "Selesai");
-            ev.done(&final_text);
-            Ok(m.id)
+    // Sub agent tidak menulis ke DB: sesinya hanya milik run ini dan tidak
+    // tampil di daftar sesi pengguna.
+    let message_id = if opts.persist {
+        match session::add_message(&session_id, "assistant", &final_text, "[]") {
+            Ok(m) => m.id,
+            Err(e) => {
+                let msg = format!("Jawaban diterima tetapi gagal disimpan: {e}");
+                ev.error(&msg);
+                return Err(msg);
+            }
         }
-        Err(e) => {
-            let msg = format!("Jawaban diterima tetapi gagal disimpan: {e}");
-            ev.error(&msg);
-            Err(msg)
+    } else {
+        String::new()
+    };
+    ev.progress(100, if canceled { "Dihentikan" } else { "Selesai" });
+    ev.done(&final_text);
+    Ok(message_id)
+}
+
+/// Batas kedalaman sub agent: 0 = chat dari UI, 1 = sub agent, 2 = sub-sub.
+///
+/// Tanpa batas ini model bisa membuat sub agent yang membuat sub agent lagi
+/// sampai stack/kuota provider habis.
+const MAX_SUBAGENT_DEPTH: u32 = 2;
+
+/// Penomoran sesi sub agent supaya dua sub agent tidak pernah bentrok.
+static SUBAGENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Events milik sub agent: hasil akhirnya dikumpulkan menjadi tool result,
+/// sedangkan progres/tool diteruskan ke UI induk dengan penanda `[sub]`
+/// supaya pengguna tetap tahu sedang terjadi apa.
+struct SubEvents<'a> {
+    inner: &'a dyn Events,
+    answer: RefCell<String>,
+    tools: RefCell<Vec<String>>,
+}
+
+impl<'a> SubEvents<'a> {
+    fn new(inner: &'a dyn Events) -> Self {
+        Self {
+            inner,
+            answer: RefCell::new(String::new()),
+            tools: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Gabungkan jawaban + ringkasan tool menjadi satu tool result.
+    fn report(&self) -> String {
+        let answer = self.answer.borrow().trim().to_string();
+        let tools = self.tools.borrow().clone();
+        let mut out = if answer.is_empty() {
+            "(sub agent tidak menghasilkan jawaban)".to_string()
+        } else {
+            answer
+        };
+        if !tools.is_empty() {
+            out.push_str(&format!(
+                "\n\n_(sub agent menjalankan {} tool: {})_",
+                tools.len(),
+                tools.join(", ")
+            ));
+        }
+        out
+    }
+}
+
+impl Events for SubEvents<'_> {
+    fn delta(&self, text: &str) {
+        self.answer.borrow_mut().push_str(text);
+    }
+    fn done(&self, text: &str) {
+        // `answer` sudah terisi dari delta; pakai ini hanya kalau delta kosong
+        // (stream gagal tepat setelah jawaban terakhir).
+        if self.answer.borrow().trim().is_empty() {
+            self.answer.borrow_mut().push_str(text);
+        }
+    }
+    fn error(&self, message: &str) {
+        self.inner
+            .output(&format!("(sub agent) {message}\n"));
+    }
+    fn tool(&self, label: &str, display: &str) {
+        self.tools.borrow_mut().push(label.to_string());
+        self.inner.tool(&format!("sub:{label}"), display);
+    }
+    fn approval(&self, id: &str, action: &str, target: &str, detail: &str) {
+        // Persetujuan skill tetap harus dijawab pengguna.
+        self.inner.approval(id, action, target, detail);
+    }
+    fn question(&self, id: &str, question: &str, options: &[String], files: &[serde_json::Value]) {
+        self.inner.question(id, question, options, files);
+    }
+    fn progress(&self, percent: i32, label: &str) {
+        self.inner.progress(percent, &format!("Sub agent: {label}"));
+    }
+    fn output(&self, text: &str) {
+        self.inner.output(text);
+    }
+}
+
+/// Jalankan satu sub agent: agent loop penuh (punya tool sendiri) dengan
+/// tugas tunggal, tanpa menulis ke sesi pengguna.
+///
+/// Berhenti bersama induknya: flag cancel yang sama dipakai, jadi tombol Stop
+/// pada chat utama langsung menghentikan sub agent-nya juga.
+fn run_subagent(
+    parent_session: &str,
+    p: &AiProvider,
+    model: &str,
+    task: &str,
+    depth: u32,
+    cancel: &Arc<AtomicBool>,
+    ev: &dyn Events,
+    output_chars: usize,
+) -> String {
+    if depth + 1 > MAX_SUBAGENT_DEPTH {
+        return format!(
+            "Ditolak: sub agent sudah mencapai batas kedalaman ({MAX_SUBAGENT_DEPTH}). Kerjakan sendiri dengan run_command."
+        );
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return "Dibatalkan pengguna.".to_string();
+    }
+
+    let seq = SUBAGENT_SEQ.fetch_add(1, Ordering::SeqCst);
+    let session_id = format!("{parent_session}:sub{seq}");
+
+    let system = format!(
+        "{}\n\n---\nKamu sedang berjalan sebagai SUB AGENT milik Arka Agent. \
+Tugasmu TERBATAS pada satu perintah dari agent utama di bawah ini. \
+Kerjakan sampai selesai, verifikasi hasilnya dengan tool, lalu jawab ringkas \
+berisi: (1) apa yang dikerjakan, (2) hasil verifikasi beserta exit code, \
+(3) masalah yang ditemukan. JANGAN mengklaim selesai tanpa output tool yang \
+membuktikannya. Jangan bertanya ke pengguna (tanya lewat agent utama). \
+Kalau tugas di luar kemampuanmu, katakan terus terang.",
+        system_prompt_with_skills()
+    );
+    let messages_json = json!([
+        { "role": "system", "content": system },
+        { "role": "user", "content": format!("Tugas: {task}") },
+    ])
+    .to_string();
+
+    let req = ChatRequest {
+        session_id,
+        provider_id: p.id.clone(),
+        model: model.to_string(),
+        messages_json,
+    };
+    let sub_ev = SubEvents::new(ev);
+    ev.progress(0, "Sub agent mulai bekerja…");
+    match run_chat(
+        req,
+        &sub_ev,
+        RunOpts {
+            shared_cancel: Some(cancel.clone()),
+            depth: depth + 1,
+            persist: false,
+        },
+    ) {
+        Ok(_) => tail_chars(sub_ev.report(), output_chars),
+        Err(e) => format!("Sub agent gagal: {e}"),
     }
 }
 
