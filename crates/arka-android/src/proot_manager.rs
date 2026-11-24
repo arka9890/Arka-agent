@@ -9,9 +9,8 @@
 //!  - `/dev`, `/proc`, `/sys` harus di-bind, kalau tidak `apt` gagal.
 
 use crate::ctx;
-use crate::jni_util as ju;
-use jni::objects::JObject;
-use jni::JNIEnv;
+use arka_core::events::Events;
+use arka_core::shell::{ExecOutcome, Shell};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -20,7 +19,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 /// Rootfs resmi Ubuntu 24.04 (ubuntu-base, ±30 MB terkompresi / ±110 MB
@@ -99,13 +98,9 @@ fn dir_size(path: &Path) -> i64 {
 ///
 /// [on_progress] menerima 0..100 dan label tahap. [cancel] di-set true oleh
 /// tombol Batal di UI.
-pub fn install(
-    env: &mut JNIEnv,
-    cb: &JObject,
-    cancel: Arc<AtomicBool>,
-) -> Result<(), String> {
+pub fn install(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
     if is_installed() {
-        ju::emit_int_str(env, cb, "onProgress", 100, "Ubuntu 24 sudah terpasang.");
+        ev.progress(100, "Ubuntu 24 sudah terpasang.");
         return Ok(());
     }
     let files = ctx::files_dir()?;
@@ -114,27 +109,24 @@ pub fn install(
     let archive = cache_dir.join("ubuntu-24.04-base-arm64.tar.gz");
 
     if !archive.is_file() || verify_sha256(&archive).unwrap_or(false) == false {
-        download(env, cb, &cancel, &archive)?;
+        download(ev, cancel, &archive)?;
     }
     if cancel.load(Ordering::Relaxed) {
         return Err("Dibatalkan".into());
     }
 
-    ju::emit_int_str(env, cb, "onProgress", 70, "Membongkar Ubuntu 24…");
+    ev.progress(70, "Membongkar Ubuntu 24…");
     extract_rootfs(&archive)?;
 
-    ju::emit_int_str(env, cb, "onProgress", 85, "Menyiapkan environment…");
+    ev.progress(85, "Menyiapkan environment…");
     post_install()?;
 
-    ju::emit_int_str(env, cb, "onProgress", 90, "Memasang tools (python3, git, curl…)…");
-    match install_tools(env, cb, &cancel) {
-        Ok(()) => ju::emit_int_str(env, cb, "onProgress", 100, "Ubuntu 24 siap dipakai."),
+    ev.progress(90, "Memasang tools (python3, git, curl…)…");
+    match install_tools(ev, cancel) {
+        Ok(()) => ev.progress(100, "Ubuntu 24 siap dipakai."),
         // Tools gagal (mis. offline) tidak membatalkan pemasangan: rootfs tetap
         // berguna dan user bisa `apt install` sendiri dari Terminal.
-        Err(e) => ju::emit_int_str(
-            env,
-            cb,
-            "onProgress",
+        Err(e) => ev.progress(
             100,
             &format!("Ubuntu 24 siap, tetapi tools gagal dipasang: {e}"),
         ),
@@ -156,8 +148,8 @@ fn verify_sha256(path: &Path) -> Result<bool, String> {
     Ok(format!("{:x}", hasher.finalize()) == ROOTFS_SHA256)
 }
 
-fn download(env: &mut JNIEnv, cb: &JObject, cancel: &AtomicBool, dest: &Path) -> Result<(), String> {
-    ju::emit_int_str(env, cb, "onProgress", 0, "Mengunduh Ubuntu 24…");
+fn download(ev: &dyn Events, cancel: &AtomicBool, dest: &Path) -> Result<(), String> {
+    ev.progress(0, "Mengunduh Ubuntu 24…");
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(30))
         .build()
@@ -192,10 +184,7 @@ fn download(env: &mut JNIEnv, cb: &JObject, cancel: &AtomicBool, dest: &Path) ->
             let pct = ((written as f64 / total as f64) * 65.0) as i32;
             if pct != last_pct {
                 last_pct = pct;
-                ju::emit_int_str(
-                    env,
-                    cb,
-                    "onProgress",
+                ev.progress(
                     pct,
                     &format!(
                         "Mengunduh Ubuntu 24… {} / {} MB",
@@ -209,7 +198,7 @@ fn download(env: &mut JNIEnv, cb: &JObject, cancel: &AtomicBool, dest: &Path) ->
     out.flush().map_err(|e| e.to_string())?;
     drop(out);
 
-    ju::emit_int_str(env, cb, "onProgress", 66, "Memeriksa checksum rootfs…");
+    ev.progress(66, "Memeriksa checksum rootfs…");
     if !verify_sha256(&part)? {
         let _ = fs::remove_file(&part);
         return Err("Checksum rootfs tidak cocok — unduhan korup, silakan coba lagi.".into());
@@ -311,14 +300,14 @@ fn post_install() -> Result<(), String> {
     Ok(())
 }
 
-fn install_tools(env: &mut JNIEnv, cb: &JObject, cancel: &AtomicBool) -> Result<(), String> {
+fn install_tools(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
     let pkgs = TOOLS.join(" ");
     let script = format!(
         "export DEBIAN_FRONTEND=noninteractive; \
          apt-get update -qq && apt-get install -y -qq --no-install-recommends {pkgs} && \
          echo ARKA_TOOLS_OK"
     );
-    let (code, out) = run_capture(&script, cancel, Some((env, cb)))?;
+    let (code, out) = run_capture(&script, cancel, &mut |chunk| ev.output(chunk))?;
     if out.contains("ARKA_TOOLS_OK") {
         Ok(())
     } else {
@@ -411,7 +400,7 @@ fn proot_env(tmp: &Path) -> Result<Vec<(String, String)>, String> {
         return Err(e.clone());
     }
     let libs = ctx::proot_libs_dir()?;
-    let native_dir = &ctx::ctx()?.native_lib_dir;
+    let native_dir = ctx::native_lib_dir()?;
     let ld_path = format!("{}:{}", libs.to_string_lossy(), native_dir.to_string_lossy());
     let mut env = vec![
         ("LD_LIBRARY_PATH".to_string(), ld_path),
@@ -491,7 +480,7 @@ fn spawn_proot(command: &str, tmp: &Path) -> Result<std::process::Child, String>
 /// eksekusi diserialisasi di seluruh proses: chat tool, terminal manual,
 /// diagnostic, dan install_tools antre lewat lock ini.
 ///
-/// Lock dipegang sampai child selesai, bukan cuma saat spawn. `JNIEnv` tetap
+/// Lock dipegang sampai child selesai, bukan cuma saat spawn. Callback tetap
 /// milik thread pemanggil (tidak dipindah), jadi aman.
 static TOOL_LOCK: Mutex<()> = Mutex::new(());
 
@@ -499,7 +488,7 @@ static TOOL_LOCK: Mutex<()> = Mutex::new(());
 pub fn run_capture(
     command: &str,
     cancel: &AtomicBool,
-    ui: Option<(&mut JNIEnv, &JObject)>,
+    on_chunk: &mut dyn FnMut(&str),
 ) -> Result<(i32, String), String> {
     let _tool_guard = TOOL_LOCK.lock().map_err(|e| format!("Lock tool rusak: {e}"))?;
     if cancel.load(Ordering::Relaxed) {
@@ -544,14 +533,11 @@ pub fn run_capture(
     drop(tx);
 
     let mut collected = String::new();
-    let mut sink = ui;
     loop {
         match rx.recv_timeout(Duration::from_millis(120)) {
             Ok(chunk) => {
                 collected.push_str(&chunk);
-                if let Some((env, cb)) = sink.as_mut() {
-                    ju::emit_str(env, cb, "onOutput", &chunk);
-                }
+                on_chunk(&chunk);
                 if cancel.load(Ordering::Relaxed) {
                     let _ = child.kill();
                     break;
@@ -572,9 +558,7 @@ pub fn run_capture(
     // Drain sisa output setelah pipe tertutup.
     while let Ok(chunk) = rx.try_recv() {
         collected.push_str(&chunk);
-        if let Some((env, cb)) = sink.as_mut() {
-            ju::emit_str(env, cb, "onOutput", &chunk);
-        }
+        on_chunk(&chunk);
     }
     let status = child.wait().map_err(|e| e.to_string())?;
     if cancel.load(Ordering::Relaxed) {
@@ -588,20 +572,6 @@ pub fn run_capture(
     result
 }
 
-/// Jalankan perintah dengan output streaming ke Kotlin.
-pub fn exec(env: &mut JNIEnv, cb: &JObject, command: &str, cancel: Arc<AtomicBool>) -> Result<i32, String> {
-    if command.trim().is_empty() {
-        return Err("Perintah kosong".into());
-    }
-    let (code, out) = run_capture(command, &cancel, Some((env, cb)))?;
-    if code == -1 && cancel.load(Ordering::Relaxed) {
-        ju::emit_str(env, cb, "onOutput", "\n^C dihentikan\n");
-    } else if out.trim().is_empty() {
-        ju::emit_str(env, cb, "onOutput", &format!("(perintah selesai, exit {code})\n"));
-    }
-    Ok(code)
-}
-
 /// Tes cepat: dipakai tombol "Tes distro" di Settings.
 pub fn diagnostic() -> Result<String, String> {
     let cancel = AtomicBool::new(false);
@@ -609,7 +579,7 @@ pub fn diagnostic() -> Result<String, String> {
         "cat /etc/os-release | head -2; uname -m; python3 --version 2>&1; git --version 2>&1; \
          ls -a /root/storage | head",
         &cancel,
-        None,
+        &mut |_| {},
     )?;
     Ok(format!("exit {code}\n{out}"))
 }
@@ -629,4 +599,42 @@ pub fn check_executable() -> Result<(), String> {
         fs::set_permissions(&proot, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Implementasi [`Shell`] untuk Android: `bash` di dalam Ubuntu (proot).
+///
+/// Satu-satunya penghubung antara agent loop (platform-agnostic) dan proot.
+/// Di Windows padanannya `PwshShell` di crate desktop.
+pub struct ProotShell;
+
+impl Shell for ProotShell {
+    fn status(&self) -> Result<serde_json::Value, String> {
+        serde_json::to_value(status()?).map_err(|e| e.to_string())
+    }
+
+    fn prepare(&self, ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
+        install(ev, cancel)
+    }
+
+    fn exec(
+        &self,
+        command: &str,
+        cancel: &AtomicBool,
+        on_chunk: &mut dyn FnMut(&str),
+    ) -> Result<ExecOutcome, String> {
+        if command.trim().is_empty() {
+            return Err("Perintah kosong".into());
+        }
+        let (code, output) = run_capture(command, cancel, on_chunk)?;
+        Ok(ExecOutcome {
+            code,
+            output,
+            timed_out: false,
+            canceled: cancel.load(Ordering::Relaxed),
+        })
+    }
+
+    fn diagnostic(&self) -> Result<String, String> {
+        diagnostic()
+    }
 }

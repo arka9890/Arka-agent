@@ -21,17 +21,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "arka_core"
+name = "arka-android"
 version = "0.1.0"
 dependencies = [
+ "arka_core",
  "flate2",
  "jni",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tar",
+]
+
+[[package]]
+name = "arka_core"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 

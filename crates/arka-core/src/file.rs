@@ -3,7 +3,7 @@
 //! Semua path dari UI wajib lewat [resolve] supaya tidak bisa keluar dari
 //! workspace (path traversal `../../data/...` ditolak).
 
-use crate::ctx;
+use crate::paths;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ pub fn kind_of(name: &str) -> &'static str {
 /// Menolak `..` dan path absolut — satu-satunya jalan masuk ke filesystem
 /// lewat modul ini.
 pub fn resolve(rel: &str) -> Result<PathBuf, String> {
-    let root = ctx::workspace_dir()?;
+    let root = paths::workspace()?;
     let rel = rel.trim().trim_start_matches('/');
     let candidate = Path::new(&rel);
     if candidate
@@ -133,7 +133,7 @@ pub fn read_text(rel: &str) -> Result<String, String> {
 
 pub fn delete(rel: &str) -> Result<(), String> {
     let path = resolve(rel)?;
-    if path == ctx::workspace_dir()? {
+    if path == paths::workspace()? {
         return Err("Folder workspace tidak bisa dihapus".into());
     }
     if path.is_dir() {
@@ -174,7 +174,7 @@ pub fn stat(rel: &str) -> Result<FileInfo, String> {
 
 /// Ukuran total workspace dalam byte (untuk tab Settings).
 pub fn workspace_size() -> Result<i64, String> {
-    let root = ctx::workspace_dir()?;
+    let root = paths::workspace()?;
     let mut total = 0i64;
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {

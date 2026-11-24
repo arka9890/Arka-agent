@@ -3,8 +3,8 @@
 //! Nilai disimpan sebagai string; UI yang memutuskan cara menafsirkannya.
 //! Kunci yang tidak dikenal diabaikan supaya versi lama/tema baru tetap aman.
 
-use crate::ai;
 use crate::db;
+use crate::prompt;
 use rusqlite::params;
 use std::collections::HashMap;
 
@@ -32,24 +32,34 @@ pub const DEFAULT_TOOL_OUTPUT_CHARS: usize = 4_000;
 pub const TOOL_OUTPUT_CHARS_MIN: usize = 1_000;
 pub const TOOL_OUTPUT_CHARS_MAX: usize = 20_000;
 
+/// Workspace bawaan: path platform aktif kalau sudah diketahui.
+fn workspace_default() -> String {
+    let p = crate::paths::workspace_display();
+    if p.is_empty() {
+        DEFAULT_WORKSPACE.to_string()
+    } else {
+        p
+    }
+}
+
 /// Nilai default per kunci (dipakai saat kunci belum pernah disimpan).
-pub fn defaults() -> HashMap<&'static str, &'static str> {
+pub fn defaults() -> HashMap<&'static str, String> {
     HashMap::from([
-        ("theme", "dark"),
-        ("language", "id"),
-        ("font_size", "medium"),
-        ("auto_scroll", "true"),
-        ("notifications", "true"),
-        ("workspace_path", DEFAULT_WORKSPACE),
-        ("streaming", "true"),
-        ("max_tool_rounds", "40"),
-        // Kosong = pakai prompt bawaan (`ai::SYSTEM_PROMPT`).
-        ("system_prompt", ""),
+        ("theme", "dark".to_string()),
+        ("language", "id".to_string()),
+        ("font_size", "medium".to_string()),
+        ("auto_scroll", "true".to_string()),
+        ("notifications", "true".to_string()),
+        ("workspace_path", workspace_default()),
+        ("streaming", "true".to_string()),
+        ("max_tool_rounds", "40".to_string()),
+        // Kosong = pakai prompt bawaan platform (`prompt::active_system_prompt`).
+        ("system_prompt", "".to_string()),
         // Ringkas otomatis riwayat lama supaya konteks tidak hilang saat
         // model/router punya context window kecil.
-        ("auto_summary", "true"),
-        ("context_budget", "24000"),
-        ("tool_output_chars", "4000"),
+        ("auto_summary", "true".to_string()),
+        ("context_budget", "24000".to_string()),
+        ("tool_output_chars", "4000".to_string()),
     ])
 }
 
@@ -94,7 +104,7 @@ pub fn max_tool_rounds() -> usize {
 pub fn system_prompt() -> String {
     match get("system_prompt") {
         Some(v) if !v.trim().is_empty() => v,
-        _ => ai::SYSTEM_PROMPT.to_string(),
+        _ => prompt::active_system_prompt(),
     }
 }
 
@@ -131,7 +141,7 @@ pub fn all_json() -> Result<String, String> {
         rows.collect::<Result<HashMap<String, String>, _>>().map_err(|e| e.to_string())
     })?;
     let mut merged: HashMap<String, String> =
-        defaults().into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        defaults().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
     merged.extend(stored);
     serde_json::to_string(&merged).map_err(|e| e.to_string())
 }
@@ -149,17 +159,18 @@ mod tests {
 
     #[test]
     fn system_prompt_falls_back_to_builtin() {
-        assert_eq!(system_prompt(), ai::SYSTEM_PROMPT);
+        assert!(!system_prompt().is_empty());
     }
 
     #[test]
     fn defaults_contain_agent_keys() {
         let d = defaults();
-        assert_eq!(d.get("max_tool_rounds"), Some(&"40"));
-        assert_eq!(d.get("system_prompt"), Some(&""));
-        assert_eq!(d.get("auto_summary"), Some(&"true"));
-        assert_eq!(d.get("context_budget"), Some(&"24000"));
-        assert_eq!(d.get("tool_output_chars"), Some(&"4000"));
+        assert_eq!(d.get("max_tool_rounds").map(String::as_str), Some("40"));
+        assert_eq!(d.get("system_prompt").map(String::as_str), Some(""));
+        assert_eq!(d.get("auto_summary").map(String::as_str), Some("true"));
+        assert_eq!(d.get("context_budget").map(String::as_str), Some("24000"));
+        assert_eq!(d.get("tool_output_chars").map(String::as_str), Some("4000"));
+        assert!(!d.get("workspace_path").unwrap().is_empty());
     }
 
     #[test]

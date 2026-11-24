@@ -1,6 +1,10 @@
 #!/bin/sh
 # Bangun `libarka_core.so` untuk Android lalu salin ke jniLibs.
 #
+# Sejak M1, kode JNI ada di crate `arka-android` (bukan `arka-core`): crate
+# core bebas JNI supaya bisa dipakai versi Windows. Nama file .so tetap
+# `libarka_core.so` karena `Arka.kt` memanggil `System.loadLibrary("arka_core")`.
+#
 # Kenapa script ini ada padahal ada cargo? Build Android butuh tiga hal yang
 # tidak ada di `cargo build` biasa: target NDK, linker clang, dan penyalinan
 # ke folder yang dibaca Gradle. Script ini juga dipakai CI.
@@ -75,9 +79,9 @@ build() {
         "AR_${ar_name}=$AR_BIN" \
         "CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_LINKER=$cc" \
         CARGO_TARGET_DIR="$TARGET_DIR" \
-        cargo build --release --target "$target" --package arka_core --manifest-path "$WORKSPACE_ROOT/Cargo.toml"
+        cargo build --release --target "$target" --package arka-android --manifest-path "$WORKSPACE_ROOT/Cargo.toml"
     mkdir -p "$JNI_LIBS/$abi"
-    cp "$TARGET_DIR/$target/release/libarka_core.so" "$JNI_LIBS/$abi/libarka_core.so"
+    cp "$TARGET_DIR/$target/release/libarka_android.so" "$JNI_LIBS/$abi/libarka_core.so"
     echo "    -> $JNI_LIBS/$abi/libarka_core.so"
 }
 

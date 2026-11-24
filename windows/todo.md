@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **rencana** (belum ada kode Windows).
+Status: **M0 ✅ · M1 ✅** — M2 (shell PowerShell) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -114,35 +114,40 @@ Semua baris di bawah **wajib** ada di versi Windows.
 Arka-agent/
 ├── Cargo.toml                  # [workspace] members = crates/*
 ├── crates/
-│   ├── arka-core/              # logika portable (tanpa JNI, tanpa UI)
-│   │   ├── src/lib.rs
-│   │   ├── src/ai.rs           # dipindah apa adanya dari rust/src/ai.rs
-│   │   ├── src/prompt.rs       # BARU: prompt pack android/windows (§A12)
-│   │   ├── src/db.rs           # + PRAGMA user_version & migrasi
-│   │   ├── src/session.rs
-│   │   ├── src/provider.rs
-│   │   ├── src/settings.rs
-│   │   ├── src/file.rs         # + path Windows, traversal guard
-│   │   ├── src/memory.rs
-│   │   ├── src/skill.rs        # path skill via AppPaths (bukan hardcode ~)
-│   │   ├── src/terminal.rs     # riwayat + antrean
-│   │   ├── src/agent.rs        # agent loop (dari lib.rs chatStream)
-│   │   ├── src/engine.rs       # pengganti ChatEngine.kt (buffer+jobs+running)
-│   │   ├── src/shell/mod.rs    # trait Shell, OutputChunk, ShellStatus
-│   │   ├── src/shell/pwsh.rs   # PowerShell: EncodedCommand, Job Object, UTF-8
-│   │   └── src/secret.rs       # trait SecretStore
-│   ├── arka-android/           # cdylib, isi = rust/src/lib.rs lama (JNI)
-│   │   ├── src/lib.rs          # Java_com_arka_agent_core_Arka_* (nama TETAP)
-│   │   └── src/proot_manager.rs# jadi impl Shell (ProotShell)
-│   └── arka-desktop/           # bin: arka-agent.exe
+│   ├── arka-core/              # logika portable (tanpa JNI, tanpa UI)  ← M1 selesai
+│   │   ├── Cargo.toml          # tanpa jni/flate2/tar/sha2
+│   │   ├── prompt/android.md   # BARU: system prompt Android (placeholder)
+│   │   ├── prompt/windows.md   # BARU: system prompt Windows (PowerShell)
+│   │   ├── src/lib.rs          # hanya deklarasi modul + re-export (tanpa JNI)
+│   │   ├── src/agent.rs        # BARU: agent loop (dari lib.rs chatStream)
+│   │   ├── src/events.rs       # BARU: trait Events + NoopEvents
+│   │   ├── src/paths.rs        # BARU: AppPaths + Platform (pengganti ctx.rs)
+│   │   ├── src/prompt.rs       # BARU: prompt pack + skema tool per platform
+│   │   ├── src/secret.rs       # BARU: SecretStore + NoopSecretStore
+│   │   ├── src/shell.rs        # BARU: trait Shell + ExecOutcome + registry
+│   │   ├── src/ui.rs           # BARU: approval/question registry + pratinjau file
+│   │   ├── src/ai.rs           # ChatStream::open(..., platform)
+│   │   ├── src/db.rs / session.rs / provider.rs / settings.rs
+│   │   ├── src/file.rs         # + path Windows, traversal guard (M6)
+│   │   ├── src/memory.rs / skill.rs / terminal.rs
+│   │   └── build-android.sh    # build `--package arka-android`
+│   ├── arka-android/           # cdylib JNI + proot  ← M1 selesai
+│   │   ├── src/lib.rs          # 45 fungsi Java_com_arka_agent_core_Arka_* (nama TETAP)
+│   │   ├── src/events.rs       # JniEvents (satu-satunya pemanggil Kotlin)
+│   │   ├── src/ctx.rs          # path khusus Android (rootfs, native_lib, tmp)
+│   │   ├── src/proot_manager.rs# + ProotShell (impl Shell)
+│   │   └── src/jni_util.rs     # emit_str / emit_str_str / emit_int_str
+│   └── arka-desktop/           # bin: arka-agent.exe  ← M3+
 │       ├── src/main.rs
 │       ├── src/app.rs          # state global (pengganti MainViewModel)
 │       ├── src/ui/{shell,theme,widgets,chat,bubble,markdown,files,preview,terminal,providers,settings,dialogs}.rs
+│       ├── src/shell_pwsh.rs   # PwshShell (M2)
+│       ├── src/secret_dpapi.rs # DpapiSecretStore (M5)
+│       ├── src/platform.rs     # toast, tray, sleep-block, dialog file
 │       ├── src/i18n.rs
-│       ├── src/platform.rs     # toast, tray, DPAPI, sleep-block, dialog file, job object
 │       └── assets/{icon.ico,fonts/*.ttf}
 ├── android/                    # Kotlin — tidak diubah
-├── rust/                       # dihapus setelah migrasi (lihat M9)
+├── docs/
 └── windows/                    # todo.md, build.md, installer/
 ```
 
@@ -163,25 +168,44 @@ Arka-agent/
       (crate ini belum bisa dicompile untuk Windows sampai pemisahan itu selesai)
 **Selesai bila:** ✅ APK masih bisa dibuild dari CI setelah pemindahan, tanpa perubahan kode Kotlin.
 
-### M1 — Core portable + prompt pack (3 hari)
-- [ ] Hapus semua ketergantungan JNI dari `arka-core`: callback diganti trait
-      `trait Events { fn delta(&self, s: &str); fn done(..); fn error(..); fn tool(..); fn approval(..); fn question(..); fn progress(..); fn output(..); }`
-- [ ] `arka-android` mengimplementasikan `Events` dengan `JNIEnv` (kode lama dipakai ulang)
-- [ ] `AppPaths { data_dir, cache_dir, workspace, skills_dir }` jadi parameter eksplisit (bukan `OnceLock` global)
-- [ ] `db::init(path)` tetap; tambah `PRAGMA user_version` + migrasi berurutan
-- [ ] `SecretStore` trait + `NoopSecretStore` (Android tetap pakai Kotlin) + `DpapiSecretStore` di crate desktop
-- [ ] Pindahkan `chatStream` (agent loop) dari `lib.rs` ke `agent.rs` sebagai fungsi murni + `Events`
-- [ ] **`prompt.rs` + `crates/arka-core/prompt/{android,windows}.md`**: system prompt & deskripsi tool per platform.
-      Versi Windows wajib: "workspace = folder Windows `<path>`", "tool `run_command` menjalankan **PowerShell**",
-      contoh perintah PS (`Get-ComputerInfo`, `$PSVersionTable`, `Get-ChildItem`, `python --version`, `Get-Command git`),
-      path skill `%USERPROFILE%\.claude\skills`, dan larangan menjawab "aku tidak punya akses terminal".
-      Template memakai placeholder (`{{WORKSPACE}}`, `{{SKILLS_DIR}}`) yang diisi saat runtime.
-- [ ] Hapus string hardcode `/root/storage` & "Ubuntu" dari `ai.rs` yang dipakai jalur desktop
-- [ ] Pindahkan semua `#[cfg(test)]` yang ada (ai, memory, settings) supaya tetap jalan
-**Selesai bila:** `cargo test -p arka-core` hijau, APK hasil `arka-android` berfungsi sama (regresi manual: chat, tool, skill, file, terminal), dan unit test membuktikan prompt Windows tidak mengandung kata "Ubuntu"/"bash".
+### M1 — Core portable + prompt pack (3 hari) ✅ SELESAI
+- [x] Hapus semua ketergantungan JNI dari `arka-core`: callback diganti trait
+      `trait Events { delta, done, error, tool, approval, question, progress, output }` (`src/events.rs`)
+- [x] `arka-android` mengimplementasikan `Events` lewat `JniEvents` (`src/events.rs` crate android,
+      `RefCell<JNIEnv>` + `into_env()` supaya `JString` hasil tetap bisa dibuat)
+- [x] `AppPaths { platform, data_dir, cache_dir, workspace, skills_dir, skills_config_dir, native_lib_dir?, rootfs_dir? }`
+      (`src/paths.rs`), diisi lewat `AppPaths::android(...)` / `AppPaths::windows(home, data)`
+- [x] `modules` dipisah: `agent.rs`, `events.rs`, `paths.rs`, `prompt.rs`, `secret.rs`, `shell.rs`, `ui.rs`
+- [x] Semua kode JNI (`Java_com_arka_agent_core_Arka_*`, 45 fungsi) pindah ke `crates/arka-android/src/lib.rs`;
+      `proot_manager.rs` + `jni_util.rs` + `ctx.rs` (khusus Android) juga pindah ke sana
+- [x] `Shell` trait (`status`, `prepare`, `exec`, `diagnostic`) + `ProotShell` (Android) → M2 cukup menambah `PwshShell`
+- [x] `SecretStore` trait + `NoopSecretStore` (`src/secret.rs`); `provider::save`/`list`/`get` sudah lewat trait
+      (Android Noop → perilaku Kotlin tidak berubah). `DpapiSecretStore` menyusul di M5
+- [x] `chatStream` → `agent::chat(ChatRequest, &dyn Events)`; pembatalan per sesi + registry approval/pertanyaan
+      pindah ke `agent.rs` / `ui.rs`
+- [x] **`prompt.rs` + `prompt/{android,windows}.md`** dengan placeholder `{{WORKSPACE}}`, `{{SKILLS_DIR}}`,
+      `{{CONFIG_DIR}}`; skema tool (`tools_schema`, `anthropic_tools_schema`) ikut per platform
+- [x] `ai.rs` tidak lagi punya `SYSTEM_PROMPT`/teks Ubuntu; prompt dipilih `prompt::active_system_prompt()`
+- [x] `skill::system_prompt_section()` memakai path skill platform aktif (tidak lagi "di Ubuntu")
+- [x] Semua test lama tetap jalan + test baru: prompt Windows bebas "Ubuntu"/"bash"/"proot"/`/root/storage`,
+      placeholder habis, nama tool stabil, cancel per sesi, `SecretStore` round-trip
+- [ ] `db::init` + `PRAGMA user_version` + migrasi berurutan → **dipindah ke M4** (butuh skema baru saat
+      kolom UI bertambah; sekarang migrasi masih `ALTER TABLE` ad-hoc yang aman)
+**Selesai bila:** ✅ `cargo test --workspace` hijau (30 test core + 1 android), APK tetap memakai crate
+`arka-android` (`build-android.sh` diperbarui: build `--package arka-android`, salin
+`libarka_android.so` → `libarka_core.so`), dan test membuktikan prompt Windows tidak memuat "Ubuntu"/"bash".
 
-### M2 — Shell PowerShell (3–4 hari) ← pengganti WSL
-- [ ] `trait Shell`: `status()`, `prepare(progress, cancel)`, `exec(cmd, opts, cancel, on_output) -> (code, out, dur)`, `diagnostic()`
+> **Catatan jujur:** registry `paths` masih `OnceLock` (diisi sekali saat start) — sama seperti DB.
+> Yang berubah adalah isinya kini **data**, bukan kode JNI, jadi tidak ada urutan inisialisasi yang
+> bergantung pada Kotlin. Kalau nanti butuh dua instance (multi-window), baru diubah menjadi parameter
+> eksplisit; sekarang biayanya lebih besar daripada manfaatnya.
+> Verifikasi Windows **belum** dijalankan di mesin ini: target `x86_64-pc-windows-*` dan `rustfmt`/`clippy`
+> tidak terpasang di workspace Android ini. Yang terbukti hijau: `cargo check/test --workspace` di Linux
+> dan tidak ada lagi `std::os::unix` maupun `jni` di `arka-core` (dicek dengan grep + dependensi crate).
+
+### M2 — Shell PowerShell (3–4 hari) ← sedang dikerjakan
+- [x] `trait Shell`: `status()`, `prepare(ev, cancel)`, `exec(cmd, cancel, on_chunk) -> ExecOutcome`, `diagnostic()`
+      (dibuat di M1; `PwshShell` tinggal mengimplementasikan trait ini)
 - [ ] `PwshShell`:
   - [ ] deteksi `pwsh.exe` (7.x) → fallback `powershell.exe` (5.1); catat versi di `status()`
   - [ ] `exec`: proses tersembunyi (`CREATE_NO_WINDOW`), `-EncodedCommand` (UTF-16LE → base64), cwd = workspace
@@ -194,6 +218,7 @@ Arka-agent/
 - [ ] Guard: tolak perintah kosong; tolak `-EncodedCommand` ganda; batas panjang output (potong di `batas output tool`)
 - [ ] `Mutex` global eksekusi (satu perintah sekaligus), seperti `TOOL_LOCK`
 - [ ] Unit test: preamble+encode round-trip, parsing exit code, deteksi PS7 vs 5.1 (mock), traversal guard
+- [ ] Daftarkan `PwshShell` + `DpapiSecretStore` dari `main.rs` (`shell::init`, `secret::init`)
 **Selesai bila:** di Windows `run_command` mengembalikan `Get-ChildItem` dari workspace, output UTF-8 benar (emoji/日本語 utuh), dan tombol Stop benar-benar mematikan `python -c "import time; time.sleep(60)"` beserta anak prosesnya.
 
 ### M3 — Kerangka UI + tema (3–4 hari)

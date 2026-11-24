@@ -4,6 +4,7 @@
 //! meneruskan tiap potongan ke UI sekaligus memeriksa tombol Stop tanpa
 //! memaksa satu sama lain meminjam `JNIEnv`.
 
+use crate::paths::Platform;
 use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -53,28 +54,6 @@ pub struct ToolCall {
     pub name: String,
     pub arguments: String,
 }
-
-/// Konteks yang disisipkan ke setiap sesi chat (lihat `chatStream`).
-///
-/// Tanpa ini model mengira aplikasi hanya chatbot biasa dan menjawab "aku
-/// tidak punya akses ke terminal/Ubuntumu" ketika pengguna meminta pengecekan.
-/// Prompt ini menjelaskan peran ganda: model adalah "otak" agent, sedangkan
-/// eksekusi perintah dilakukan lewat tab Terminal di perangkat pengguna.
-pub const SYSTEM_PROMPT: &str = r#"Kamu adalah Arka Agent, asisten AI di aplikasi Android Arka Agent.
-
-Aplikasi ini memiliki workspace Ubuntu 24.04 asli yang berjalan di perangkat pengguna melalui proot. Folder kerjanya adalah /root/storage.
-
-KAMU PUNYA TOOL bernama `run_command`. Tool ini menjalankan perintah bash di Ubuntu pengguna dan mengembalikan stdout/stderr-nya.
-
-Aturan penggunaan tool:
-- Jika pengguna meminta kamu mengecek, menjalankan, menguji, atau memverifikasi sesuatu di Ubuntu / terminal / file, LANGSUNG panggil `run_command` dengan perintah yang tepat. JANGAN menjawab bahwa kamu tidak bisa mengakses terminal, jangan mengaku hanya berjalan di server AI, dan jangan menyuruh pengguna menjalankan sendiri.
-- Gunakan perintah non-interaktif. Contoh: `cat /etc/os-release`, `uname -m`, `python3 --version`, `git --version`, `ls -la /root/storage`, `which git curl wget python3`.
-- Setelah tool mengembalikan hasil, analisis output itu dan jawab dalam bahasa pengguna. Kalau perintah gagal, coba perbaiki perintahnya (maksimal beberapa kali).
-- Untuk pertanyaan umum yang tidak perlu dieksekusi, jawab biasa tanpa tool.
-
-Tool lain: `install_skill`, `delete_skill`, `edit_skill`, `set_skill_config`, dan `ask_user`. Empat tool skill Membutuhkan persetujuan pengguna: UI akan menampilkan kartu berisi aksi dan detail, lalu kamu harus menunggu jawaban sebelum mengklaim berhasil. Kalau pengguna menolak, katakan dengan jujur bahwa aksi dibatalkan. Gunakan `ask_user` kalau kamu butuh memilih salah satu dari beberapa opsi; sampaikan pilihan yang dipilih pengguna dalam jawabanmu. `ask_user` juga menerima argumen `files` berisi daftar path file di `/root/storage` (maksimal 5; gambar, video, atau suara) supaya kartu pertanyaan menampilkan pratinjau semua file itu sebelum pengguna menjawab. Argumen tunggal `file` masih diterima untuk kompatibilitas. Skill tersimpan di `~/.claude/skills/<nama>/SKILL.md` di Ubuntu dan config-nya di `~/.config/<nama>/config.json`.
-- Jangan mengaku sedang berjalan di dalam Ubuntu; katakan kamu menjalankan perintah di Ubuntu milik pengguna lewat tool Arka Agent.
-- Jawab dalam bahasa pengguna (default Bahasa Indonesia). Jika ditanya siapa kamu, jawab: "Aku Arka Agent, asisten AI di aplikasi Arka Agent yang bisa menjalankan perintah di workspace Ubuntu-mu."#;
 
 fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
@@ -134,181 +113,6 @@ fn auth_headers(rb: reqwest::blocking::RequestBuilder, p: &Provider) -> reqwest:
     }
 }
 
-/// Definisi tool yang dikirim ke provider.
-///
-/// `run_command` bebas langsung. Semua tool yang mengubah skill dan tool
-/// bertanya BUTUH persetujuan pengguna; UI menampilkan kartu dialog dan
-/// agent loop menunggu jawaban sebelum melanjutkan.
-fn tools_schema() -> Value {
-    json!([{
-        "type": "function",
-        "function": {
-            "name": "run_command",
-            "description": "Jalankan perintah bash non-interaktif di workspace Ubuntu 24.04 di perangkat pengguna. Mengembalikan stdout/stderr. Pakai tool ini setiap kali perlu mengecek atau menjalankan sesuatu di Ubuntu/terminal/file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Perintah shell yang dijalankan di /root/storage. Contoh: 'cat /etc/os-release' atau 'python3 --version'.",
-                    }
-                },
-                "required": ["command"],
-            }
-        }
-    }, {
-        "type": "function",
-        "function": {
-            "name": "install_skill",
-            "description": "Pasang skill format Claude (SKILL.md) dari URL file .md atau repo GitHub publik. Membutuhkan persetujuan pengguna. Skill tersimpan di ~/.claude/skills/<nama>/SKILL.md di Ubuntu.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "URL SKILL.md atau repo GitHub." }
-                },
-                "required": ["url"],
-            }
-        }
-    }, {
-        "type": "function",
-        "function": {
-            "name": "delete_skill",
-            "description": "Hapus skill yang terpasang dari ~/.claude/skills. Membutuhkan persetujuan pengguna.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Nama skill." }
-                },
-                "required": ["name"],
-            }
-        }
-    }, {
-        "type": "function",
-        "function": {
-            "name": "edit_skill",
-            "description": "Ganti seluruh isi SKILL.md sebuah skill. Membutuhkan persetujuan pengguna.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Nama skill." },
-                    "content": { "type": "string", "description": "Isi SKILL.md lengkap dengan frontmatter name/description." }
-                },
-                "required": ["name", "content"],
-            }
-        }
-    }, {
-        "type": "function",
-        "function": {
-            "name": "set_skill_config",
-            "description": "Ubah satu kunci konfigurasi skill di ~/.config/<nama>/config.json. Membutuhkan persetujuan pengguna.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Nama skill." },
-                    "key": { "type": "string", "description": "Kunci config, mis. defaultMode." },
-                    "value": { "type": "string", "description": "Nilai config, mis. ultra." }
-                },
-                "required": ["name", "key", "value"],
-            }
-        }
-    }, {
-        "type": "function",
-        "function": {
-            "name": "ask_user",
-            "description": "Tanyakan sesuatu kepada pengguna dengan beberapa pilihan jawaban. Pakai ini kalau kamu butuh keputusan/garis pilihan sebelum melanjutkan. UI menampilkan kartu pertanyaan.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": { "type": "string", "description": "Pertanyaan untuk pengguna." },
-                    "options": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Daftar pilihan jawaban (minimal 2).",
-                    },
-                    "file": {
-                        "type": "string",
-                        "description": "Opsional (kompatibel): satu path file untuk preview.",
-                    },
-                    "files": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Opsional: daftar path file di workspace Ubuntu untuk ditampilkan sebagai preview (gambar/video/suara). Maksimal 5 file. Contoh: ['/root/storage/a.png', '/root/storage/demo.mp4']",
-                    }
-                },
-                "required": ["question", "options"],
-            }
-        }
-    }])
-}
-
-fn anthropic_tools_schema() -> Value {
-    json!([{
-        "name": "run_command",
-        "description": "Jalankan perintah bash non-interaktif di workspace Ubuntu 24.04 di perangkat pengguna. Mengembalikan stdout/stderr. Pakai setiap kali perlu mengecek atau menjalankan sesuatu di Ubuntu/terminal/file.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Perintah shell yang dijalankan di /root/storage.",
-                }
-            },
-            "required": ["command"],
-        }
-    }, {
-        "name": "install_skill",
-        "description": "Pasang skill format Claude (SKILL.md) dari URL file .md atau repo GitHub publik. Membutuhkan persetujuan pengguna.",
-        "input_schema": {
-            "type": "object",
-            "properties": { "url": { "type": "string", "description": "URL SKILL.md atau repo GitHub." } },
-            "required": ["url"],
-        }
-    }, {
-        "name": "delete_skill",
-        "description": "Hapus skill terpasang. Membutuhkan persetujuan pengguna.",
-        "input_schema": {
-            "type": "object",
-            "properties": { "name": { "type": "string", "description": "Nama skill." } },
-            "required": ["name"],
-        }
-    }, {
-        "name": "edit_skill",
-        "description": "Ganti seluruh isi SKILL.md sebuah skill. Membutuhkan persetujuan pengguna.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "description": "Nama skill." },
-                "content": { "type": "string", "description": "Isi SKILL.md lengkap." }
-            },
-            "required": ["name", "content"],
-        }
-    }, {
-        "name": "set_skill_config",
-        "description": "Ubah konfigurasi skill di ~/.config/<nama>/config.json. Membutuhkan persetujuan pengguna.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": { "type": "string", "description": "Nama skill." },
-                "key": { "type": "string", "description": "Kunci config." },
-                "value": { "type": "string", "description": "Nilai config." }
-            },
-            "required": ["name", "key", "value"],
-        }
-    }, {
-        "name": "ask_user",
-        "description": "Tanyakan sesuatu ke pengguna dengan beberapa pilihan. UI menampilkan kartu pertanyaan.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "question": { "type": "string", "description": "Pertanyaan." },
-                "options": { "type": "array", "items": { "type": "string" }, "description": "Pilihan jawaban." },
-                "file": { "type": "string", "description": "Opsional: satu path file untuk preview." },
-                "files": { "type": "array", "items": { "type": "string" }, "description": "Opsional: daftar path file workspace untuk preview. Maksimal 5 file." }
-            },
-            "required": ["question", "options"],
-        }
-    }])
-}
 
 fn message_value(anthropic: bool, m: &ChatMsg) -> Value {
     let content = if let Some(blocks) = &m.blocks {
@@ -336,6 +140,7 @@ fn request_body(
     messages: &[ChatMsg],
     with_tools: bool,
     include_usage: bool,
+    platform: Platform,
 ) -> Value {
     let system = messages.iter().find(|m| m.role == "system").map(|m| m.content.clone());
     let rest: Vec<Value> = messages.iter()
@@ -351,7 +156,7 @@ fn request_body(
             "messages": rest,
         });
         if with_tools {
-            v["tools"] = anthropic_tools_schema();
+            v["tools"] = crate::prompt::anthropic_tools_schema(platform);
         }
         v
     } else {
@@ -373,7 +178,7 @@ fn request_body(
             v["stream_options"] = json!({"include_usage": true});
         }
         if with_tools {
-            v["tools"] = tools_schema();
+            v["tools"] = crate::prompt::tools_schema(platform);
             v["tool_choice"] = json!("auto");
         }
         v
@@ -396,8 +201,13 @@ impl ChatStream {
     ///
     /// Provider yang tidak mendukung function calling ditanya ulang tanpa
     /// tools supaya chat biasa tetap berfungsi (fallback).
-    pub fn open(provider: &Provider, model: &str, messages: &[ChatMsg]) -> Result<Self, String> {
-        Self::open_inner(provider, model, messages, true)
+    pub fn open(
+        provider: &Provider,
+        model: &str,
+        messages: &[ChatMsg],
+        platform: Platform,
+    ) -> Result<Self, String> {
+        Self::open_inner(provider, model, messages, true, platform)
     }
 
     /// Seperti [open], tetapi tanpa tool schema. Dipakai untuk peringkasan
@@ -407,7 +217,7 @@ impl ChatStream {
         model: &str,
         messages: &[ChatMsg],
     ) -> Result<Self, String> {
-        Self::open_inner(provider, model, messages, false)
+        Self::open_inner(provider, model, messages, false, Platform::Android)
     }
 
     fn open_inner(
@@ -415,6 +225,7 @@ impl ChatStream {
         model: &str,
         messages: &[ChatMsg],
         allow_tools: bool,
+        platform: Platform,
     ) -> Result<Self, String> {
         if provider.api_key.trim().is_empty() {
             return Err(format!(
@@ -441,7 +252,7 @@ impl ChatStream {
             &[(false, true), (false, false)]
         };
         for &(with_tools, include_usage) in combos {
-            let body = request_body(anthropic, model, messages, with_tools, include_usage);
+            let body = request_body(anthropic, model, messages, with_tools, include_usage, platform);
             let resp = auth_headers(client()?.post(&url).json(&body), provider)
                 .send()
                 .map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
@@ -742,7 +553,7 @@ mod tests {
             ChatMsg::plain("system", "aturan penting"),
             ChatMsg::plain("user", "halo"),
         ];
-        let body = request_body(false, "m", &msgs, false, false);
+        let body = request_body(false, "m", &msgs, false, false, Platform::Android);
         let arr = body["messages"].as_array().unwrap();
         assert_eq!(arr[0]["role"], "system");
         assert_eq!(arr[0]["content"], "aturan penting");
@@ -755,7 +566,7 @@ mod tests {
             ChatMsg::plain("system", "aturan"),
             ChatMsg::plain("user", "halo"),
         ];
-        let body = request_body(true, "m", &msgs, false, false);
+        let body = request_body(true, "m", &msgs, false, false, Platform::Android);
         assert_eq!(body["system"], "aturan");
         assert_eq!(body["messages"].as_array().unwrap().len(), 1);
     }

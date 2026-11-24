@@ -9,7 +9,7 @@
 //! bisa melihat/mengubahnya lewat `run_command`, jadi tidak ada perbedaan
 //! antara "skill di aplikasi" dan "skill di filesystem" seperti sebelumnya.
 
-use crate::ctx;
+use crate::paths;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -30,12 +30,11 @@ pub struct Skill {
 }
 
 fn skills_root() -> Result<PathBuf, String> {
-    Ok(ctx::rootfs_dir()?.join("root/.claude/skills"))
+    paths::skills_dir()
 }
 
 fn config_path(name: &str) -> Result<PathBuf, String> {
-    Ok(ctx::rootfs_dir()?
-        .join("root/.config")
+    Ok(paths::skills_config_dir()?
         .join(sanitize_id(name))
         .join("config.json"))
 }
@@ -163,16 +162,20 @@ pub fn list() -> Vec<Skill> {
     out
 }
 
-/// Bagian system prompt yang berisi semua skill dari proot.
+/// Bagian system prompt yang berisi semua skill yang terpasang.
+///
+/// Teks pembukanya memakai path skill platform aktif (bukan hardcode
+/// `~/.claude/skills` di Ubuntu) supaya build Windows tidak menyebut Linux.
 pub fn system_prompt_section() -> String {
     let skills = list();
     if skills.is_empty() {
         return String::new();
     }
-    let mut out = String::from(
-        "## Skill agen\n\
-         Skill berikut tersimpan di `~/.claude/skills` di Ubuntu. Gunakan yang \
-         relevan dengan permintaan pengguna dan ikuti instruksinya.\n",
+    let dir = paths::get()
+        .map(|p| p.skills_dir.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "~/.claude/skills".to_string());
+    let mut out = format!(
+        "## Skill agen\nSkill berikut tersimpan di `{dir}`. Gunakan yang relevan dengan permintaan pengguna dan ikuti instruksinya.\n"
     );
     let mut used = 0usize;
     for s in skills {

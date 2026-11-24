@@ -152,18 +152,33 @@ arka-agent/
 │   │   └── build.gradle
 │   └── gradle.properties
 │
-├── crates/arka-core/                 # Rust (Logic, Cargo workspace)
+├── crates/arka-core/                 # Rust (logika portabel, Cargo workspace)
 │   ├── Cargo.toml
-│   ├── src/
-│   │   ├── lib.rs                    # JNI Exports
-│   │   ├── proot_manager.rs          # PRoot + Ubuntu 24
-│   │   ├── ai.rs                     # AI Logic
-│   │   ├── file.rs                   # File Management
-│   │   ├── session.rs                # Session Management
-│   │   ├── provider.rs               # Provider Management
-│   │   ├── terminal.rs               # Terminal Logic
-│   │   └── settings.rs               # Settings Logic
-│   └── build.rs
+│   ├── prompt/{android,windows}.md   # Prompt pack per platform
+│   └── src/
+│       ├── lib.rs                    # Deklarasi modul (tanpa JNI)
+│       ├── agent.rs                  # Agent loop (tool, streaming, cancel)
+│       ├── events.rs                 # trait Events → UI platform
+│       ├── paths.rs                  # AppPaths + Platform
+│       ├── prompt.rs                 # Prompt + skema tool per platform
+│       ├── secret.rs                 # SecretStore (Noop/DPAPI)
+│       ├── shell.rs                  # trait Shell (proot/PowerShell)
+│       ├── ui.rs                     # Persetujuan, pertanyaan, pratinjau
+│       ├── ai.rs                     # AI Logic
+│       ├── file.rs                   # File Management
+│       ├── session.rs                # Session Management
+│       ├── provider.rs               # Provider Management
+│       ├── terminal.rs               # Terminal Logic
+│       └── settings.rs               # Settings Logic
+│
+├── crates/arka-android/              # Shim JNI + proot (khusus Android)
+│   ├── Cargo.toml
+│   └── src/
+│       ├── lib.rs                    # JNI Exports (Java_com_arka_agent_core_Arka_*)
+│       ├── events.rs                 # JniEvents
+│       ├── ctx.rs                    # path rootfs/native lib
+│       ├── proot_manager.rs          # PRoot + Ubuntu 24 + ProotShell
+│       └── jni_util.rs               # Pemanggil method Kotlin
 │
 ├── assets/                           # Assets
 │   └── proot                         # PRoot binary (ARM64)

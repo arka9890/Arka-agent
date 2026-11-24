@@ -94,12 +94,16 @@ pub fn list() -> Result<Vec<Provider>, String> {
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], row_to_provider).map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        let mut list = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        for p in &mut list {
+            reveal_key(p);
+        }
+        Ok(list)
     })
 }
 
 pub fn get(id: &str) -> Result<Provider, String> {
-    db::with(|c| {
+    let mut p = db::with(|c| {
         c.query_row(
             "SELECT id, name, kind, base_url, api_key, model, is_default, created_at, models
              FROM providers WHERE id = ?1",
@@ -107,7 +111,23 @@ pub fn get(id: &str) -> Result<Provider, String> {
             row_to_provider,
         )
         .map_err(|_| "Provider tidak ditemukan".to_string())
-    })
+    })?;
+    reveal_key(&mut p);
+    Ok(p)
+}
+
+/// Buka API key yang tersimpan (lihat [`crate::secret`]).
+///
+/// Android: nilai sudah didekripsi Kotlin, store Noop → tidak berubah.
+/// Windows: nilai berprefix `dpapi:` dibuka DPAPI; data plaintext lama
+/// dikembalikan apa adanya (migrasi dilakukan saat disimpan lagi).
+fn reveal_key(p: &mut Provider) {
+    if p.api_key.is_empty() {
+        return;
+    }
+    if let Ok(plain) = crate::secret::unprotect(&p.api_key) {
+        p.api_key = plain;
+    }
 }
 
 fn parse_models(raw: &str) -> Vec<String> {
@@ -151,6 +171,8 @@ pub fn save(mut p: Provider) -> Result<Provider, String> {
         models.insert(0, p.model.trim().to_string());
     }
     let models_json = serde_json::to_string(&models).unwrap_or_else(|_| "[]".into());
+    // Android: Noop (Kotlin sudah mengenkripsi). Windows: DPAPI.
+    let stored_key = crate::secret::protect(p.api_key.trim())?;
     db::with(|c| {
         c.execute(
             "INSERT INTO providers (id, name, kind, base_url, api_key, model, models, is_default, created_at)
@@ -162,7 +184,7 @@ pub fn save(mut p: Provider) -> Result<Provider, String> {
                 p.name.trim(),
                 p.kind,
                 p.base_url,
-                p.api_key.trim(),
+                stored_key,
                 p.model.trim(),
                 models_json,
                 if p.is_default { 1 } else { 0 },
