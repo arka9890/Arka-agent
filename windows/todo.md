@@ -392,6 +392,12 @@ pratinjau file.
   `cargo check --target x86_64-pc-windows-msvc` pada crate terpisah berisi salinan apa adanya
   dari fungsi di `bubble.rs` — bukan tebakan bahwa nama modulnya benar
 
+- **CI hijau** di `f0e0072`:
+  - `Build & Test` [45340964816](https://github.com/arka9890/Arka-agent/actions/runs/45340964816) — 4 job success
+  - `Desktop (Windows)` [45340964783](https://github.com/arka9890/Arka-agent/actions/runs/45340964783) —
+    `cargo test` linux **74 lulus**, dan **67 test GUI lulus di Windows sungguhan** (selisih 7 =
+    test `pump`/`script`/`selftest` yang memakai `/bin/sh`), plus `--selftest` 4/4 PASS.
+
 #### Dua bug yang ditemukan saat M4
 1. **`0.5` jam terpotong ke arah nol.** Format jam memakai `/` biasa, jadi geseran −5 jam dari
    00:30 menghasilkan 20:30, bukan 19:30. Diperbaiki dengan `div_euclid` + `rem_euclid`, dan
