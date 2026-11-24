@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Rootfs resmi Ubuntu 24.04 (ubuntu-base, ±30 MB terkompresi / ±110 MB
 /// terpasang). Dipilih daripada proot-distro karena ukurannya jauh lebih kecil
@@ -307,7 +307,7 @@ fn install_tools(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
          apt-get update -qq && apt-get install -y -qq --no-install-recommends {pkgs} && \
          echo ARKA_TOOLS_OK"
     );
-    let (code, out) = run_capture(&script, cancel, &mut |chunk| ev.output(chunk))?;
+    let (code, out) = run_capture(&script, cancel, &mut |chunk| ev.output(chunk), None)?;
     if out.contains("ARKA_TOOLS_OK") {
         Ok(())
     } else {
@@ -489,11 +489,16 @@ pub fn run_capture(
     command: &str,
     cancel: &AtomicBool,
     on_chunk: &mut dyn FnMut(&str),
+    timeout: Option<Duration>,
 ) -> Result<(i32, String), String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Ok((-1, String::new()));
+    }
     let _tool_guard = TOOL_LOCK.lock().map_err(|e| format!("Lock tool rusak: {e}"))?;
     if cancel.load(Ordering::Relaxed) {
         return Ok((-1, String::new()));
     }
+    let deadline = timeout.map(|d| Instant::now() + d);
     // Folder tmp unik per proses → dua tool dari sesi berbeda tidak saling
     // menimpa file internal proot. Dibersihkan setelah child selesai.
     let tmp = proot_run_tmp_dir()?;
@@ -533,7 +538,13 @@ pub fn run_capture(
     drop(tx);
 
     let mut collected = String::new();
+    let mut timed_out = false;
     loop {
+        if deadline.map(|d| Instant::now() >= d).unwrap_or(false) {
+            let _ = child.kill();
+            timed_out = true;
+            break;
+        }
         match rx.recv_timeout(Duration::from_millis(120)) {
             Ok(chunk) => {
                 collected.push_str(&chunk);
@@ -561,6 +572,9 @@ pub fn run_capture(
         on_chunk(&chunk);
     }
     let status = child.wait().map_err(|e| e.to_string())?;
+    if timed_out {
+        return Ok((-2, collected));
+    }
     if cancel.load(Ordering::Relaxed) {
         return Ok((-1, collected));
     }
@@ -580,6 +594,7 @@ pub fn diagnostic() -> Result<String, String> {
          ls -a /root/storage | head",
         &cancel,
         &mut |_| {},
+        None,
     )?;
     Ok(format!("exit {code}\n{out}"))
 }
@@ -625,11 +640,18 @@ impl Shell for ProotShell {
         if command.trim().is_empty() {
             return Err("Perintah kosong".into());
         }
-        let (code, output) = run_capture(command, cancel, on_chunk)?;
+        // 120 detik per perintah: satu perintah macet tidak boleh menghentikan
+        // seluruh antrean TOOL_LOCK dan semua chat lain.
+        let (code, output) = run_capture(
+            command,
+            cancel,
+            on_chunk,
+            Some(Duration::from_secs(120)),
+        )?;
         Ok(ExecOutcome {
             code,
             output,
-            timed_out: false,
+            timed_out: code == -2,
             canceled: cancel.load(Ordering::Relaxed),
         })
     }

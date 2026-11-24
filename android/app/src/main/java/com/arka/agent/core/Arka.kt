@@ -124,6 +124,9 @@ object Arka {
 
         /** Model bertanya dengan beberapa pilihan jawaban. */
         fun onQuestion(requestJson: String)
+
+        /** Progres agent (putaran tool ke berapa, status ringkas). */
+        fun onProgress(percent: Int, label: String)
     }
 
     /** Callback progres unduh/pasang Ubuntu 24. */

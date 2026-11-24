@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -93,6 +94,7 @@ fun ChatScreen(vm: MainViewModel) {
     val messages by vm.messages.collectAsState()
     val streaming by vm.streamingText.collectAsState()
     val busy by vm.busy.collectAsState()
+    val agentStatus by vm.agentStatus.collectAsState()
     val settings by vm.settings.collectAsState()
     val providers by vm.providers.collectAsState()
     val approval by vm.approval.collectAsState()
@@ -520,6 +522,26 @@ private fun MessageList(
                         onCopy = onCopy,
                         onDownload = onDownload,
                     )
+                }
+            }
+            if (busy && agentStatus.isNotBlank()) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = Space.sm),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = clay.accent,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.width(Space.xs))
+                        Text(
+                            agentStatus,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = clay.accent,
+                        )
+                    }
                 }
             }
             if (messages.isEmpty() && streaming.isEmpty()) {

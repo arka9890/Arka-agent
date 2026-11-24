@@ -20,6 +20,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// Permintaan satu putaran chat dari UI.
 #[derive(Clone, Debug, Default)]
@@ -163,7 +164,29 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
     let mut context_retries = 0usize;
     let platform = platform();
 
+    // Deadline total: tanpa ini satu balasan bisa berjalan berjam-jam dan
+    // terasa seperti freeze (apalagi kalau model/combo lambat).
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(settings::chat_timeout_secs());
+    ev.progress(0, "Menyiapkan jawaban…");
+
     loop {
+        if cancel.load(Ordering::SeqCst) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            final_text.push_str(&format!(
+                "\n\n_(Batas waktu {} menit tercapai. Naikkan 'Batas waktu chat' di Setelan → Agent kalau tugas belum selesai.)_",
+                settings::chat_timeout_secs() / 60
+            ));
+            break;
+        }
+        let percent = ((rounds * 100) / max_tool_rounds.max(1)).min(99) as i32;
+        ev.progress(
+            percent,
+            &format!("Putaran {}/{} — menunggu model…", rounds + 1, max_tool_rounds),
+        );
+
         // Output tool dari putaran sebelumnya bisa membengkakkan konteks di
         // tengah tugas. Pangkas output paling lama, bukan pesan terbaru.
         memory::fit_tool_outputs(&mut msgs, effective_budget);
@@ -175,22 +198,25 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
                     && effective_budget > settings::CONTEXT_BUDGET_MIN
                     && ai::is_context_error(&e) =>
             {
+                if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                    break;
+                }
                 context_retries += 1;
                 effective_budget = (effective_budget / 2).max(settings::CONTEXT_BUDGET_MIN);
-                if rounds == 0 {
-                    msgs = memory::prepare(
-                        &p,
-                        &model,
-                        &session_id,
-                        msgs,
-                        effective_budget,
-                        cancel.as_ref(),
-                    );
-                } else {
-                    // Sudah ada tool call: urutan pesan tidak boleh diubah,
-                    // cukup pangkas output tool lebih agresif.
-                    memory::fit_tool_outputs(&mut msgs, effective_budget);
-                }
+                ev.progress(
+                    percent,
+                    "Konteks terlalu panjang — meringkas riwayat…",
+                );
+                // `prepare` hanya menyaring pesan lama berdasarkan created_at
+                // dan menyimpan urutan relatif, jadi aman dipanggil ulang.
+                msgs = memory::prepare(
+                    &p,
+                    &model,
+                    &session_id,
+                    msgs,
+                    effective_budget,
+                    cancel.as_ref(),
+                );
                 continue;
             }
             Err(e) => {
@@ -201,7 +227,7 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
         let mut answer = String::new();
         let mut stream_error: Option<String> = None;
         while let Some(item) = stream.next() {
-            if cancel.load(Ordering::SeqCst) {
+            if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
                 break;
             }
             match item {
@@ -241,7 +267,15 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
         }
         rounds += 1;
 
-        for call in calls {
+        let call_count = calls.len();
+        for (tool_index, call) in calls.into_iter().enumerate() {
+            if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                break;
+            }
+            ev.progress(
+                percent,
+                &format!("Tool {}/{} berjalan…", tool_index + 1, call_count),
+            );
             let args: serde_json::Value =
                 serde_json::from_str(&call.arguments).unwrap_or_else(|_| json!({}));
             let arg = |key: &str| {
@@ -385,22 +419,27 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
                 _ => {
                     let command = arg("command");
                     if command.trim().is_empty() {
-                        continue;
-                    }
-                    match shell.exec(&command, &cancel, &mut |chunk| ev.output(chunk)) {
-                        Ok(outcome) => {
-                            let full = outcome.report();
-                            // Terminal boleh menampilkan lebih banyak; konteks
-                            // model dibatasi supaya tidak cepat penuh.
-                            (
-                                command.clone(),
-                                tail_chars(full.clone(), 20_000),
-                                tail_chars(full, tool_output_chars),
-                            )
-                        }
-                        Err(e) => {
-                            let msg = format!("Gagal menjalankan perintah: {e}");
-                            (command.clone(), msg.clone(), msg)
+                        // Jangan `continue`: kalau tidak ada pasangan
+                        // tool_call/tool_result, model bisa mengulang tool
+                        // kosong yang sama sampai habis batas putaran.
+                        let msg = "(model mengirim perintah kosong; tool dilewati)".to_string();
+                        ("(perintah kosong)".to_string(), msg.clone(), msg)
+                    } else {
+                        match shell.exec(&command, &cancel, &mut |chunk| ev.output(chunk)) {
+                            Ok(outcome) => {
+                                let full = outcome.report();
+                                // Terminal boleh menampilkan lebih banyak;
+                                // konteks model dibatasi supaya tidak cepat penuh.
+                                (
+                                    command.clone(),
+                                    tail_chars(full.clone(), 20_000),
+                                    tail_chars(full, tool_output_chars),
+                                )
+                            }
+                            Err(e) => {
+                                let msg = format!("Gagal menjalankan perintah: {e}");
+                                (command.clone(), msg.clone(), msg)
+                            }
                         }
                     }
                 }
@@ -479,6 +518,7 @@ pub fn chat(req: ChatRequest, ev: &dyn Events) -> Result<String, String> {
 
     match session::add_message(&session_id, "assistant", &final_text, "[]") {
         Ok(m) => {
+            ev.progress(100, "Selesai");
             ev.done(&final_text);
             Ok(m.id)
         }

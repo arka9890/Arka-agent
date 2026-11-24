@@ -131,6 +131,7 @@ class ArkaRepo(private val context: Context) {
         onTool: (String, String) -> Unit = { _, _ -> },
         onApproval: (ApprovalRequest) -> Unit = {},
         onQuestion: (QuestionRequest) -> Unit = {},
+        onProgress: (Int, String) -> Unit = { _, _ -> },
     ): Result<String> = io {
         runCatching {
             val payload = json.encodeToString(
@@ -156,6 +157,7 @@ class ArkaRepo(private val context: Context) {
                     override fun onQuestion(requestJson: String) = onQuestion(
                         json.decodeFromString(requestJson)
                     )
+                    override fun onProgress(percent: Int, label: String) = onProgress(percent, label)
                 },
             )
             error?.let { throw IllegalStateException(it) }

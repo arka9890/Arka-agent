@@ -34,6 +34,12 @@ pub const DEFAULT_TOOL_OUTPUT_CHARS: usize = 4_000;
 pub const TOOL_OUTPUT_CHARS_MIN: usize = 1_000;
 pub const TOOL_OUTPUT_CHARS_MAX: usize = 20_000;
 
+/// Batas waktu total satu balasan agent (detik). Mencegah satu chat berjalan
+/// berjam-jam tanpa bisa dibedakan dari "freeze". Masih bisa diatur pengguna.
+pub const DEFAULT_CHAT_TIMEOUT_SECS: u64 = 900;
+pub const CHAT_TIMEOUT_MIN: u64 = 60;
+pub const CHAT_TIMEOUT_MAX: u64 = 7200;
+
 /// Workspace bawaan: path platform aktif kalau sudah diketahui.
 ///
 /// Kalau `paths::init` belum dipanggil (mis. unit test), tebakan diambil dari
@@ -77,6 +83,7 @@ pub fn defaults() -> HashMap<&'static str, String> {
         ("auto_summary", "true".to_string()),
         ("context_budget", "24000".to_string()),
         ("tool_output_chars", "4000".to_string()),
+        ("chat_timeout_secs", "900".to_string()),
     ])
 }
 
@@ -140,6 +147,14 @@ pub fn context_budget() -> usize {
         .unwrap_or(DEFAULT_CONTEXT_BUDGET)
 }
 
+/// Batas waktu total satu balasan agent, sudah dijepit (detik).
+pub fn chat_timeout_secs() -> u64 {
+    get("chat_timeout_secs")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|n| n.clamp(CHAT_TIMEOUT_MIN, CHAT_TIMEOUT_MAX))
+        .unwrap_or(DEFAULT_CHAT_TIMEOUT_SECS)
+}
+
 /// Batas karakter output tool per perintah, sudah dijepit.
 pub fn tool_output_chars() -> usize {
     get("tool_output_chars")
@@ -198,6 +213,7 @@ mod tests {
         assert_eq!(d.get("auto_summary").map(String::as_str), Some("true"));
         assert_eq!(d.get("context_budget").map(String::as_str), Some("24000"));
         assert_eq!(d.get("tool_output_chars").map(String::as_str), Some("4000"));
+        assert_eq!(d.get("chat_timeout_secs").map(String::as_str), Some("900"));
         assert!(!d.get("workspace_path").unwrap().is_empty());
     }
 
@@ -206,5 +222,6 @@ mod tests {
         assert!(auto_summary());
         assert_eq!(context_budget(), DEFAULT_CONTEXT_BUDGET);
         assert_eq!(tool_output_chars(), DEFAULT_TOOL_OUTPUT_CHARS);
+        assert_eq!(chat_timeout_secs(), DEFAULT_CHAT_TIMEOUT_SECS);
     }
 }

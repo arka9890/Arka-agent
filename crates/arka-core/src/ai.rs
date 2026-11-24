@@ -270,6 +270,12 @@ impl ChatStream {
             last_error = describe_http_error(status, &text);
             // 400/422: biasanya "tools tidak didukung" atau
             // "stream_options tidak dikenal" — coba variasi berikutnya.
+            // Kecuali error konteks terlalu panjang: mencoba 4 varian tidak
+            // membantu dan hanya menambah latency. Biarkan agent loop yang
+            // mengatur ulang anggaran lewat memory::prepare.
+            if is_context_error(&last_error) {
+                return Err(last_error);
+            }
             if (400..=422).contains(&status) {
                 continue;
             }

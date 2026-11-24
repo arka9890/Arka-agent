@@ -65,6 +65,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
+    /** Status agent saat menunggu/berjalan, ditampilkan di bubble chat. */
+    private val _agentStatus = MutableStateFlow("")
+    val agentStatus: StateFlow<String> = _agentStatus.asStateFlow()
+
     private val _providers = MutableStateFlow<List<Provider>>(emptyList())
     val providers: StateFlow<List<Provider>> = _providers.asStateFlow()
 
@@ -282,11 +286,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             notify("Buat sesi baru dulu.")
             return
         }
-        // Sesi yang sedang mengetik boleh mengirim lagi; sesi lain tidak
-        // terganggu. Cek job milik sesi ini saja.
-        if (ChatEngine.isRunning(sessionId)) return
+        // Sesi lain tidak terganggu; kirim ke sesi yang masih sibuk ditolak
+        // dengan pesan yang jelas (dulu dibuang diam-diam → terasa freeze).
+        if (ChatEngine.isRunning(sessionId)) {
+            notify("Chat masih berjalan. Tekan Stop atau tunggu selesai.")
+            return
+        }
 
         _busy.value = true
+        _agentStatus.value = "Menyiapkan jawaban…"
         _streamingText.value = ""
         ChatEngine.clearBuffer(sessionId)
 
@@ -387,6 +395,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         _approval.value = request
                     },
                     onQuestion = { request -> _question.value = request },
+                    onProgress = { _, label -> _agentStatus.value = label },
                 )
 
                 result.onFailure { notify(it.message ?: "Gagal menghubungi AI") }
@@ -404,6 +413,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Chat selesai: kartu yang masih menggantung tidak relevan lagi.
                 _approval.value = null
                 _question.value = null
+                _agentStatus.value = ""
                 if (_currentSessionId.value == sessionId) {
                     _busy.value = false
                     _streamingText.value = ""
@@ -421,6 +431,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // eksekusi tool, jadi perintah lama ikut berhenti.
             runCatching { repo.cancelChat(sessionId) }
             ChatEngine.cancelJob(sessionId)
+            _agentStatus.value = ""
             if (_currentSessionId.value == sessionId) {
                 _busy.value = false
                 _streamingText.value = ""

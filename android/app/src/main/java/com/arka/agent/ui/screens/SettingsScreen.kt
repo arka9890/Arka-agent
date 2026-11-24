@@ -72,6 +72,8 @@ fun SettingsScreen(vm: MainViewModel) {
     var budgetDraft by remember { mutableStateOf("24000") }
     var showToolOutputDialog by remember { mutableStateOf(false) }
     var toolOutputDraft by remember { mutableStateOf("4000") }
+    var showTimeoutDialog by remember { mutableStateOf(false) }
+    var timeoutDraft by remember { mutableStateOf("900") }
 
     // Dimuat ulang setelah rootfs selesai dipasang supaya angka ukuran tidak
     // tertinggal di 0 B.
@@ -250,6 +252,30 @@ fun SettingsScreen(vm: MainViewModel) {
                     Spacer(Modifier.width(Space.sm))
                     TextButton(onClick = { toolOutputDraft = toolCharsValue.toString(); showToolOutputDialog = true }) {
                         Text("$toolCharsValue")
+                    }
+                }
+                Spacer(Modifier.height(Space.sm))
+                val timeoutValue = settings["chat_timeout_secs"]?.toIntOrNull() ?: 900
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Batas waktu chat", "Chat timeout", "チャットのタイムアウト"), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            tr(
+                                "Maksimal durasi satu balasan (60–7200 detik, default 900). Cegah chat berjalan terlalu lama.",
+                                "Max duration of one reply (60–7200 seconds, default 900). Prevents overly long runs.",
+                                "1回の返信の最大時間（60〜7200秒、既定900）。長時間の実行を防ぎます。",
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = clay.muted,
+                        )
+                    }
+                    Spacer(Modifier.width(Space.sm))
+                    TextButton(onClick = { timeoutDraft = timeoutValue.toString(); showTimeoutDialog = true }) {
+                        Text("${timeoutValue / 60} mnt")
                     }
                 }
                 Spacer(Modifier.height(Space.sm))
@@ -518,6 +544,49 @@ fun SettingsScreen(vm: MainViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showBudgetDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
+            },
+        )
+    }
+
+    if (showTimeoutDialog) {
+        val parsed = timeoutDraft.trim().toIntOrNull()
+        val valid = parsed != null && parsed in 60..7_200
+        AlertDialog(
+            onDismissRequest = { showTimeoutDialog = false },
+            title = { Text(tr("Batas waktu chat", "Chat timeout", "チャットのタイムアウト")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = timeoutDraft,
+                        onValueChange = { timeoutDraft = it.filter(Char::isDigit).take(4) },
+                        singleLine = true,
+                        label = { Text(tr("Detik", "Seconds", "秒")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        tr(
+                            "60–7200 detik. Default 900 (15 menit). Chat yang melewati batas dihentikan otomatis.",
+                            "60–7200 seconds. Default 900 (15 min). Chats exceeding the limit stop automatically.",
+                            "60〜7200秒。既定900秒（15分）。超過すると自動停止します。",
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = clay.muted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = valid,
+                    onClick = {
+                        vm.updateSetting("chat_timeout_secs", parsed.toString())
+                        showTimeoutDialog = false
+                    },
+                ) { Text(tr("Simpan", "Save", "保存")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimeoutDialog = false }) { Text(tr("Batal", "Cancel", "キャンセル")) }
             },
         )
     }
