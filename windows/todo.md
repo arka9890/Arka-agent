@@ -467,14 +467,74 @@ Catatan jujur (penyimpangan dari rencana):
 - **PDF: hanya jumlah halaman** (`lopdf`, murni Rust). Merender halaman 1 butuh `pdfium` (DLL per arsitektur) — sengaja dihindari karena bertentangan dengan "satu binary Rust tanpa DLL".
 - Rupa akhir di layar Windows tetap perlu tangkapan layar darimu.
 
-### M7 — Terminal + status shell (2–3 hari)
-- [ ] Panel output monospace, auto-scroll, tombol Bersihkan
-- [ ] Input perintah + riwayat (↑/↓ + dropdown, maks 200)
-- [ ] Tombol Jalankan/Stop, exit code ditampilkan, "dihentikan pengguna"/"timeout"
-- [ ] Kartu status shell: PowerShell versi, OS, arsitektur, workspace + ukuran, tombol "Buka di Explorer"
-- [ ] Tombol "Tes shell" menampilkan hasil diagnostik
-- [ ] Hint: contoh perintah PowerShell yang umum (bukan bash)
+### M7 — Terminal + status shell (2–3 hari) — ✅ SELESAI
+- [x] Panel output monospace, auto-scroll, tombol Bersihkan
+- [x] Input perintah + riwayat (↑/↓ + dropdown, maks 200)
+- [x] Tombol Jalankan/Stop, exit code ditampilkan, "dihentikan pengguna"/"timeout"
+- [x] Kartu status shell: PowerShell versi, OS, arsitektur, workspace + ukuran, tombol "Buka di Explorer"
+- [x] Tombol "Tes shell" menampilkan hasil diagnostik
+- [x] Hint: contoh perintah PowerShell yang umum (bukan bash)
+- [x] **Tidak ada proses yang dijalankan dari `draw`** — deteksi shell, status mesin,
+      ukuran workspace, dan setiap perintah berjalan di thread latar
+- [x] Ukuran workspace dihitung di thread latar (rekursif: `node_modules` bisa
+      puluhan ribu berkas)
+- [x] Riwayat diuji murni tanpa UI: dedupe berurutan, batas 200 membuang yang
+      **tertua**, ↑↑ berhenti di perintah tertua (tidak membungkus), ↓ melewati
+      yang terbaru = kembali ke draft
 **Selesai bila:** `git clone`/`python`/`npm` dari Terminal Windows berjalan dan output terlihat real-time.
+
+#### Bukti (commit `375c185`)
+- `cargo test --workspace` lokal: **134** test desktop + **51** core.
+- `Desktop (Windows)` [45386370928](https://github.com/arka9890/Arka-agent/actions/runs/45386370928):
+  job `logika shell (linux)` **134 lulus**, job `shell PowerShell (windows)` **131 lulus** —
+  termasuk tiga test yang **hanya** bisa berjalan di Windows:
+  - `gui::term_job::tests::windows::output_terlihat_selagi_perintah_masih_berjalan ... ok`
+    → perintah `1..3 | ForEach-Object { "$_"; Start-Sleep -Milliseconds 300 }`: output
+    pertama terlihat **sementara perintah masih berjalan** (ini kriteria "real-time",
+    bukan sekadar "output benar setelah selesai")
+  - `gui::term_job::tests::windows::exit_code_native_sampai_ke_ui ... ok`
+    → `cmd /c exit 7` sampai ke UI sebagai exit 7, bukan "sukses"
+  - `gui::term_job::tests::windows::stop_menghentikan_perintah_panjang ... ok`
+    → `Start-Sleep -Seconds 30` berhenti < 10 dtk setelah Stop, dilaporkan
+    "dihentikan pengguna"
+- `--selftest` di runner yang sama: `4 pemeriksaan, 0 gagal`
+  (`Stop mematikan pohon proses — pid 676 hilang, 1,222 s`)
+- `Build & Test` [45386370964](https://github.com/arka9890/Arka-agent/actions/runs/45386370964): 4 job success
+  (Rust linux, Rust windows, `.so` arm64+armv7, `assembleDebug`) — kerjaan Windows
+  tidak merusak APK.
+- Test GUI tanpa jendela: `terminal_punya_kotak_perintah_dan_contoh_powershell`,
+  `panah_atas_dan_bawah_menelusuri_riwayat`, `tombol_stop_menggantikan_jalankan_saat_berjalan`,
+  `exit_code_ditampilkan_dengan_warna_yang_benar` (kedua tema),
+  `bersihkan_output_tidak_menghapus_riwayat`, `riwayat_bisa_dibuka_dan_dipilih`,
+  `isi_workspace_ditampilkan_setelah_dihitung`,
+  `kartu_status_menampilkan_versi_powershell`, `tes_shell_menampilkan_hasil_diagnostik`,
+  `tombol_ulangi_mengisi_perintah_terakhir`.
+
+#### Tiga cacat yang ditemukan **sebelum** commit
+1. **Deteksi shell masih sinkron di `draw`.** Komentar modul `terminal.rs` sudah
+   mengklaim "tidak ada proses yang dijalankan dari `draw`", tetapi `pwsh::detect()`
+   dipanggil langsung dari sana — dua proses PowerShell di frame pertama tab
+   Terminal, dan jendela membeku selama itu (termasuk tombol Stop). Sekarang
+   `ShellProbe::Probing` + thread + `request_repaint`, dan `checked()` menganggap
+   `Probing` sudah "checked" supaya tidak memulai pemeriksaan baru tiap frame.
+2. **Tombol "Ulangi" berjanji lain daripada perbuatannya**: labelnya potongan
+   **output**, tetapi klik-nya mengulang **perintah** dari riwayat. Sekarang label
+   = perintah terakhir.
+3. **Test warna exit code gagal di Linux**: membandingkan dengan `theme::DARK`
+   tanpa mematok tema, sedangkan tema `System` mengikuti OS (di Linux: terang).
+   Sekarang diuji pada **kedua** tema — dan itu juga membuktikan palet terang.
+
+#### Catatan jujur
+- **Rupa akhir di layar Windows** belum dibuktikan di sini (tanpa GPU/jendela);
+  test membuktikan tata letak, teks, warna yang dilukis, dan perilaku proses
+  sungguhan. Tangkapan layar dari mesinmu masih perlu ditambahkan.
+- `git clone`/`npm install` **nyata** dengan jaringan belum dijalankan sebagai test
+  (CI hanya menjalankan perintah lokal: `Start-Sleep`, `cmd /c exit`). Yang terbukti
+  adalah mekanismenya: output mengalir selagi berjalan, exit code native, dan Stop.
+- **Batas waktu perintah manual masih `None`** (`pwsh::DEFAULT_TIMEOUT`). Bisa
+  dihentikan lewat Stop, tetapi tidak berhenti sendiri. Setelan `tool_timeout_secs`
+  menyusul di M8.
+
 
 ### M8 — Setelan, notifikasi, tray (2–3 hari)
 - [ ] Semua kontrol §1.6 (tema, bahasa, font, auto-scroll, notifikasi, background, 3 batas angka + validasi rentang, system prompt editor, pilih workspace)
