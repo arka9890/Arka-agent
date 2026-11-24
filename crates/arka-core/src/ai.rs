@@ -9,6 +9,8 @@ use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
+use std::sync::{Mutex, OnceLock};
+use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -508,6 +510,240 @@ fn fetch_models(p: &Provider) -> Result<Vec<String>, String> {
     Ok(parsed.data.into_iter().map(|m| m.id).filter(|s| !s.is_empty()).collect())
 }
 
+// ---------------------------------------------------------------------------
+// Perkiraan jendela konteks model
+// ---------------------------------------------------------------------------
+//
+// Anggaran konteks dulu selalu 24.000 token berapa pun modelnya: model 8k
+// kena error konteks, model 128k dipaksa meringkas riwayat padahal ruangnya
+// masih lega. Dengan deteksi ini anggaran ikut kapasitas model sebenarnya.
+
+/// Slot hasil deteksi per `base_url|model`.
+///
+/// `Pending` mencegah beberapa chat yang berjalan bersamaan mengulang fetch
+/// ke `/models` pada waktu yang sama.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CtxSlot {
+    Pending,
+    Done(Option<usize>),
+}
+
+static CTX_CACHE: OnceLock<Mutex<HashMap<String, CtxSlot>>> = OnceLock::new();
+
+fn ctx_cache() -> &'static Mutex<HashMap<String, CtxSlot>> {
+    CTX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Jendela konteks (dalam token) untuk `model` pada provider `p`.
+///
+/// Urutan sumber, dari yang paling bisa dipercaya:
+/// 1. Endpoint `/models` — banyak gateway (OpenRouter, vLLM, LiteLLM, OmniRoute)
+///    menyertakan `context_length` / `context_window` / `max_model_len`.
+/// 2. Angka pada nama model (`qwen2.5-32k`, `llama-3.1-128k`).
+/// 3. Tabel keluarga model yang umum (claude, gpt-4o, dll).
+///
+/// Hasil di-cache per proses. Kalau tidak ada perkiraan lokal sama sekali,
+/// menunggu fetch paling lama 6 detik sebelum jatuh ke anggaran default.
+pub fn context_window(p: &Provider, model: &str) -> Option<usize> {
+    let model = model.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let key = format!("{}|{model}", p.base_url.trim());
+
+    if let Some(slot) = ctx_cache().lock().ok().and_then(|c| c.get(&key).copied()) {
+        return match slot {
+            CtxSlot::Done(v) => v,
+            // Fetch sedang berjalan di thread lain: jangan dobel, pakai
+            // perkiraan lokal saja.
+            CtxSlot::Pending => local_window(model),
+        };
+    }
+
+    let local = local_window(model);
+    if p.api_key.trim().is_empty() {
+        return local;
+    }
+    if let Ok(mut c) = ctx_cache().lock() {
+        c.insert(key.clone(), CtxSlot::Pending);
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    {
+        let p = p.clone();
+        let model = model.to_string();
+        let key = key.clone();
+        std::thread::spawn(move || {
+            let found = fetch_context_window(&p, &model);
+            if let Ok(mut c) = ctx_cache().lock() {
+                c.insert(key, CtxSlot::Done(found));
+            }
+            let _ = tx.send(found);
+        });
+    }
+    if local.is_some() {
+        // Sudah ada perkiraan yang layak dipakai: jangan menahan chat
+        // menunggu jaringan.
+        return local;
+    }
+    rx.recv_timeout(Duration::from_secs(6)).unwrap_or(None)
+}
+
+/// Perkiraan tanpa jaringan: dari nama model, lalu tabel keluarga.
+fn local_window(model: &str) -> Option<usize> {
+    window_from_name(model).or_else(|| window_from_family(model))
+}
+
+/// Ambil angka jendela konteks dari payload `GET /models`.
+fn fetch_context_window(p: &Provider, model: &str) -> Option<usize> {
+    let url = endpoint(p, "models");
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(8))
+        .build()
+        .ok()?;
+    let resp = auth_headers(client.get(&url), p).send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: Value = resp.json().ok()?;
+    let items = v
+        .get("data")
+        .and_then(Value::as_array)
+        .or_else(|| v.get("models").and_then(Value::as_array))?;
+    for it in items {
+        let id = it
+            .get("id")
+            .or_else(|| it.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if id.eq_ignore_ascii_case(model) || model.ends_with(id) || id.ends_with(model) {
+            if let Some(n) = window_in_value(it) {
+                return Some(n);
+            }
+        }
+    }
+    // Id bisa berbeda penamaan (prefix vendor). Hanya pakai baris pertama
+    // kalau dafturnya memang berisi satu model — jangan mengambil angka milik
+    // model lain.
+    if items.len() == 1 {
+        return window_in_value(&items[0]);
+    }
+    None
+}
+
+/// Kunci yang umum dipakai untuk menyimpan kapasitas konteks.
+const WINDOW_KEYS: [&str; 5] = [
+    "context_length",
+    "context_window",
+    "max_context_tokens",
+    "max_model_len",
+    "ctx_len",
+];
+
+fn window_in_value(v: &Value) -> Option<usize> {
+    for k in WINDOW_KEYS {
+        if let Some(n) = v.get(k).and_then(value_to_window) {
+            return Some(n);
+        }
+    }
+    v.get("details")
+        .and_then(|d| d.get("context_length"))
+        .and_then(value_to_window)
+}
+
+/// Angka yang masuk akal sebagai jendela konteks (>= 1000 token).
+/// `max_tokens` sengaja tidak dipakai: di sebagian besar API itu artinya
+/// batas output, bukan kapasitas konteks.
+fn value_to_window(v: &Value) -> Option<usize> {
+    let n = match v {
+        Value::Number(n) => n.as_u64()?,
+        Value::String(s) => s.trim().trim_end_matches(" tokens").trim().parse().ok()?,
+        _ => return None,
+    };
+    let n = n as usize;
+    (n >= 1_000 && n <= 10_000_000).then_some(n)
+}
+
+/// Baca angka + satuan `k` / `m` dari nama model, mis. `qwen2.5-32k` → 32.000.
+///
+/// Sengaja tidak mengangkat `8b`/`70b`: itu jumlah parameter, bukan konteks.
+fn window_from_name(model: &str) -> Option<usize> {
+    let m = model.rsplit('/').next().unwrap_or(model).to_lowercase();
+    let b = m.as_bytes();
+    let mut i = 0;
+    let mut best: Option<usize> = None;
+    while i < b.len() {
+        if !b[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+            i += 1;
+        }
+        let Ok(num) = m[start..i].trim_end_matches('.').parse::<f64>() else {
+            continue;
+        };
+        let unit = b.get(i).map(|c| (*c as char).to_ascii_lowercase());
+        // Batas kata: `32k-instruct`, `32k`, `2m.04` — bukan `32kllm` acak.
+        let after = b.get(i + 1).map(u8::is_ascii_alphanumeric).unwrap_or(false);
+        let n = match unit {
+            Some('k') if !after => (num * 1_000.0) as usize,
+            Some('m') if !after => (num * 1_000_000.0) as usize,
+            _ => continue,
+        };
+        if (1_000..=10_000_000).contains(&n) {
+            best = Some(best.map_or(n, |b: usize| b.max(n)));
+        }
+    }
+    best
+}
+
+/// Tabel keluarga model yang beredar umum di gateway.
+///
+/// Ini tebakan terakhir, jadi nilainya dibatasi anggaran aman oleh pemanggil
+/// (≈60% dari sini, maksimum 128k). Kalau meleset, mekanisme retry konteks
+/// yang sudah ada akan memangkas anggaran sendiri.
+fn window_from_family(model: &str) -> Option<usize> {
+    // Nama gateway sering berupa `vendor/model`.
+    let m = model.rsplit('/').next().unwrap_or(model).to_lowercase();
+    let has = |s: &str| m.contains(s);
+    if has("haiku") || has("sonnet") || has("opus") || has("claude") {
+        return Some(200_000);
+    }
+    if has("gpt-4o") || has("gpt-4.1") || has("gpt-4-turbo") || has("gpt-4.5") {
+        return Some(128_000);
+    }
+    if m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
+        return Some(200_000);
+    }
+    if has("gemini-1.5-pro") || has("gemini-2") || has("gemini-3") {
+        return Some(1_000_000);
+    }
+    if has("gpt-3.5") {
+        return Some(16_385);
+    }
+    if m.starts_with("gpt-4") {
+        return Some(8_192);
+    }
+    if has("deepseek") {
+        return Some(64_000);
+    }
+    if has("qwen") || has("glm") {
+        return Some(32_768);
+    }
+    if has("llama-3.1") || has("llama-3.3") || has("llama3.1") || has("llama3.3") {
+        return Some(128_000);
+    }
+    if has("mistral") || has("mixtral") {
+        return Some(32_000);
+    }
+    if has("gemma") || has("phi") {
+        return Some(8_192);
+    }
+    None
+}
+
 /// Daftar model untuk dropdown chat/provider — **tanpa network**.
 ///
 /// Pemanggilan lama selalu `GET /models` tiap kali dropdown dibuka sehingga
@@ -552,6 +788,52 @@ pub fn test_connection(p: &Provider) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_from_name_reads_k_and_m_suffixes() {
+        assert_eq!(window_from_name("qwen2.5-32k-instruct"), Some(32_000));
+        assert_eq!(window_from_name("llama-3.1-8b-instruct-128k"), Some(128_000));
+        assert_eq!(window_from_name("my-model-2m"), Some(2_000_000));
+        assert_eq!(window_from_name("provider/llama-3.3-70b-8k"), Some(8_000));
+    }
+
+    #[test]
+    fn window_from_name_ignores_parameter_counts() {
+        // `8b`/`14b` jumlah parameter, bukan jendela konteks.
+        assert_eq!(window_from_name("llama-3.1-8b"), None);
+        assert_eq!(window_from_name("deepseek-r1-distill-qwen-14b"), None);
+        // Tanggal rilis sering berupa angka: jangan tertukar.
+        assert_eq!(window_from_name("gpt-4o-2024-05-13"), None);
+        assert_eq!(window_from_name("claude-3-5-sonnet-20241022"), None);
+    }
+
+    #[test]
+    fn window_from_family_covers_common_models() {
+        assert_eq!(
+            window_from_family("anthropic/claude-3-5-sonnet-20241022"),
+            Some(200_000)
+        );
+        assert_eq!(window_from_family("gpt-4o-mini"), Some(128_000));
+        assert_eq!(window_from_family("gpt-3.5-turbo"), Some(16_385));
+        assert_eq!(window_from_family("openai/o1-preview"), Some(200_000));
+        assert_eq!(window_from_family("model-asing-tanpa-ket-riwayat"), None);
+    }
+
+    #[test]
+    fn window_value_rejects_tiny_and_output_only_numbers() {
+        // Angka terlalu kecil tidak mungkin jendela konteks.
+        assert_eq!(value_to_window(&json!(500)), None);
+        assert_eq!(value_to_window(&json!(4096)), Some(4_096));
+        assert_eq!(value_to_window(&json!(32768)), Some(32_768));
+        assert_eq!(value_to_window(&json!("131072")), Some(131_072));
+        assert_eq!(value_to_window(&json!(true)), None);
+        // `max_tokens` sengaja bukan kunci yang dibaca: artinya output.
+        assert_eq!(window_in_value(&json!({"max_tokens": 4096})), None);
+        assert_eq!(
+            window_in_value(&json!({"context_length": 32768})),
+            Some(32_768)
+        );
+    }
 
     #[test]
     fn openai_body_keeps_system_prompt() {

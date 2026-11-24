@@ -207,6 +207,25 @@ fun SettingsScreen(vm: MainViewModel) {
                     color = clay.muted,
                 )
                 Spacer(Modifier.height(Space.sm))
+                ToggleRow(
+                    label = tr(
+                        "Sesuaikan konteks otomatis",
+                        "Match context to model",
+                        "モデルに合わせてコンテキストを自動調整",
+                    ),
+                    checked = settings["context_auto"] != "false",
+                    onChange = { vm.updateSetting("context_auto", it.toString()) },
+                )
+                Text(
+                    tr(
+                        "Anggaran konteks mengikuti jendela konteks model yang terdeteksi (endpoint /models, nama model, atau keluarga model), jadi model besar tidak dipaksa meringkas riwayat dan model kecil tidak kena error konteks. Matikan untuk memakai 'Batas konteks' berapa pun modelnya.",
+                        "The context budget follows the model's detected context window (via /models, model name, or model family), so big models aren't forced to compact early and small ones don't hit context errors. Turn off to use 'Context budget' regardless of model.",
+                        "コンテキスト上限は検出されたモデルのコンテキストウィンドウ（/models・モデル名・モデルファミリー）に追従します。大きいモデルは早期要約を強いられず、小さいモデルはコンテキストエラーになりません。オフにすると「コンテキスト上限」が常に適用されます。",
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = clay.muted,
+                )
+                Spacer(Modifier.height(Space.sm))
                 val budgetValue = settings["context_budget"]?.toIntOrNull() ?: 24000
                 Row(
                     Modifier.fillMaxWidth(),
@@ -217,9 +236,9 @@ fun SettingsScreen(vm: MainViewModel) {
                         Text(tr("Batas konteks", "Context budget", "コンテキスト上限"), style = MaterialTheme.typography.bodyMedium)
                         Text(
                             tr(
-                                "Perkiraan token yang dikirim per request (4.000–128.000).",
-                                "Approximate tokens sent per request (4,000–128,000).",
-                                "1リクエストあたりの推定トークン数（4,000〜128,000）。",
+                                "Perkiraan token yang dikirim per request (4.000–128.000). Dipakai saat otomatis mati atau angka ini diubah.",
+                                "Approximate tokens sent per request (4,000–128,000). Used when auto-match is off or this value is changed.",
+                                "1リクエストあたりの推定トークン数（4,000〜128,000）。自動調整がオフか、この値を変更した場合に適用されます。",
                             ),
                             style = MaterialTheme.typography.labelSmall,
                             color = clay.muted,

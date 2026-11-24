@@ -168,9 +168,10 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
         req.model.clone()
     };
 
-    // Ringkas riwayat lama sebelum dikirim, supaya model kecil (combo/router
-    // 8k) tidak memotong awal percakapan tanpa terlihat.
-    let budget = settings::context_budget();
+    // Ringkas riwayat lama sebelum dikirim. Anggarannya otomatis mengikuti
+    // jendela konteks model, jadi model 128k tidak dipaksa meringkas di 24k
+    // dan model kecil tidak kena error konteks.
+    let budget = effective_context_budget(&p, &model);
     if settings::auto_summary() {
         msgs = memory::prepare(&p, &model, &session_id, msgs, budget, cancel.as_ref());
     }
@@ -198,7 +199,7 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
     // terasa seperti freeze (apalagi kalau model/combo lambat).
     let started = Instant::now();
     let deadline = started + Duration::from_secs(settings::chat_timeout_secs());
-    ev.progress(0, "Menyiapkan jawaban…");
+    ev.progress(0, &format!("Menyiapkan jawaban (konteks ±{budget} token)…"));
 
     loop {
         if cancel.load(Ordering::SeqCst) {
@@ -224,7 +225,10 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
             Ok(s) => s,
             Err(e)
                 if settings::auto_summary()
-                    && context_retries < 3
+                    // 5 kali: anggaran otomatis bisa jauh lebih besar dulu
+                    // (mis. 120k), jadi perlu ruang turun (60→30→15→7→4k)
+                    // sampai muat di model kecil.
+                    && context_retries < 5
                     && effective_budget > settings::CONTEXT_BUDGET_MIN
                     && ai::is_context_error(&e) =>
             {
@@ -739,6 +743,24 @@ Kalau tugas di luar kemampuanmu, katakan terus terang.",
     ) {
         Ok(_) => tail_chars(sub_ev.report(), output_chars),
         Err(e) => format!("Sub agent gagal: {e}"),
+    }
+}
+
+/// Anggaran konteks untuk satu chat.
+///
+/// Kalau pengguna mematikan otomatis atau sudah mengubah "Batas konteks"
+/// secara manual, angka itulah yang dipakai. Selain itu ikuti jendela konteks
+/// model yang terdeteksi (60% ruangnya, menyisakan tempat untuk jawaban baru
+/// dan system prompt) supaya konteks tidak dipangkas sia-sia pada model besar.
+fn effective_context_budget(p: &AiProvider, model: &str) -> usize {
+    let manual = settings::context_budget();
+    if !settings::context_auto() || manual != settings::DEFAULT_CONTEXT_BUDGET {
+        return manual;
+    }
+    match ai::context_window(p, model) {
+        Some(window) => (window * 6 / 10)
+            .clamp(settings::CONTEXT_BUDGET_MIN, settings::CONTEXT_BUDGET_MAX),
+        None => manual,
     }
 }
 

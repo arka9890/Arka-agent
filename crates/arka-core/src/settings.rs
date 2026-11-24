@@ -85,6 +85,7 @@ pub fn defaults() -> HashMap<&'static str, String> {
         ("context_budget", "24000".to_string()),
         ("tool_output_chars", "4000".to_string()),
         ("chat_timeout_secs", "900".to_string()),
+        ("context_auto", "true".to_string()),
     ])
 }
 
@@ -146,6 +147,15 @@ pub fn context_budget() -> usize {
         .and_then(|v| v.trim().parse::<usize>().ok())
         .map(|n| n.clamp(CONTEXT_BUDGET_MIN, CONTEXT_BUDGET_MAX))
         .unwrap_or(DEFAULT_CONTEXT_BUDGET)
+}
+
+/// Anggaran konteks otomatis mengikuti jendela konteks model (default aktif).
+///
+/// Matikan kalau mau memakai angka "Batas konteks" berapa pun modelnya.
+pub fn context_auto() -> bool {
+    get("context_auto")
+        .map(|v| v.trim() != "false")
+        .unwrap_or(true)
 }
 
 /// Batas waktu total satu balasan agent, sudah dijepit (detik).
@@ -218,6 +228,7 @@ mod tests {
         assert_eq!(d.get("context_budget").map(String::as_str), Some("24000"));
         assert_eq!(d.get("tool_output_chars").map(String::as_str), Some("4000"));
         assert_eq!(d.get("chat_timeout_secs").map(String::as_str), Some("900"));
+        assert_eq!(d.get("context_auto").map(String::as_str), Some("true"));
         assert!(!d.get("workspace_path").unwrap().is_empty());
     }
 
@@ -227,5 +238,6 @@ mod tests {
         assert_eq!(context_budget(), DEFAULT_CONTEXT_BUDGET);
         assert_eq!(tool_output_chars(), DEFAULT_TOOL_OUTPUT_CHARS);
         assert_eq!(chat_timeout_secs(), DEFAULT_CHAT_TIMEOUT_SECS);
+        assert!(context_auto());
     }
 }
