@@ -20,7 +20,9 @@ use arka_core::paths::AppPaths;
 
 use crate::gui::i18n::Lang;
 use crate::gui::engine::Msg;
-use crate::gui::state::{AppState, ApprovalCard, Modal, MsgView, Persisted, SessionRow, Tab};
+use crate::gui::state::{
+    AppState, ApprovalCard, Modal, MsgView, Persisted, ProvRow, ProviderForm, SessionRow, Tab,
+};
 use crate::gui::theme::{self, FontScale, ThemeMode};
 use crate::gui::ArkaGui;
 
@@ -564,4 +566,184 @@ fn kejadian_agent_mengalir_ke_state_chat() {
 
     h.gui.handle(Msg::Finished { session: "s1".into() }, &ctx);
     assert!(h.state().chat.streaming.is_empty());
+}
+
+// ── Kriteria "selesai bila" M5 (tab Provider) ───────────────────────────────
+
+fn baris_provider(id: &str, nama: &str, has_key: bool, unreadable: bool) -> ProvRow {
+    // Statistik sengaja berbeda per baris: kalau sama, teksnya tergambar
+    // berkali-kali dan test tidak bisa membuktikan baris mana yang benar.
+    let (tokens, requests) = match id {
+        "p1" => (12_345, 3),
+        "p3" => (999, 1),
+        _ => (0, 0),
+    };
+    ProvRow {
+        id: id.into(),
+        name: nama.into(),
+        kind: "openai".into(),
+        base_url: "https://api.contoh/v1".into(),
+        model: "gpt-uji".into(),
+        is_default: id == "p1",
+        has_key,
+        key_unreadable: unreadable,
+        total_tokens: tokens,
+        total_requests: requests,
+    }
+}
+
+/// Daftar menampilkan yang penting tanpa membocorkan kunci: status "key terisi"
+/// (bukan nilainya), jenis, model, dan statistik token yang sudah diringkas.
+#[test]
+fn provider_daftar_menampilkan_status_kunci_dan_statistik() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    h.state_mut().provider.rows = vec![
+        baris_provider("p1", "OpenAI", true, false),
+        baris_provider("p2", "Kosong", false, false),
+        baris_provider("p3", "Mesin lain", true, true),
+    ];
+
+    let shapes = h.frame();
+    find_text(&shapes, "OpenAI");
+    find_text(&shapes, "key terisi");
+    find_text(&shapes, "key kosong");
+    find_text(&shapes, "kunci tak terbaca");
+    // Statistik: 12.345 token → "12.3K", bukan angka mentah.
+    find_text(&shapes, "\u{1F4CA} 12.3K tokens \u{00B7} 3 req");
+    // Di bawah seribu tetap apa adanya; nol tidak ditampilkan sama sekali.
+    find_text(&shapes, "\u{1F4CA} 999 tokens \u{00B7} 1 req");
+    assert!(
+        texts(&shapes).iter().all(|(_, t)| !t.contains("tokens") || !t.starts_with("\u{1F4CA} 0")),
+        "baris tanpa pemakaian tidak boleh menampilkan statistik nol"
+    );
+    assert!(
+        texts(&shapes).iter().all(|(_, t)| !t.contains("sk-")),
+        "nilai API key tidak boleh tergambar di daftar"
+    );
+}
+
+/// "Tambah" membuka form; seluruh field yang wajib ada ikut tergambar.
+#[test]
+fn provider_tambah_membuka_form() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "+ Tambah");
+    h.click(rect.center());
+    let shapes = h.frame();
+
+    assert!(h.state().provider.form.is_some(), "form tidak terbuka");
+    find_text(&shapes, "Tambah provider");
+    find_text(&shapes, "Nama");
+    find_text(&shapes, "Base URL");
+    find_text(&shapes, "API key");
+    find_text(&shapes, "Model utama");
+}
+
+/// Provider baru tanpa nama: tombol Simpan tidak boleh menyimpan apa pun
+/// (dan form tetap terbuka supaya pengguna bisa memperbaiki).
+#[test]
+fn provider_simpan_tanpa_nama_tidak_menutup_form() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    h.state_mut().open_provider_form(None);
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Simpan");
+    h.click(rect.center());
+    h.frame();
+
+    assert!(h.state().provider.form.is_some(), "form tertutup tanpa nama");
+    assert!(
+        h.state().provider.error.is_none(),
+        "tombol mati seharusnya tidak menyentuh database: {:?}",
+        h.state().provider.error
+    );
+}
+
+/// Batal menutup form tanpa menyimpan.
+#[test]
+fn provider_batal_menutup_form() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    h.state_mut().open_provider_form(None);
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Batal");
+    h.click(rect.center());
+    h.frame();
+
+    assert!(h.state().provider.form.is_none(), "form tidak tertutup");
+}
+
+/// Hapus harus minta konfirmasi dulu, dan Batal membatalkannya.
+#[test]
+fn provider_hapus_meminta_konfirmasi() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    h.state_mut().provider.rows = vec![baris_provider("p1", "OpenAI", true, false)];
+
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Hapus");
+    h.click(rect.center());
+    let shapes = h.frame();
+
+    assert_eq!(
+        h.state().provider.confirm_delete.as_ref().map(|(id, _)| id.clone()),
+        Some("p1".to_string())
+    );
+    find_text(&shapes, "Hapus OpenAI?");
+
+    let rect = find_text(&shapes, "Batal");
+    h.click(rect.center());
+    h.frame();
+    assert!(h.state().provider.confirm_delete.is_none(), "konfirmasi tidak batal");
+}
+
+/// Kunci yang tidak bisa dibuka DPAPI di mesin ini diberi peringatan eksplisit
+/// di form — bukan ditampilkan sebagai kunci kosong biasa yang bisa terhapus
+/// tanpa sadar.
+#[test]
+fn provider_form_memberi_peringatan_kunci_tak_terbaca() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    h.state_mut().provider.form = Some(ProviderForm {
+        id: "p1".into(),
+        name: "Dari mesin lain".into(),
+        key_unreadable: true,
+        ..Default::default()
+    });
+
+    let shapes = h.frame();
+    find_text(&shapes, "Ubah provider");
+    assert!(
+        texts(&shapes)
+            .iter()
+            .any(|(_, t)| t.contains("tidak bisa dibuka di mesin ini")),
+        "peringatan DPAPI tidak tergambar. Yang ada: {:?}",
+        texts(&shapes).iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// Mengetik nama mengaktifkan Simpan; tanpa nama tombolnya mati.
+#[test]
+fn provider_tombol_simpan_mati_tanpa_nama() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Provider;
+    h.state_mut().provider.form = Some(ProviderForm {
+        id: String::new(),
+        name: "Ada nama".into(),
+        ..Default::default()
+    });
+
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Simpan");
+    // Dengan nama terisi, klik harus benar-benar mencoba menyimpan. Tanpa
+    // database, kegagalannya muncul sebagai pesan di form — bukti tombol aktif.
+    h.click(rect.center());
+    let shapes = h.frame();
+    assert!(
+        h.state().provider.form.as_ref().and_then(|f| f.error.clone()).is_some(),
+        "klik Simpan tidak melakukan apa pun. Tergambar: {:?}",
+        texts(&shapes).iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
+    );
 }

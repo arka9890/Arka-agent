@@ -33,6 +33,16 @@ impl Lang {
         }
     }
 
+    /// Bentuk ringkas untuk modul yang tidak boleh bergantung pada UI
+    /// (`jobs::Lang3`).
+    pub fn short(self) -> crate::gui::jobs::Lang3 {
+        match self {
+            Lang::Id => crate::gui::jobs::Lang3::Id,
+            Lang::En => crate::gui::jobs::Lang3::En,
+            Lang::Ja => crate::gui::jobs::Lang3::Ja,
+        }
+    }
+
     /// Nama bahasa ditulis dalam bahasanya sendiri (kebiasaan UI Android).
     pub fn native(self) -> &'static str {
         match self {

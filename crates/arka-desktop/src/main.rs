@@ -14,6 +14,7 @@
 //! arka-agent --selftest            bukti perilaku (UTF-8, exit code, Stop)
 //! ```
 
+mod dpapi;
 mod encode;
 mod gui;
 mod pump;
@@ -74,9 +75,8 @@ fn bootstrap() -> Result<(), String> {
     }
     bootstrap_paths()?;
     shell::init(Box::new(pwsh::PwshShell::new()?));
-    // Enkripsi API key (DPAPI) menyusul di M5; sementara ini nilai disimpan
-    // apa adanya supaya `provider::save` tetap jalan.
-    secret::init(Box::new(secret::NoopSecretStore));
+    // DPAPI di Windows, Noop hanya saat dikembangkan di Linux.
+    secret::init(dpapi::default_store());
     Ok(())
 }
 
@@ -108,7 +108,9 @@ fn run_ui() -> i32 {
             Ok(s) => shell::init(Box::new(s)),
             Err(e) => eprintln!("peringatan: PowerShell tidak terdaftar: {e}"),
         }
-        secret::init(Box::new(secret::NoopSecretStore));
+        // Enkripsi API key: DPAPI mengikat ciphertext ke akun Windows ini,
+        // jadi salinan arka.db di mesin lain tidak bisa dibuka.
+        secret::init(dpapi::default_store());
     }
 
     let app_paths = match paths::get() {
@@ -119,9 +121,19 @@ fn run_ui() -> i32 {
         }
     };
 
-    if let Err(e) = init_db(&app_paths) {
+    match init_db(&app_paths) {
+        Ok(()) => {
+            // Data dari versi yang masih menyimpan kunci apa adanya (atau dari
+            // Android) dienkripsi sekali di sini. Di Android/Noop hasilnya 0 —
+            // tidak ada yang ditulis ulang.
+            match arka_core::provider::migrate_plaintext_keys() {
+                Ok(0) => {}
+                Ok(n) => eprintln!("{n} API key dienkripsi dengan DPAPI"),
+                Err(e) => eprintln!("migrasi API key gagal: {e}"),
+            }
+        }
         // Tidak fatal: UI tetap terbuka dan menampilkan pesan ini.
-        eprintln!("database tidak siap: {e}");
+        Err(e) => eprintln!("database tidak siap: {e}"),
     }
 
     let opts = eframe::NativeOptions {

@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅** (terverifikasi di GitHub Actions; M4 menunggu uji percakapan nyata dengan API key) — M5 (provider + secret store) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅** (terverifikasi di GitHub Actions; M4/M5 menunggu uji dengan API key sungguhan) — M6 (file manager + pratinjau) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -420,13 +420,25 @@ pratinjau file.
   DST saat aplikasi berjalan, jam yang sudah tampil bisa meleset 1 jam sampai restart —
   menghindari panggilan OS di setiap frame.
 
-### M5 — Provider + secret store (2–3 hari)
-- [ ] `providers.rs`: daftar kartu + statistik token/request + badge default
-- [ ] Form tambah/edit (validasi: nama & base URL wajib) + test koneksi + refresh model + multi-select model + input manual
-- [ ] `secret.rs`: `DpapiSecretStore` (`CryptProtectData`/`CryptUnprotectData`, `windows` crate) → simpan blob base64, prefix `dpapi:`
-- [ ] Migrasi: nilai plaintext lama otomatis dienkripsi sekali saat baca
-- [ ] API key dimasker; tombol "lihat" sementara
+### M5 — Provider + secret store (2–3 hari) — ✅ SELESAI (uji percakapan nyata belum)
+- [x] `providers.rs`: daftar kartu + statistik token/request + badge default
+- [x] Form tambah/edit + test koneksi + refresh model + multi-select model + input manual
+- [x] `dpapi.rs`: `DpapiSecretStore` (`CryptProtectData`/`CryptUnprotectData`, `windows-sys`) → blob base64, prefix `dpapi:`
+- [x] Migrasi: nilai plaintext lama dienkripsi sekali saat start (`provider::migrate_plaintext_keys`)
+- [x] API key dimasker; tombol "tampilkan" sementara
+- [x] Kunci yang tak bisa dibuka DPAPI (DB dari mesin lain) ditandai `key_unreadable` dan **tidak** terhapus saat disimpan
 **Selesai bila:** API key tidak terbaca sebagai plaintext di `arka.db`, dan tes koneksi berhasil.
+
+Bukti (commit `M5`):
+- `cargo test --workspace` lokal: **131** test hijau (90 desktop + 41 core, 1 doctest).
+- `dpapi.rs` diuji dengan `FakeProtector` di Linux + **satu test DPAPI asli** (`dpapi_asli_bolak_balik`, `#[cfg(windows)]`) yang berjalan di `windows-latest`: ciphertext ≠ plaintext, bolak-balik utuh, dua enkripsi menghasilkan ciphertext berbeda.
+- `provider.rs` (core): migrasi plaintext **sekali** (dipanggil ulang = 0), tidak menyentuh kunci kosong, Noop tidak mengubah apa pun, simpan form "kunci tak terbaca" mempertahankan kunci lama.
+- `gui/tests.rs`: daftar menampilkan status kunci & statistik tanpa membocorkan nilai; Tambah membuka form; Simpan mati tanpa nama; Batal menutup; Hapus minta konfirmasi; peringatan kunci tak terbaca tergambar.
+- Verifikasi FFI tanpa cross-compile penuh (ring/reqwest butuh `cl.exe`): crate percobaan berisi salinan apa adanya jalur Windows `dpapi.rs` + fitur `windows-sys` yang sama → `cargo check --target x86_64-pc-windows-msvc` **hijau**.
+
+Catatan jujur:
+- **Tes koneksi & refresh model belum diuji dengan provider sungguhan** (tidak ada kredensial di lingkungan ini). Yang terbukti: pemanggilan berjalan di thread latar (UI tidak beku), hasil/kesalahan masuk ke form, dan tombol tidak menumpuk permintaan.
+- `key_unreadable` hanya muncul di Windows. Di Android kolom itu tidak pernah dikirim (`skip_serializing_if`) sehingga bentuk JSON untuk Kotlin tidak berubah.
 
 ### M6 — File manager + pratinjau (3–4 hari)
 - [ ] `files.rs`: list + breadcrumb + naik/turun + ukuran + ikon per jenis

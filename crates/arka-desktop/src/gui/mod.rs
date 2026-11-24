@@ -12,6 +12,7 @@ pub mod dialogs;
 pub mod engine;
 pub mod fs_model;
 pub mod i18n;
+pub mod jobs;
 pub mod markdown;
 pub mod screens;
 pub mod state;
@@ -69,6 +70,9 @@ impl ArkaGui {
     /// harus tetap bisa menggambar. `main.rs` memanggilnya sekali saat start.
     pub fn bootstrap_data(&mut self) {
         self.state.refresh_providers();
+        // Statistik token & status kunci ikut dibaca supaya tab Provider tidak
+        // kosong saat pertama dibuka.
+        self.state.refresh_provider_rows();
         self.state.refresh_sessions();
         if self.state.db_error.is_some() {
             return;

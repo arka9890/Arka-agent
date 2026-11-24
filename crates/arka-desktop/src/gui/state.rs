@@ -11,6 +11,7 @@ use arka_core::paths::AppPaths;
 use crate::pwsh::Detected;
 
 use super::engine::Engine;
+use super::jobs::NetJob;
 use super::fs_model::FilesCache;
 use super::i18n::{tr, Lang};
 use super::theme::{FontScale, ThemeMode};
@@ -207,6 +208,175 @@ impl Default for ChatState {
     }
 }
 
+/// Satu baris daftar provider di tab Provider — beda dari [`ProviderRow`] yang
+/// hanya dipakai dropdown model chat: di sini ada status kunci & statistik.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProvRow {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub base_url: String,
+    pub model: String,
+    pub is_default: bool,
+    /// Sudah ada kunci tersimpan (bukan nilainya — layar ini sering terlihat
+    /// orang lain, jadi nilai asli tidak pernah ditampilkan di daftar).
+    pub has_key: bool,
+    /// Ada kunci tetapi DPAPI mesin ini tidak bisa membukanya.
+    pub key_unreadable: bool,
+    pub total_tokens: i64,
+    pub total_requests: i64,
+}
+
+/// Isi form tambah/ubah provider (padanan `ProviderDialog` di Android).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProviderForm {
+    /// Kosong = provider baru.
+    pub id: String,
+    pub name: String,
+    /// `openai` | `anthropic`
+    pub kind: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    /// Model yang dicentang pengguna.
+    pub models: Vec<String>,
+    pub is_default: bool,
+    /// Model yang ditambahkan manual (di luar daftar server).
+    pub manual_model: String,
+    /// Kunci tersimpan tidak bisa dibuka DPAPI di mesin ini.
+    pub key_unreadable: bool,
+    /// Tampilkan API key sebagai teks (tombol mata).
+    pub reveal_key: bool,
+    /// Hasil tes koneksi terakhir.
+    pub test_result: Option<String>,
+    /// Daftar model dari server (hasil "Cek dari server" atau saat dibuka).
+    pub available: Vec<String>,
+    /// Kesalahan validasi di dalam form (nama/URL kosong).
+    pub error: Option<String>,
+}
+
+impl Default for ProviderForm {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            kind: "openai".into(),
+            base_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            models: Vec::new(),
+            is_default: false,
+            manual_model: String::new(),
+            key_unreadable: false,
+            reveal_key: false,
+            test_result: None,
+            available: Vec::new(),
+            error: None,
+        }
+    }
+}
+
+impl ProviderForm {
+    /// Form dari provider tersimpan (kunci sudah dibuka `provider::get`).
+    pub fn from_provider(p: &arka_core::provider::Provider) -> Self {
+        let mut models = p.models.clone();
+        if !p.model.trim().is_empty() && !models.iter().any(|m| m == p.model.trim()) {
+            models.insert(0, p.model.trim().to_string());
+        }
+        models.sort();
+        models.dedup();
+        Self {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            kind: if p.kind == "anthropic" { "anthropic".into() } else { "openai".into() },
+            base_url: p.base_url.clone(),
+            api_key: p.api_key.clone(),
+            model: p.model.clone(),
+            models,
+            is_default: p.is_default,
+            key_unreadable: p.key_unreadable,
+            ..Default::default()
+        }
+    }
+
+    /// URL yang benar-benar dipakai: kalau kolom kosong, pakai bawaan protokol.
+    /// Tanpa ini provider baru langsung gagal karena field kosong.
+    pub fn resolved_url(&self) -> String {
+        let u = self.base_url.trim();
+        if !u.is_empty() {
+            return u.trim_end_matches('/').to_string();
+        }
+        if self.kind == "anthropic" {
+            "https://api.anthropic.com".into()
+        } else {
+            "https://api.openai.com/v1".into()
+        }
+    }
+
+    /// Semua model yang bisa dipilih: dari server + yang sudah dicentang +
+    /// model utama, urut & tanpa duplikat.
+    pub fn all_models(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .available
+            .iter()
+            .chain(self.models.iter())
+            .chain(std::iter::once(&self.model))
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// `None` = boleh disimpan.
+    pub fn validate(&self, lang: Lang) -> Option<String> {
+        if self.name.trim().is_empty() {
+            return Some(tr(lang, "Nama provider wajib diisi.", "Provider name is required.", "プロバイダー名は必須です。").to_string());
+        }
+        if self.kind != "anthropic" && self.kind != "openai" {
+            return Some(tr(lang, "Jenis provider tidak dikenal.", "Unknown provider type.", "不明なプロバイダー種別です。").to_string());
+        }
+        None
+    }
+
+    /// Bentuk yang dikirim ke `provider::save`.
+    pub fn to_provider(&self) -> arka_core::provider::Provider {
+        let mut models = self.models.clone();
+        if !self.model.trim().is_empty() && !models.iter().any(|m| m.trim() == self.model.trim()) {
+            models.push(self.model.trim().to_string());
+        }
+        models.sort();
+        models.dedup();
+        arka_core::provider::Provider {
+            id: self.id.clone(),
+            name: self.name.trim().to_string(),
+            kind: if self.kind == "anthropic" { "anthropic".into() } else { "openai".into() },
+            base_url: self.resolved_url(),
+            api_key: self.api_key.clone(),
+            model: self.model.trim().to_string(),
+            models,
+            is_default: self.is_default,
+            created_at: 0,
+            key_unreadable: self.key_unreadable,
+        }
+    }
+}
+
+/// State tab Provider.
+#[derive(Default)]
+pub struct ProviderState {
+    pub rows: Vec<ProvRow>,
+    /// Form yang sedang terbuka; `None` = sedang melihat daftar.
+    pub form: Option<ProviderForm>,
+    /// Pekerjaan jaringan (tes koneksi / ambil daftar model).
+    pub job: Option<NetJob>,
+    /// Provider yang menunggu konfirmasi hapus: (id, nama).
+    pub confirm_delete: Option<(String, String)>,
+    /// Kesalahan terakhir dari database (mis. simpan gagal).
+    pub error: Option<String>,
+}
+
 /// Yang disimpan permanen antar-jalankan (`eframe::Storage`).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Persisted {
@@ -291,6 +461,8 @@ pub struct AppState {
     pub shell: ShellProbe,
     /// State tab Chat (pesan, streaming, provider, dialog).
     pub chat: ChatState,
+    /// State tab Provider (daftar, form, pekerjaan jaringan).
+    pub provider: ProviderState,
     /// Kegagalan database terakhir; ditampilkan supaya "tidak ada sesi" tidak
     /// terlihat sama dengan "database rusak".
     pub db_error: Option<String>,
@@ -341,6 +513,7 @@ impl AppState {
                 auto_scroll: persisted.auto_scroll,
                 ..Default::default()
             },
+            provider: ProviderState::default(),
             db_error: None,
         }
     }
@@ -538,5 +711,164 @@ impl AppState {
             .iter()
             .find(|s| &s.id == id)
             .map(|s| s.title.clone())
+    }
+}
+
+// ── Tab Provider ───────────────────────────────────────────────────────────
+
+impl AppState {
+    /// Baca ulang daftar provider + statistik pemakaian.
+    ///
+    /// Gagal baca **tidak** dikosongkan diam-diam: pesan disimpan di
+    /// [`ProviderState::error`] supaya "belum ada provider" tidak sama dengan
+    /// "database rusak".
+    pub fn refresh_provider_rows(&mut self) {
+        let list = match arka_core::provider::list() {
+            Ok(v) => v,
+            Err(e) => {
+                self.provider.error = Some(e);
+                return;
+            }
+        };
+        let stats = arka_core::provider::get_all_stats().unwrap_or_default();
+        self.provider.rows = list
+            .iter()
+            .map(|p| {
+                let st = stats.iter().find(|(id, _)| id == &p.id).map(|(_, s)| s.clone());
+                ProvRow {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    kind: p.kind.clone(),
+                    base_url: p.base_url.clone(),
+                    model: p.model.clone(),
+                    is_default: p.is_default,
+                    has_key: !p.api_key.trim().is_empty() || p.key_unreadable,
+                    key_unreadable: p.key_unreadable,
+                    total_tokens: st.as_ref().map(|s| s.total_tokens).unwrap_or(0),
+                    total_requests: st.as_ref().map(|s| s.total_requests).unwrap_or(0),
+                }
+            })
+            .collect();
+        self.provider.error = None;
+        // Dropdown model di tab Chat memakai daftar yang sama.
+        self.refresh_providers();
+    }
+
+    /// Buka form: `None` = provider baru, `Some(id)` = ubah.
+    pub fn open_provider_form(&mut self, id: Option<&str>) {
+        self.provider.form = Some(match id {
+            None => ProviderForm::default(),
+            Some(id) => match arka_core::provider::get(id) {
+                Ok(p) => {
+                    let mut f = ProviderForm::from_provider(&p);
+                    f.available = p.models.clone();
+                    f
+                }
+                Err(e) => {
+                    self.provider.error = Some(e);
+                    return;
+                }
+            },
+        });
+    }
+
+    /// Simpan form yang terbuka. `true` = berhasil (form ditutup).
+    pub fn save_provider_form(&mut self) -> bool {
+        let Some(form) = self.provider.form.clone() else {
+            return false;
+        };
+        if let Some(msg) = form.validate(self.lang) {
+            if let Some(f) = self.provider.form.as_mut() {
+                f.error = Some(msg);
+            }
+            return false;
+        }
+        match arka_core::provider::save(form.to_provider()) {
+            Ok(_) => {
+                self.provider.form = None;
+                self.provider.error = None;
+                self.refresh_provider_rows();
+                self.notify(self.tr(
+                    "Provider disimpan. API key terenkripsi (DPAPI).",
+                    "Provider saved. API key encrypted (DPAPI).",
+                    "プロバイダーを保存しました。APIキーは DPAPI で暗号化されます。",
+                ));
+                true
+            }
+            Err(e) => {
+                if let Some(f) = self.provider.form.as_mut() {
+                    f.error = Some(e);
+                }
+                false
+            }
+        }
+    }
+
+    pub fn delete_provider(&mut self, id: &str) {
+        self.provider.confirm_delete = None;
+        if let Err(e) = arka_core::provider::delete(id) {
+            self.provider.error = Some(e);
+            return;
+        }
+        self.refresh_provider_rows();
+        self.notify(self.tr("Provider dihapus.", "Provider deleted.", "プロバイダーを削除しました。"));
+    }
+
+    pub fn set_default_provider(&mut self, id: &str) {
+        if let Err(e) = arka_core::provider::set_default(id) {
+            self.provider.error = Some(e);
+            return;
+        }
+        self.refresh_provider_rows();
+    }
+
+    /// Jalankan tes koneksi / ambil daftar model di thread latar.
+    ///
+    /// Sengaja memakai **isi form** (bukan yang tersimpan) supaya pengguna bisa
+    /// mengetes kunci sebelum menyimpannya.
+    pub fn start_provider_job(&mut self, kind: super::jobs::JobKind, ctx: &eframe::egui::Context) {
+        if self.provider.job.as_ref().map(|j| j.running()).unwrap_or(false) {
+            return; // satu pekerjaan pada satu waktu
+        }
+        let Some(form) = self.provider.form.clone() else {
+            return;
+        };
+        let mut p = form.to_provider();
+        // Provider baru belum punya id; jangan sampai mengirim string kosong.
+        if p.id.is_empty() {
+            p.id = "draft".into();
+        }
+        self.provider.job = Some(super::jobs::start(kind, p, ctx.clone()));
+    }
+
+    /// Periksa hasil pekerjaan jaringan (dipanggil sekali per frame).
+    pub fn poll_provider_job(&mut self) {
+        let Some(job) = self.provider.job.as_mut() else {
+            return;
+        };
+        let kind = job.kind;
+        let Some(result) = job.poll() else {
+            return;
+        };
+        self.provider.job = None;
+        let lang = self.lang;
+        let Some(form) = self.provider.form.as_mut() else {
+            return;
+        };
+        match (kind, result) {
+            (_, Err(e)) => form.test_result = Some(e),
+            (super::jobs::JobKind::Test, Ok(super::jobs::JobDone::Message(m))) => {
+                form.test_result = Some(m)
+            }
+            (super::jobs::JobKind::Models, Ok(super::jobs::JobDone::Models(models))) => {
+                // Model yang sudah dipilih tidak dibuang: daftar server hanya
+                // menambah pilihan.
+                form.available = models;
+                form.test_result = Some(
+                    tr(lang, "Daftar model diperbarui dari server.", "Model list refreshed from server.", "モデル一覧をサーバーから更新しました。").to_string(),
+                );
+            }
+            (_, Ok(_)) => {}
+        }
     }
 }

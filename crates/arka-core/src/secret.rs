@@ -19,6 +19,13 @@ pub trait SecretStore: Send + Sync {
     /// Buka nilai rahasia. Nilai tanpa prefix platform dianggap plaintext
     /// (data lama) dan dikembalikan apa adanya.
     fn unprotect(&self, stored: &str) -> Result<String, String>;
+
+    /// Apakah nilai tersimpan ini hasil [`SecretStore::protect`] dari store
+    /// ini? Dipakai untuk migrasi: plaintext lama dikenksripsi sekali, nilai
+    /// yang sudah terlindungi tidak disentuh lagi.
+    fn owns(&self, _stored: &str) -> bool {
+        false
+    }
 }
 
 /// Tidak melakukan apa pun (Android — enkripsi di sisi Kotlin).
@@ -41,6 +48,12 @@ pub fn init(store: Box<dyn SecretStore>) {
     let _ = STORE.set(store);
 }
 
+/// Store yang sedang aktif. Dipakai tes yang perlu menyuntik store sendiri
+/// tanpa menyentuh registry global (registry bersifat "yang pertama menang").
+pub fn active() -> &'static dyn SecretStore {
+    store()
+}
+
 fn store() -> &'static dyn SecretStore {
     // Tanpa registrasi (mis. unit test) perilakunya = Noop.
     STORE.get().map(|b| b.as_ref()).unwrap_or(&NoopSecretStore)
@@ -54,6 +67,11 @@ pub fn unprotect(stored: &str) -> Result<String, String> {
     store().unprotect(stored)
 }
 
+/// Lihat [`SecretStore::owns`].
+pub fn is_protected(stored: &str) -> bool {
+    store().owns(stored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +81,34 @@ mod tests {
         let s = NoopSecretStore;
         assert_eq!(s.protect("sk-123").unwrap(), "sk-123");
         assert_eq!(s.unprotect("sk-123").unwrap(), "sk-123");
+    }
+
+    /// Store palsu berprefix, untuk menguji jalur migrasi tanpa DPAPI.
+    struct PrefixStore;
+    impl SecretStore for PrefixStore {
+        fn protect(&self, plain: &str) -> Result<String, String> {
+            Ok(format!("uji:{plain}"))
+        }
+        fn unprotect(&self, stored: &str) -> Result<String, String> {
+            Ok(stored.trim_start_matches("uji:").to_string())
+        }
+        fn owns(&self, stored: &str) -> bool {
+            stored.starts_with("uji:")
+        }
+    }
+
+    #[test]
+    fn prefix_store_menandai_nilainya_sendiri() {
+        let s = PrefixStore;
+        let enc = s.protect("sk-1").unwrap();
+        assert!(s.owns(&enc));
+        assert!(!s.owns("sk-1"));
+        assert_eq!(s.unprotect(&enc).unwrap(), "sk-1");
+    }
+
+    #[test]
+    fn registry_tanpa_enum_berarti_tidak_terlindungi() {
+        assert!(!is_protected("sk-plaintext"));
     }
 
     #[test]

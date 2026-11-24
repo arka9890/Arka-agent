@@ -41,4 +41,6 @@ windows-sys = { version = "0.61", features = [
     # GetLocalTime/GetSystemTime: selisih zona waktu untuk cap waktu chat.
     # (Keduanya ada di SystemInformation, bukan System\Time.)
     "Win32_System_SystemInformation",
+    # CryptProtectData/CryptUnprotectData untuk enkripsi API key (M5).
+    "Win32_Security_Cryptography",
 ] }
