@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅ (terverifikasi di GitHub Actions)** — M2 (shell PowerShell) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ (terverifikasi di GitHub Actions, Windows sungguhan)** — M3 (kerangka UI) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -237,7 +237,7 @@ dan kegagalan build native menggagalkan job `apk` (tidak ada lagi artifact "suks
   tetapi **tidak masuk APK** karena `abiFilters` hanya `arm64-v8a`. Menambah v7a = keputusan produk
   tersendiri (butuh `libproot.so` 32-bit yang belum ada).
 
-### M2 — Shell PowerShell (3–4 hari) ✅ selesai (bukti CI menyusul)
+### M2 — Shell PowerShell (3–4 hari) ✅ selesai & terverifikasi di Windows
 - [x] `trait Shell`: `status()`, `prepare(ev, cancel)`, `exec(cmd, cancel, on_chunk) -> ExecOutcome`, `diagnostic()`
       (dibuat di M1; `PwshShell` mengimplementasikan trait ini)
 - [x] Crate `arka-desktop` + binary `arka-agent` (CLI bukti; UI egui di M3)
@@ -267,6 +267,25 @@ dan kegagalan build native menggagalkan job `apk` (tidak ada lagi artifact "suks
 - [x] CI `.github/workflows/desktop.yml`: `desktop-logic` (Linux) + `desktop-windows` (smoke + selftest)
 - [ ] `DpapiSecretStore` → **dipindah ke M5** (memang di sana; M2 mendaftarkan `NoopSecretStore`)
 **Selesai bila:** di Windows `run_command` mengembalikan `Get-ChildItem` dari workspace, output UTF-8 benar (emoji/日本語 utuh), dan tombol Stop benar-benar mematikan `python -c "import time; time.sleep(60)"` beserta anak prosesnya.
+
+**Bukti (run [45306904718](https://github.com/arka9890/Arka-agent/actions/runs/45306904718), runner `windows-latest`):**
+
+```
+terdeteksi: PowerShell 7 7.6.10 (pwsh.exe)
+[100%] Siap. 4 tools terdeteksi: git, python, node, pwsh.
+exit 0            (Get-ChildItem -Force di workspace)
+🚀 日本語 — é ñ     (output UTF-8 utuh)
+PASS  perintah dasar                   exit 0: halo dari PowerShell
+PASS  UTF-8 utuh                       exit 0: 🚀 日本語 — é ñ
+PASS  exit code native diteruskan      exit 42:        (cmd /c exit 42)
+PASS  Stop mematikan pohon proses      pid 4172 hilang, 1.2280608s
+4 pemeriksaan, 0 gagal
+```
+
+Catatan: yang diuji sebagai "cucu proses" adalah `powershell.exe` yang dibuat lewat
+`Start-Process` (proses terpisah, bukan anak langsung) — inilah kasus yang membuat
+`child.kill()` biasa gagal dan Job Object berhasil.
+Program bukti: `arka-agent --selftest` (ada di CI, bukan hanya di laptop).
 
 ### M3 — Kerangka UI + tema (3–4 hari)
 - [ ] `eframe` window 1200×800, min 900×600, persist ukuran/posisi (`eframe::Storage`)
