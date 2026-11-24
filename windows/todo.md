@@ -321,13 +321,15 @@ Program bukti: `arka-agent --selftest` (ada di CI, bukan hanya di laptop).
   - `tab_file_membaca_folder_dan_memakai_cache` — folder sungguhan, dan berkas baru **tidak**
     muncul sampai "Muat ulang" ditekan (bukti cache bekerja)
   - `semua_tab_semua_bahasa_tergambar` — 5 tab × 3 bahasa tanpa panic dan selalu menghasilkan teks
-- CI hijau (6 job, 2 workflow):
-  - `Build & Test` run [45334994291](https://github.com/arka9890/Arka-agent/actions/runs/45334994291):
+- CI hijau (6 job, 2 workflow) di run final `6b2cccd`:
+  - `Build & Test` [45336683893](https://github.com/arka9890/Arka-agent/actions/runs/45336683893):
     `rust` 48 test, `rust-windows` 31 test, `libarka_core.so` (arm64+armv7), `assembleDebug` — semua success
-  - `Desktop (Windows)` run [45334994374](https://github.com/arka9890/Arka-agent/actions/runs/45334994374):
-    `desktop-logic` (linux) + `desktop-windows` (41 test GUI di Windows sungguhan) — success
+  - `Desktop (Windows)` [45336683962](https://github.com/arka9890/Arka-agent/actions/runs/45336683962):
+    `desktop-logic` (linux) + `desktop-windows` **41 test GUI lulus di Windows sungguhan** — success
   - Selisih 48 vs 41: 7 test `pump`/`script`/`selftest` memakai `/bin/sh`, jadi hanya jalan di Unix.
     Yang 41 di Windows justru lebih penting — di sana `pwsh::detect()` benar-benar berhasil.
+  - Percobaan pertama (`13d37ec`) sempat **merah** di Windows karena skala teks global; lihat poin 5
+    di bawah. Run merah itu yang menemukannya, bukan pembacaan kode.
 
 #### Tiga bug yang ditemukan & diperbaiki saat M3
 1. **Setelan ukuran teks tidak berpengaruh.** Semua ukuran ditulis mentah (`.size(14.0)`), jadi
