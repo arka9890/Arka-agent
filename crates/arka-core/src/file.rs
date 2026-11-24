@@ -102,14 +102,19 @@ pub fn resolve_at(root: &Path, rel: &str) -> Result<PathBuf, String> {
     }) {
         return Err("Path tidak boleh keluar dari workspace".into());
     }
-    let full = root.join(candidate);
+    // Akar kanonik dipakai untuk **semua** hasil, ada maupun belum ada.
+    //
+    // Dulu hanya path yang sudah ada yang di-canonicalize, lalu dicampur
+    // dengan `root.join()` biasa untuk path baru. Di Windows `canonicalize`
+    // selalu menambahkan awalan `\\?\`, sehingga bentuk path bergantung pada
+    // apakah berkasnya sudah ada atau belum — perbandingan `starts_with` dan
+    // `strip_prefix` jadi gagal, dan UI menyimpan path yang tidak konsisten.
+    let base = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let full = base.join(candidate);
     // Canonicalize hanya kalau ada, supaya symlink keluar workspace juga tertolak.
     if full.exists() {
-        let canon_root = root
-            .canonicalize()
-            .map_err(|e| format!("Workspace tidak bisa dibaca: {e}"))?;
         let canon = full.canonicalize().map_err(|e| e.to_string())?;
-        if !canon.starts_with(&canon_root) {
+        if !canon.starts_with(&base) {
             return Err("Path tidak boleh keluar dari workspace".into());
         }
         // `canonicalize` di Windows selalu memberi awalan `\\?\`, jadi path
@@ -131,6 +136,40 @@ fn norm_rel(rel: &str) -> String {
     rel.trim()
         .trim_start_matches(['/', '\\'])
         .replace('\\', "/")
+}
+
+/// Apakah `rel` menunjuk ke akar workspace itu sendiri (`""`, `"."`, `"/"`,
+/// `"./."`)? Dipakai sebelum operasi yang bisa menghapus workspace
+/// (`trash_at`, `delete_at`).
+///
+/// `norm_rel()` saja tidak cukup: `"."` lolos sebagai string tidak-kosong,
+/// dan `resolve_at(root, ".")` mengembalikan akar itu sendiri — dulu itu
+/// membuat workspace disalin ke dalam dirinya sendiri sampai stack habis.
+fn is_root_rel(rel: &str) -> bool {
+    norm_rel(rel)
+        .split('/')
+        .all(|c| c.is_empty() || c == ".")
+}
+
+/// Apakah `child` berada di dalam `parent` (atau sama dengan)?
+///
+/// Perbandingan dilakukan pada bentuk string yang dinormalkan: awalan
+/// `\\?\` dibuang dan garis miring diseragamkan, karena satu sisi bisa
+/// datang dari `canonicalize()` dan sisi lain dari `join()`. Di Windows
+/// perbandingan tanpa peduli huruf besar/kecil.
+fn inside(child: &Path, parent: &Path) -> bool {
+    fn norm(p: &Path) -> String {
+        let s = p.to_string_lossy().replace('/', "\\");
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
+        let s = s.trim_end_matches('\\').to_string();
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    }
+    let (c, p) = (norm(child), norm(parent));
+    c == p || c.starts_with(&format!("{p}\\"))
 }
 
 /// Gabungkan path relatif dengan nama berkas, selalu dengan `/`.
@@ -207,7 +246,7 @@ pub fn delete_at(root: &Path, rel: &str) -> Result<(), String> {
     if path == long_path(root).canonicalize().unwrap_or_else(|_| root.to_path_buf()) {
         return Err("Folder workspace tidak bisa dihapus".into());
     }
-    if norm_rel(rel).is_empty() {
+    if is_root_rel(rel) {
         return Err("Folder workspace tidak bisa dihapus".into());
     }
     if path.is_dir() {
@@ -256,11 +295,35 @@ pub fn copy_into_at(root: &Path, rel_dir: &str, src: &Path) -> Result<FileInfo, 
 }
 
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    copy_tree_inner(src, dst, 0)
+}
+
+/// Kedalaman maksimum penyaluran rekursif. Bukan batas teoretis Windows
+/// (path panjang sudah ditangani `long_path`), melainkan jaring pengaman
+/// supaya struktur yang mengacu ke dirinya sendiri tidak menghabiskan stack
+/// proses — kejadian nyata: menyalin workspace ke dalam subfoldernya sendiri.
+const COPY_MAX_DEPTH: usize = 64;
+
+fn copy_tree_inner(src: &Path, dst: &Path, depth: usize) -> Result<(), String> {
+    if depth > COPY_MAX_DEPTH {
+        return Err(format!(
+            "Struktur folder terlalu dalam (> {COPY_MAX_DEPTH} tingkat): {}",
+            src.display()
+        ));
+    }
+    // Tujuan di dalam sumber = salin folder ke dalam dirinya sendiri: tidak
+    // akan pernah selesai. Ditolak sebelum satu berkas pun disalin.
+    if inside(dst, src) {
+        return Err(format!(
+            "Tidak bisa menyalin folder ke dalam dirinya sendiri: {}",
+            dst.display()
+        ));
+    }
     let meta = fs::metadata(src).map_err(|e| format!("{}: {e}", src.display()))?;
     if meta.is_dir() {
         fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
         for e in fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
-            copy_tree(&e.path(), &dst.join(e.file_name()))?;
+            copy_tree_inner(&e.path(), &dst.join(e.file_name()), depth + 1)?;
         }
         Ok(())
     } else {
@@ -312,7 +375,7 @@ fn unique_stamp() -> u128 {
 /// folder 5 GB tetap sekejap; bila gagal (beda volume / izin), isinya disalin
 /// lalu sumbernya dihapus.
 pub fn trash_at(root: &Path, rel: &str) -> Result<String, String> {
-    if norm_rel(rel).is_empty() {
+    if is_root_rel(rel) {
         return Err("Folder workspace tidak bisa dihapus".into());
     }
     let path = resolve_at(root, rel)?;
@@ -582,10 +645,38 @@ mod tests {
 
     #[test]
     fn sampah_tidak_bisa_menghapus_akar() {
+        // Setiap bentuk "akar" harus ditolak. Dulu `"."` lolos lalu workspace
+        // disalin ke dalam dirinya sendiri: di Linux test-nya lulus, di Windows
+        // proses mati dengan STATUS_STACK_OVERFLOW.
         let root = tmp("sampah-akar");
-        assert!(trash_at(&root, "").is_err());
-        assert!(trash_at(&root, ".").is_ok() || trash_at(&root, ".").is_err());
+        fs::write(root.join("catatan.txt"), b"x").unwrap();
+        for rel in ["", ".", "/", "./.", " . "] {
+            assert!(
+                trash_at(&root, rel).is_err(),
+                "rel {rel:?} seharusnya ditolak"
+            );
+            assert!(
+                delete_at(&root, rel).is_err(),
+                "rel {rel:?} seharusnya ditolak"
+            );
+        }
         assert!(root.exists(), "workspace tidak boleh ikut hilang");
+        assert!(root.join("catatan.txt").exists(), "isi workspace utuh");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn salin_ke_dalam_dirinya_sendiri_ditolak() {
+        // Jaring pengaman `copy_tree`: tanpa ini, folder yang disalin ke
+        // subfoldernya sendiri membuat rekursi tak berujung.
+        let root = tmp("salin-diri");
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/berkas.txt"), b"x").unwrap();
+        let err = copy_tree(&root.join("a"), &root.join("a/b/tujuan")).unwrap_err();
+        assert!(
+            err.contains("dirinya sendiri"),
+            "pesan tidak jelas: {err}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -618,9 +709,19 @@ mod tests {
         }
         rel = join_rel(&rel, "catatan.txt");
         assert!(rel.len() > 260, "path uji harus > 260 char, dapat {}", rel.len());
-        mkdir_at(&root, rel.rsplit_once('/').unwrap().0).unwrap();
-        write_bytes_at(&root, &rel, b"panjang").unwrap();
-        assert_eq!(read_text_at(&root, &rel).unwrap(), "panjang");
+        let dir = rel.rsplit_once('/').unwrap().0;
+        mkdir_at(&root, dir).unwrap_or_else(|e| panic!("mkdir_at gagal: {e}"));
+        write_bytes_at(&root, &rel, b"panjang").unwrap_or_else(|e| panic!("tulis gagal: {e}"));
+        let kembali = read_text_at(&root, &rel).unwrap_or_else(|e| panic!("baca gagal: {e}"));
+        assert_eq!(kembali, "panjang");
+        // Bentuk path harus konsisten apa pun status berkasnya.
+        let ada = resolve_at(&root, &rel).unwrap();
+        let belum = resolve_at(&root, &join_rel(dir, "belum-ada.txt")).unwrap();
+        assert_eq!(
+            ada.parent().unwrap(),
+            belum.parent().unwrap(),
+            "folder induk path ada vs belum ada harus sama bentuknya"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }
