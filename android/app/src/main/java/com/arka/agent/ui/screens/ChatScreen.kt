@@ -205,6 +205,7 @@ fun ChatScreen(vm: MainViewModel) {
                         messages = messages,
                         streaming = streaming,
                         busy = busy,
+                        agentStatus = agentStatus,
                         autoScroll = settings["auto_scroll"] != "false",
                         resolveFile = vm::workspaceFile,
                         onOpenFile = { path ->
@@ -470,6 +471,7 @@ private fun MessageList(
     messages: List<Message>,
     streaming: String,
     busy: Boolean,
+    agentStatus: String,
     autoScroll: Boolean,
     resolveFile: (String) -> java.io.File,
     onOpenFile: (String) -> Unit,
