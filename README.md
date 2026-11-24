@@ -30,7 +30,7 @@ Fitur utama:
 - **Cara Build Lokal:**
   ```bash
   cd /root/storage/Arka-agent
-  ./rust/build-android.sh arm64
+  ./crates/arka-core/build-android.sh arm64
   cd android && ./gradlew assembleDebug
   ```
 - **Artifact:** `android/app/build/outputs/apk/debug/app-debug.apk`
@@ -41,8 +41,11 @@ Fitur utama:
 ```
 Arka-agent/
 ├── android/          # Android App (Kotlin + Jetpack Compose)
-├── rust/             # Rust Library (JNI)
+├── crates/           # Cargo workspace (Rust)
+│   └── arka-core/    # Logika inti + JNI untuk Android
+├── Cargo.toml        # Root workspace
 ├── docs/             # Dokumentasi (PRD, TODO, AUDIT)
+├── windows/          # Rencana & dokumen build Windows
 ├── .github/workflows/ # GitHub Actions (CI)
 └── README.md
 ```

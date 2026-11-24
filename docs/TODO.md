@@ -27,7 +27,7 @@ Status: hasil audit kode (bukan asumsi). Yang sudah `[x]` benar-benar ada di kod
 - [x] Audit: apa yang bikin baterai boros? (streaming, polling, wakelock)
       -> tidak ada polling/loop interval sama sekali (`grep "delay(|Timer|while(true)"` = kosong).
          Boros utama: streaming HTTP panjang + foreground service + wake lock.
-         HTTP client pakai `connect_timeout` 30s dan timeout total 600s (`rust/src/ai.rs`), jadi koneksi tidak menggantung.
+         HTTP client pakai `connect_timeout` 30s dan timeout total 600s (`crates/arka-core/src/ai.rs`), jadi koneksi tidak menggantung.
 - [x] Streaming: pastikan connection di-close saat tidak dipakai
       -> stream dibaca via `BufReader<Response>` yang di-drop saat selesai;
          tombol Stop -> `repo.cancelChat()` set flag native, loop stream & tool berhenti;
@@ -46,6 +46,6 @@ Status: hasil audit kode (bukan asumsi). Yang sudah `[x]` benar-benar ada di kod
 - [ ] AES-256-GCM encrypt/decrypt API key
       -> belum ada `Cipher`/`AES`/`GCM` sama sekali
 - [ ] Update ProviderStore: encrypt saat simpan, decrypt saat baca
-      -> `rust/src/provider.rs` + `rust/src/db.rs`: kolom `api_key TEXT NOT NULL` disimpan & dibaca plaintext
+      -> `crates/arka-core/src/provider.rs` + `crates/arka-core/src/db.rs`: kolom `api_key TEXT NOT NULL` disimpan & dibaca plaintext
 - [ ] Migration: jika ada API key plaintext lama, auto-encrypt saat pertama kali dibuka
       -> belum ada

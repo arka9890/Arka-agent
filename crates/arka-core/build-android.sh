@@ -17,8 +17,13 @@ TARGET_ARMv7="armv7-linux-androideabi"
 API=24
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ANDROID_DIR="$SCRIPT_DIR/../android"
+# Repo ini Cargo workspace: crate ini ada di crates/arka-core, jadi root
+# workspace dua level di atas, dan folder Android satu level di atas crate.
+WORKSPACE_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+ANDROID_DIR="$WORKSPACE_ROOT/android"
 JNI_LIBS="$ANDROID_DIR/app/src/main/jniLibs"
+# Semua artefak build masuk ke target/ root workspace (di-ignore git).
+TARGET_DIR="$WORKSPACE_ROOT/target"
 
 : "${ANDROID_NDK_HOME:=${ANDROID_NDK_ROOT:-/opt/android-sdk/ndk/27.0.12077973}}"
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
@@ -41,20 +46,20 @@ else
     RESOURCE_DIR="$NDK_BIN/lib/clang/18"
     # shortcut: path clang sistem diasumsikan 'clang'; upgrade kalau build
     # memakai image dengan versi clang berbeda.
-    mkdir -p "$SCRIPT_DIR/target/cc"
-    cat > "$SCRIPT_DIR/target/cc/aarch64.sh" <<EOF
+    mkdir -p "$TARGET_DIR/cc"
+    cat > "$TARGET_DIR/cc/aarch64.sh" <<EOF
 #!/bin/sh
 exec clang --target=aarch64-linux-android$API --sysroot=$SYSROOT \\
   -resource-dir=$RESOURCE_DIR --rtlib=compiler-rt -fuse-ld=lld "\$@"
 EOF
-    cat > "$SCRIPT_DIR/target/cc/armv7.sh" <<EOF
+    cat > "$TARGET_DIR/cc/armv7.sh" <<EOF
 #!/bin/sh
 exec clang --target=armv7a-linux-androideabi$API --sysroot=$SYSROOT \\
   -resource-dir=$RESOURCE_DIR --rtlib=compiler-rt -fuse-ld=lld "\$@"
 EOF
-    chmod +x "$SCRIPT_DIR/target/cc/aarch64.sh" "$SCRIPT_DIR/target/cc/armv7.sh"
-    CC_ARM64="$SCRIPT_DIR/target/cc/aarch64.sh"
-    CC_ARMV7="$SCRIPT_DIR/target/cc/armv7.sh"
+    chmod +x "$TARGET_DIR/cc/aarch64.sh" "$TARGET_DIR/cc/armv7.sh"
+    CC_ARM64="$TARGET_DIR/cc/aarch64.sh"
+    CC_ARMV7="$TARGET_DIR/cc/armv7.sh"
     AR_BIN=$(command -v llvm-ar || command -v llvm-ar-18)
     EXTRA_FLAGS=""
 fi
@@ -69,10 +74,10 @@ build() {
         "CC_${ar_name}=$cc" \
         "AR_${ar_name}=$AR_BIN" \
         "CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_LINKER=$cc" \
-        CARGO_TARGET_DIR="$SCRIPT_DIR/target" \
-        cargo build --release --target "$target" --manifest-path "$SCRIPT_DIR/Cargo.toml"
+        CARGO_TARGET_DIR="$TARGET_DIR" \
+        cargo build --release --target "$target" --package arka_core --manifest-path "$WORKSPACE_ROOT/Cargo.toml"
     mkdir -p "$JNI_LIBS/$abi"
-    cp "$SCRIPT_DIR/target/$target/release/libarka_core.so" "$JNI_LIBS/$abi/libarka_core.so"
+    cp "$TARGET_DIR/$target/release/libarka_core.so" "$JNI_LIBS/$abi/libarka_core.so"
     echo "    -> $JNI_LIBS/$abi/libarka_core.so"
 }
 

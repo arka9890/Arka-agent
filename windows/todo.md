@@ -1,0 +1,336 @@
+# TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
+
+Status: **rencana** (belum ada kode Windows).
+Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
+(`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
+
+Tujuan: aplikasi Arka Agent yang sama (agent AI + workspace + skill + terminal + file manager + provider)
+berjalan di Windows, **tanpa Kotlin/Java, tanpa webview, tanpa Linux/WSL, satu binary Rust** —
+dalam **satu repo** yang sama.
+
+> **Keputusan produk (dikunci):** tidak ada Ubuntu, tidak ada WSL, tidak ada proot, tidak ada VM.
+> `run_command` mengeksekusi **PowerShell** native. Workspace = folder Windows biasa.
+> (Rencana lama berbasis WSL diarsipkan di `windows/todo-wsl-lama.md.bak` — jangan dipakai.)
+
+---
+
+## 0. Keputusan arsitektur (dasar semua pekerjaan di bawah)
+
+| # | Keputusan | Alasan |
+|---|-----------|--------|
+| A1 | Repo jadi **Cargo workspace**: `crates/arka-core` (portable), `crates/arka-android` (JNI shim), `crates/arka-desktop` (UI). `android/` (Kotlin) tidak diubah. | Satu sumber logika; APK tetap bisa dibangun; tidak ada duplikasi kode AI/DB/skill. |
+| A2 | UI desktop **egui/eframe** (bukan Tauri/Dioxus) | Murni Rust, tanpa webview/Node, single-exe, cross-platform, mudah dibuat bertema "clay". |
+| A3 | **Shell = PowerShell native**, bukan Linux. `pwsh.exe` (PowerShell 7) bila ada, fallback `powershell.exe` (5.1). | Tanpa dependensi sistem tambahan; sudah ada di setiap Windows 10/11. |
+| A4 | Abstraksi `Shell` trait: `PwshShell` (Windows utama), `ProotShell` (Android, perilaku lama). Tidak ada `WslShell`. | `run_command` + tab Terminal lewat satu antarmuka; Android tidak berubah perilaku. |
+| A5 | Workspace = folder Windows: default `%USERPROFILE%\ArkaAgent\workspace` (bisa diubah). Path di UI/agent/DB **selalu path Windows** (`C:\...`), tidak ada pemetaan guest↔host. | Satu ruang path, tidak ada UNC/lambda path, langsung terlihat di Explorer. |
+| A6 | Eksekusi perintah pakai `pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <base64 UTF-16LE>` | Bebas dari quoting/escaping `"`/`'`/`&`/`%`/newline; aman untuk perintah multi-baris. |
+| A7 | Output dibaca **UTF-8 paksa**: preamble `[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding` | Tanpa ini output native tool (git/curl/python) jadi mojibake/UTF-16 di PS 5.1. |
+| A8 | Batalkan perintah = **Job Object** (`AssignProcessToJobObject` + `TerminateJobObject`) | Membunuh pohon proses (termasuk anak dari `npm`, `python`, `git`), bukan hanya induk. |
+| A9 | API key di Windows dienkripsi **DPAPI** (`CryptProtectData`, scope user) lewat trait `SecretStore` | Setara Android Keystore; tidak ada key di disk. |
+| A10 | Data app: `%APPDATA%\ArkaAgent\arka.db`; cache/log: `%LOCALAPPDATA%\ArkaAgent`; skill: `%USERPROFILE%\.claude\skills` | Konvensi Windows + kompatibel dengan skill Claude Code yang sudah dimiliki pengguna. |
+| A11 | HTTP tetap `reqwest` + `rustls` (sudah dipakai) | Tidak butuh OpenSSL di Windows. |
+| A12 | **Prompt pack per platform**: system prompt + deskripsi 6 tool dipisah jadi template `prompt/android.md` & `prompt/windows.md` | Saat ini prompt di `rust/src/ai.rs` hardcode "Ubuntu/bash/proot" — versi Windows wajib menyebut PowerShell + path Windows. |
+
+---
+
+## 1. Inventaris fitur Android → target Windows (jangan ada yang tertinggal)
+
+Semua baris di bawah **wajib** ada di versi Windows.
+
+### 1.1 Chat
+- [ ] Streaming token-per-token (SSE) untuk `openai`-compatible + `anthropic`
+- [ ] Typing indicator 3 titik ("AI sedang mengetik…") sebelum token pertama
+- [ ] Tampilan markdown + blok kode berkotak + inline `code`/**bold**/`*italic*`/link
+- [ ] Tombol salin pesan; tombol Stop saat streaming
+- [ ] Lampiran dari dialog file OS (gambar/video/audio/teks) + thumbnail di bubble
+- [ ] Isi file teks lampiran ikut dikirim sebagai konteks (maks 20.000 char)
+- [ ] `files` di `ask_user` → kartu pertanyaan dengan pratinjau maks 5 file
+- [ ] Dropdown model dengan pencarian + input model manual + refresh dari server
+- [ ] Sidebar riwayat sesi: buat, pilih, rename, hapus, ringkas konteks (compact)
+- [ ] Auto-title sesi dari pesan pertama (maks 60 char)
+- [ ] Multi-sesi paralel + badge "sedang menjawab" + lanjut saat pindah sesi
+- [ ] Auto-scroll ke pesan terbaru (bisa dimatikan)
+
+### 1.2 Agent loop (inti `rust/src/lib.rs`)
+- [ ] Tool `run_command` → **PowerShell** non-interaktif di workspace, stdout+stderr, exit code
+- [ ] Tool `install_skill` (URL SKILL.md / repo GitHub, deteksi rate-limit 403/429)
+- [ ] Tool `delete_skill`, `edit_skill`, `set_skill_config`
+- [ ] Kartu **persetujuan** untuk 4 tool skill (Izinkan/Tolak, timeout 5 menit = tolak)
+- [ ] Tool `ask_user` (min 2 opsi, `file`/`files` ≤ 5, batal = indeks -1)
+- [ ] Batas putaran tool (default 40, boleh diubah 1–200) + pesan saat batas tercapai
+- [ ] System prompt: bawaan / kustom / reset; otomatis disisipi semua skill dari `%USERPROFILE%\.claude\skills`
+- [ ] Ringkasan konteks otomatis (budget token, `summary_upto`, batch ringkasan, retry saat error context-length)
+- [ ] Pemangkasan output tool lama (2 output terakhir dipertahankan)
+- [ ] Statistik provider: token & jumlah request per panggilan (termasuk per putaran tool)
+- [ ] Cancel per sesi (tidak mengganggu sesi lain)
+
+### 1.3 Provider
+- [ ] Daftar provider + seed awal (OpenAI, Mistral, Anthropic, Google) tanpa API key
+- [ ] Form: nama, kind (`openai`/`anthropic`), base URL, API key, model utama, multi-model, default
+- [ ] Tes koneksi nyata (`GET /models`) + refresh daftar model (disimpan ke DB)
+- [ ] Logika `endpoint()`: dukung base URL yang sudah berisi `/v1`, `/v2`, `/v1beta`, `/openai`
+- [ ] Hapus provider, set default, tampilkan statistik per provider
+- [ ] API key **tidak pernah** tampil penuh setelah disimpan (mode "reveal" eksplisit)
+
+### 1.4 File manager
+- [ ] Daftar folder (folder dulu, A→Z), breadcrumb, naik/turun direktori
+- [ ] Buat folder, rename, hapus (konfirmasi ke Recycle Bin bila mungkin), impor, ekspor/simpan sebagai
+- [ ] Deteksi jenis: text/image/video/pdf/binary
+- [ ] Pratinjau: teks ≤ 2 MB, gambar (thumbnail → fullscreen), video (thumbnail + putar), PDF (halaman 1 + jumlah halaman), binary (metadata + unduh)
+- [ ] Ukuran workspace total (byte → human readable)
+- [ ] Path traversal ditolak (`..`, path absolut di luar workspace, symlink/junction keluar workspace)
+- [ ] Path panjang (`\\?\`) dan nama ber-spasi/karakter non-ASCII tidak memecahkan UI maupun tool
+
+### 1.5 Terminal
+- [ ] Status shell: PowerShell 5.1/7.x, versi, arsitektur OS, ExecutionPolicy, workspace path, ukuran workspace
+- [ ] "Pasang/buat workspace" = buat folder + opsional periksa tool (`git`, `python`, `node`, `curl`) via `Get-Command`
+- [ ] Jalankan perintah dengan output streaming, exit code, tombol Stop (Job Object terminate)
+- [ ] Riwayat perintah (maks 200, dedup berurutan, clear)
+- [ ] Diagnostik (`$PSVersionTable`, `[Environment]::Is64BitOperatingSystem`, `Get-Command git,python`, `Get-ChildItem`)
+- [ ] Satu antrean eksekusi (mutex) supaya dua perintah tidak saling menimpa output
+- [ ] Timeout per perintah (default 120 s, bisa diubah) + pesan jelas saat kena timeout
+
+### 1.6 Setelan
+- [ ] Tema: sistem/gelap/terang; ukuran font: kecil/sedang/besar
+- [ ] Bahasa: Indonesia/English/日本語 (semua string UI, bukan hanya sebagian)
+- [ ] Auto-scroll, notifikasi pesan baru, jalan di latar belakang
+- [ ] Batas putaran tool, ringkas otomatis, batas konteks (4.000–128.000), batas output tool (1.000–20.000)
+- [ ] System prompt: lihat/ubah/reset ke bawaan
+- [ ] Workspace: path (pilih folder) + ukuran; tombol "buka di Explorer"
+- [ ] Statistik sistem: RAM terpakai/total, disk bebas, arsitektur
+- [ ] Tentang: versi, commit, lisensi
+
+### 1.7 Shell OS (pengganti fitur Android)
+- [ ] Notifikasi Windows (toast) saat jawaban selesai dan jendela tidak fokus
+- [ ] Tray icon: buka/keluar, tetap hidup saat jendela ditutup (setelan "jalan di latar belakang")
+- [ ] Cegah sleep saat streaming (`SetThreadExecutionState`) — pengganti wakelock/foreground service
+- [ ] Satu instance aplikasi (named mutex); argumen CLI `--open <file>` untuk pratinjau
+
+---
+
+## 2. Struktur repo target
+
+```
+Arka-agent/
+├── Cargo.toml                  # [workspace] members = crates/*
+├── crates/
+│   ├── arka-core/              # logika portable (tanpa JNI, tanpa UI)
+│   │   ├── src/lib.rs
+│   │   ├── src/ai.rs           # dipindah apa adanya dari rust/src/ai.rs
+│   │   ├── src/prompt.rs       # BARU: prompt pack android/windows (§A12)
+│   │   ├── src/db.rs           # + PRAGMA user_version & migrasi
+│   │   ├── src/session.rs
+│   │   ├── src/provider.rs
+│   │   ├── src/settings.rs
+│   │   ├── src/file.rs         # + path Windows, traversal guard
+│   │   ├── src/memory.rs
+│   │   ├── src/skill.rs        # path skill via AppPaths (bukan hardcode ~)
+│   │   ├── src/terminal.rs     # riwayat + antrean
+│   │   ├── src/agent.rs        # agent loop (dari lib.rs chatStream)
+│   │   ├── src/engine.rs       # pengganti ChatEngine.kt (buffer+jobs+running)
+│   │   ├── src/shell/mod.rs    # trait Shell, OutputChunk, ShellStatus
+│   │   ├── src/shell/pwsh.rs   # PowerShell: EncodedCommand, Job Object, UTF-8
+│   │   └── src/secret.rs       # trait SecretStore
+│   ├── arka-android/           # cdylib, isi = rust/src/lib.rs lama (JNI)
+│   │   ├── src/lib.rs          # Java_com_arka_agent_core_Arka_* (nama TETAP)
+│   │   └── src/proot_manager.rs# jadi impl Shell (ProotShell)
+│   └── arka-desktop/           # bin: arka-agent.exe
+│       ├── src/main.rs
+│       ├── src/app.rs          # state global (pengganti MainViewModel)
+│       ├── src/ui/{shell,theme,widgets,chat,bubble,markdown,files,preview,terminal,providers,settings,dialogs}.rs
+│       ├── src/i18n.rs
+│       ├── src/platform.rs     # toast, tray, DPAPI, sleep-block, dialog file, job object
+│       └── assets/{icon.ico,fonts/*.ttf}
+├── android/                    # Kotlin — tidak diubah
+├── rust/                       # dihapus setelah migrasi (lihat M9)
+└── windows/                    # todo.md, build.md, installer/
+```
+
+---
+
+## 3. Milestone
+
+### M0 — Fondasi workspace (½ hari) ✅ SELESAI
+- [x] `Cargo.toml` root `[workspace]` + `resolver = "2"` + `[profile.release]` dipindah ke root
+- [x] Pindahkan `rust/` → `crates/arka-core` via `git mv` (history terjaga); `Cargo.lock` dipindah ke root
+- [x] `crate-type = ["cdylib", "rlib"]` supaya bin desktop bisa memakai logika yang sama
+- [x] `cargo check --workspace` & `cargo test --workspace` hijau (15 test lulus)
+- [x] `crates/arka-core/build-android.sh` diperbarui (`WORKSPACE_ROOT`, `TARGET_DIR`, `--package arka_core`)
+- [x] `.gitignore`: `rust/target/` → `target/`
+- [x] `.github/workflows/android.yml` jadi **Build & Test** + job `rust` (`cargo check`/`test --locked`)
+- [x] Semua referensi `rust/` di README, `docs/PRD.md`, `docs/TODO.md`, `build.gradle.kts`, `jniLibs/README.md` diperbarui
+- [ ] `crates/arka-android` (pemisahan JNI) → **dilakukan di M1**, karena `proot_manager.rs` memakai `std::os::unix`
+      (crate ini belum bisa dicompile untuk Windows sampai pemisahan itu selesai)
+**Selesai bila:** ✅ APK masih bisa dibuild dari CI setelah pemindahan, tanpa perubahan kode Kotlin.
+
+### M1 — Core portable + prompt pack (3 hari)
+- [ ] Hapus semua ketergantungan JNI dari `arka-core`: callback diganti trait
+      `trait Events { fn delta(&self, s: &str); fn done(..); fn error(..); fn tool(..); fn approval(..); fn question(..); fn progress(..); fn output(..); }`
+- [ ] `arka-android` mengimplementasikan `Events` dengan `JNIEnv` (kode lama dipakai ulang)
+- [ ] `AppPaths { data_dir, cache_dir, workspace, skills_dir }` jadi parameter eksplisit (bukan `OnceLock` global)
+- [ ] `db::init(path)` tetap; tambah `PRAGMA user_version` + migrasi berurutan
+- [ ] `SecretStore` trait + `NoopSecretStore` (Android tetap pakai Kotlin) + `DpapiSecretStore` di crate desktop
+- [ ] Pindahkan `chatStream` (agent loop) dari `lib.rs` ke `agent.rs` sebagai fungsi murni + `Events`
+- [ ] **`prompt.rs` + `crates/arka-core/prompt/{android,windows}.md`**: system prompt & deskripsi tool per platform.
+      Versi Windows wajib: "workspace = folder Windows `<path>`", "tool `run_command` menjalankan **PowerShell**",
+      contoh perintah PS (`Get-ComputerInfo`, `$PSVersionTable`, `Get-ChildItem`, `python --version`, `Get-Command git`),
+      path skill `%USERPROFILE%\.claude\skills`, dan larangan menjawab "aku tidak punya akses terminal".
+      Template memakai placeholder (`{{WORKSPACE}}`, `{{SKILLS_DIR}}`) yang diisi saat runtime.
+- [ ] Hapus string hardcode `/root/storage` & "Ubuntu" dari `ai.rs` yang dipakai jalur desktop
+- [ ] Pindahkan semua `#[cfg(test)]` yang ada (ai, memory, settings) supaya tetap jalan
+**Selesai bila:** `cargo test -p arka-core` hijau, APK hasil `arka-android` berfungsi sama (regresi manual: chat, tool, skill, file, terminal), dan unit test membuktikan prompt Windows tidak mengandung kata "Ubuntu"/"bash".
+
+### M2 — Shell PowerShell (3–4 hari) ← pengganti WSL
+- [ ] `trait Shell`: `status()`, `prepare(progress, cancel)`, `exec(cmd, opts, cancel, on_output) -> (code, out, dur)`, `diagnostic()`
+- [ ] `PwshShell`:
+  - [ ] deteksi `pwsh.exe` (7.x) → fallback `powershell.exe` (5.1); catat versi di `status()`
+  - [ ] `exec`: proses tersembunyi (`CREATE_NO_WINDOW`), `-EncodedCommand` (UTF-16LE → base64), cwd = workspace
+  - [ ] preamble UTF-8 (§A7) + `$ErrorActionPreference='Continue'` + `$ProgressPreference='SilentlyContinue'`
+  - [ ] stdout & stderr dibaca **paralel** di 2 thread (seperti `run_capture` di `proot_manager.rs`), digabung berurutan
+  - [ ] exit code: `$LASTEXITCODE`/`$?` → normalisasi ke int; tandai `TimeOut` & `Canceled` terpisah
+  - [ ] cancel & timeout → `TerminateJobObject` (Job Object, §A8), lalu tunggu proses mati
+  - [ ] `prepare`: `create_dir_all(workspace)` + tulis `.arka/README.txt`; opsional cek tool via `Get-Command`
+  - [ ] `status`: PS version, OS build (`[Environment]::OSVersion`), arsitektur, workspace path + ukuran, ExecutionPolicy
+- [ ] Guard: tolak perintah kosong; tolak `-EncodedCommand` ganda; batas panjang output (potong di `batas output tool`)
+- [ ] `Mutex` global eksekusi (satu perintah sekaligus), seperti `TOOL_LOCK`
+- [ ] Unit test: preamble+encode round-trip, parsing exit code, deteksi PS7 vs 5.1 (mock), traversal guard
+**Selesai bila:** di Windows `run_command` mengembalikan `Get-ChildItem` dari workspace, output UTF-8 benar (emoji/日本語 utuh), dan tombol Stop benar-benar mematikan `python -c "import time; time.sleep(60)"` beserta anak prosesnya.
+
+### M3 — Kerangka UI + tema (3–4 hari)
+- [ ] `eframe` window 1200×800, min 900×600, persist ukuran/posisi (`eframe::Storage`)
+- [ ] `theme.rs`: port `theme/Theme.kt` (DarkClay/LightClay + 12 warna) → `Visuals` + palet clay
+- [ ] `widgets.rs`: `clay_card`, `clay_pill`, `clay_button`, `section` (port `Clay.kt`)
+- [ ] Font: bundle Inter/JetBrains Mono (kode), skala font 0.85/1.0/1.15 (kecil/sedang/besar)
+- [ ] Shell layout: sidebar kiri (sesi, bisa collapse) + 5 tab (Chat, Provider, File, Terminal, Setelan)
+- [ ] `i18n.rs`: semua string id/en/ja (port `L10n.kt`, jangan ada string hardcoded)
+- [ ] State global `app.rs` meniru `MainViewModel`: settings, sessions, messages, providers, files, terminal, shell status, progress, approval, question, notice
+- [ ] Snackbar/notice + dialog modal standar
+**Selesai bila:** aplikasi terbuka, tema gelap/terang/ukuran font bisa diganti dan langsung terlihat, 5 tab bisa diklik.
+
+### M4 — Chat + agent (5–7 hari) ← inti
+- [ ] `bubble.rs`: bubble user/AI (warna beda), timestamp, tombol salin, lampiran
+- [ ] `markdown.rs`: blok kode + inline (port `splitCodeBlocks`/`inlineMarkdown`), highlight sederhana per bahasa (opsional)
+- [ ] Typing indicator 3 titik berdenyut sebelum token pertama
+- [ ] Streaming: `Events::delta` → `engine.rs` buffer per sesi → UI 60 fps tanpa flicker
+- [ ] Input bar: Enter kirim, Shift+Enter baris baru, tombol kirim/stop, lampiran (dialog file OS)
+- [ ] `dialogs.rs`: kartu persetujuan skill & kartu `ask_user` (opsi + pratinjau 5 file)
+- [ ] Dropdown model: kotak cari, daftar dari DB, input manual, tombol refresh
+- [ ] Sidebar sesi: buat, pilih, rename (inline edit), hapus (konfirmasi), compact
+- [ ] Tampilkan tool call di panel Terminal (format `[judul sesi] PS> perintah` + output)
+- [ ] Multi-sesi paralel: badge "menjawab" + notifikasi saat selesai & jendela tidak fokus
+- [ ] Auto-scroll + opsi matikan
+**Selesai bila:** percakapan nyata dengan provider OpenAI/Anthropic berjalan streaming, model memanggil `run_command` (PowerShell), hasil muncul di Terminal, dan `ask_user` menampilkan pratinjau file.
+
+### M5 — Provider + secret store (2–3 hari)
+- [ ] `providers.rs`: daftar kartu + statistik token/request + badge default
+- [ ] Form tambah/edit (validasi: nama & base URL wajib) + test koneksi + refresh model + multi-select model + input manual
+- [ ] `secret.rs`: `DpapiSecretStore` (`CryptProtectData`/`CryptUnprotectData`, `windows` crate) → simpan blob base64, prefix `dpapi:`
+- [ ] Migrasi: nilai plaintext lama otomatis dienkripsi sekali saat baca
+- [ ] API key dimasker; tombol "lihat" sementara
+**Selesai bila:** API key tidak terbaca sebagai plaintext di `arka.db`, dan tes koneksi berhasil.
+
+### M6 — File manager + pratinjau (3–4 hari)
+- [ ] `files.rs`: list + breadcrumb + naik/turun + ukuran + ikon per jenis
+- [ ] Aksi: buat folder, rename, hapus (konfirmasi; ke Recycle Bin via `IFileOperation` bila memungkinkan), impor (`rfd::FileDialog`), ekspor ("Simpan sebagai")
+- [ ] `preview.rs`: teks (≤ 2 MB), gambar (`egui_extras::image`), video/audio (thumbnail + "Buka di pemutar"), PDF (halaman 1 + jumlah halaman, `pdfium-render`), binary (metadata + unduh)
+- [ ] Drag & drop dari Explorer → impor ke workspace
+- [ ] Guard traversal + `\\?\` untuk path > 260 char
+**Selesai bila:** file yang dibuat `run_command` langsung muncul, bisa dipratinjau, diimpor/ekspor/dihapus.
+
+### M7 — Terminal + status shell (2–3 hari)
+- [ ] Panel output monospace, auto-scroll, tombol Bersihkan
+- [ ] Input perintah + riwayat (↑/↓ + dropdown, maks 200)
+- [ ] Tombol Jalankan/Stop, exit code ditampilkan, "dihentikan pengguna"/"timeout"
+- [ ] Kartu status shell: PowerShell versi, OS, arsitektur, workspace + ukuran, tombol "Buka di Explorer"
+- [ ] Tombol "Tes shell" menampilkan hasil diagnostik
+- [ ] Hint: contoh perintah PowerShell yang umum (bukan bash)
+**Selesai bila:** `git clone`/`python`/`npm` dari Terminal Windows berjalan dan output terlihat real-time.
+
+### M8 — Setelan, notifikasi, tray (2–3 hari)
+- [ ] Semua kontrol §1.6 (tema, bahasa, font, auto-scroll, notifikasi, background, 3 batas angka + validasi rentang, system prompt editor, pilih workspace)
+- [ ] Statistik sistem: RAM (`GlobalMemoryStatusEx`), disk bebas (`GetDiskFreeSpaceEx`), arsitektur
+- [ ] `notify-rust` toast (butuh AppUserModelID agar muncul di Win10/11)
+- [ ] `tray-icon`: menu Buka / Jalan di latar belakang / Keluar; close → tray bila setting aktif
+- [ ] `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` selama streaming
+- [ ] Tentang: versi (`CARGO_PKG_VERSION`), commit hash build, lisensi MIT
+**Selesai bila:** semua setelan persist antar restart dan toast muncul saat jendela minimize.
+
+### M9 — Paket, CI, dokumentasi, rilis (3–4 hari)
+- [ ] Icon + metadata exe (`winres`/`embed-resource`), manifest DPI-aware
+- [ ] Installer: `cargo-wix` (MSI) **atau** NSIS; portable ZIP sebagai alternatif
+- [ ] CI `windows.yml`: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, build release, upload artifact
+- [ ] CI `android.yml` tetap hijau
+- [ ] Hapus `rust/` lama; perbarui `README.md` (2 platform), `windows/build.md` (prasyarat: **tanpa WSL**, cukup VS Build Tools), `docs/PRD.md` (bagian Windows)
+- [ ] Rilis GitHub: `arka-agent-<ver>-windows-x64.msi`, `.zip`, APK
+**Selesai bila:** pengguna Windows baru bisa install → app membuat workspace → chat, `run_command`, terminal, file, skill langsung jalan tanpa memasang apa pun selain aplikasinya.
+
+---
+
+## 4. Pemetaan file Android → file Windows (checklist migrasi)
+
+| Android / Rust lama | Target | Catatan |
+|---|---|---|
+| `core/Arka.kt` | `crates/arka-android/src/lib.rs` | Nama `Java_com_arka_agent_core_Arka_*` dipertahankan |
+| `core/ArkaRepo.kt` | `arka-core/src/api.rs` + `arka-desktop/src/platform.rs` (SAF → `rfd`) | `content://` hanya Android |
+| `core/Models.kt` | `arka-core/src/models.rs` | Nama field JSON snake_case dipertahankan |
+| `core/ProviderEditor.kt`, `core/ApiKeyEncryption.kt` | `arka-core/src/secret.rs` | Android tetap di Kotlin; Windows DPAPI |
+| `ChatEngine.kt` | `arka-core/src/engine.rs` | Buffer, running set, `finished` event, per-sesi cancel |
+| `MainViewModel.kt` | `arka-desktop/src/app.rs` | State + aksi (send/stop/prepare/terminal/files/settings) |
+| `ui/AppScreen.kt`, `ui/components/Clay.kt`, `ui/theme/Theme.kt` | `ui/shell.rs`, `ui/widgets.rs`, `ui/theme.rs` | |
+| `ui/screens/ChatScreen.kt` | `ui/chat.rs` | |
+| `ui/screens/MessageBubble.kt` | `ui/bubble.rs` + `ui/markdown.rs` | |
+| `ui/screens/FilesScreen.kt`, `FilePreviewDialog.kt` | `ui/files.rs`, `ui/preview.rs` | |
+| `ui/screens/TerminalScreen.kt` | `ui/terminal.rs` | Status distro → status PowerShell |
+| `ui/screens/ProvidersScreen.kt` | `ui/providers.rs` | |
+| `ui/screens/SettingsScreen.kt` | `ui/settings.rs` | |
+| `ui/screens/UiRequestDialogs.kt` | `ui/dialogs.rs` | |
+| `ui/L10n.kt` | `i18n.rs` | |
+| `Notifications.kt` | `arka-core/src/notify.rs` + `platform.rs` | |
+| `ArkaChatService.kt`, `BatteryOptimization.kt` | `platform.rs` (tray + sleep-block) | Tidak ada padanan service di Windows |
+| `MainActivity.kt` | `main.rs` | Single-instance + argumen CLI |
+| `rust/src/ai.rs` (prompt + tool schema) | `arka-core/src/ai.rs` + `prompt.rs` | **Wajib dipecah per platform** |
+| `rust/src/proot_manager.rs` | `arka-core/src/shell/pwsh.rs` + `arka-android/src/proot_manager.rs` | Windows: PowerShell; proot tetap Android |
+| `rust/src/lib.rs` (chatStream/agent loop) | `arka-core/src/agent.rs` | Callback → `Events` trait |
+
+---
+
+## 5. Risiko & hal yang wajib diuji lebih awal
+
+| Risiko | Dampak | Mitigasi |
+|---|---|---|
+| Agent tetap "berpikir bash" (perintah `ls`, `cat`, `apt`) karena prompt lama | Tool sering gagal | Prompt pack §A12 + contoh PS di prompt + tes otomatis larangan kata "Ubuntu"/"bash"; tambahkan catatan di system prompt bahwa `ls`/`cat` adalah alias tapi `apt` tidak ada |
+| Encoding output PS 5.1 (UTF-16/codepage) | Teks rusak, pratinjau kacau | Preamble UTF-8 (§A7) + uji dengan emoji, 日本語, aksen; normalisasi `\r\n` → `\n` |
+| Quoting/escaping perintah dari model | Perintah gagal aneh | Pakai `-EncodedCommand` (§A6), jangan pernah merangkai `-Command "<cmd>"` |
+| Membunuh proses hanya mematikan induk | Proses zombie menahan file/lock | Job Object + `TerminateJobObject`, uji dengan proses anak |
+| PowerShell 7 belum tentu ada; 5.1 punya sintaks berbeda | Fitur PS7 gagal di mesin pengguna | Deteksi versi + hanya pakai sintaks kompatibel 5.1 di preamble; tampilkan versi di tab Terminal |
+| ExecutionPolicy / antivirus memblokir script | Perintah gagal "not digitally signed" | `-ExecutionPolicy Bypass` per-proses (bukan ubah sistem) + dokumentasi |
+| `LongPathEnabled` mati | Path > 260 char gagal | Prefix `\\?\` internal + pesan bila masih gagal |
+| PDF butuh `pdfium.dll` | Ukuran/distribusi | Bundle di installer, atau fallback "buka PDF" |
+| Toast Windows butuh AppUserModelID | Notifikasi tak muncul | Shortcut Start Menu saat install + set AUMID |
+| Dua proses menulis DB/workspace | Data rusak | Single-instance lock (named mutex) |
+| `rusqlite bundled` butuh MSVC build tools di CI | CI gagal | Runner `windows-latest` sudah punya; dokumentasikan VS Build Tools untuk build lokal |
+
+---
+
+## 6. Definition of Done (v1.0 Windows)
+
+1. Semua item §1 tercentang dan diuji manual pada Windows 10 22H2 + Windows 11 23H2.
+2. `cargo test --workspace` hijau; `clippy -D warnings` bersih; `fmt` bersih.
+3. CI Windows + Android hijau di commit yang sama.
+4. Installer MSI/ZIP tersedia di GitHub Releases; fresh install langsung bisa chat & menjalankan perintah — **tanpa WSL, tanpa Ubuntu, tanpa langkah setup Linux**.
+5. Tidak ada proses yang menggantung: setiap perintah punya timeout + Stop yang mematikan pohon proses (Job Object).
+6. Prompt & UI tidak menyebut "Ubuntu"/"proot"/`/root/storage` pada build desktop (dijaga unit test).
+7. Dokumentasi: `windows/build.md`, README 2 platform, PRD bagian Windows.
+
+---
+
+## 7. Backlog (pasca v1.0)
+
+- [ ] Opsi "remote shell" (SSH ke mesin Linux pengguna) — kalau nanti tetap butuh Linux, tidak lewat WSL
+- [ ] Pemutaran video in-app (GStreamer/libmpv)
+- [ ] Syntax highlighting penuh (tree-sitter) di chat & pratinjau
+- [ ] Multi-window / tab sesi
+- [ ] Terminal interaktif nyata (ConPTY) untuk program yang butuh TTY (mis. `python` REPL)
+- [ ] Auto-update (MSIX/`self_update`)
+- [ ] Voice input
+- [ ] Ekspor percakapan (Markdown/JSON)

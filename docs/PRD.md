@@ -152,7 +152,7 @@ arka-agent/
 │   │   └── build.gradle
 │   └── gradle.properties
 │
-├── rust/                             # Rust (Logic)
+├── crates/arka-core/                 # Rust (Logic, Cargo workspace)
 │   ├── Cargo.toml
 │   ├── src/
 │   │   ├── lib.rs                    # JNI Exports

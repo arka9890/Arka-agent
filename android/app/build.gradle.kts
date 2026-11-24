@@ -40,11 +40,11 @@ android {
         minSdk = 24
         targetSdk = 35
         // PRD: ARM64 default, ARMv7 opsional. Binary Rust dibangun untuk
-        // keduanya oleh rust/build-android.sh. Saat ini yang tersedia hanya
+        // keduanya oleh crates/arka-core/build-android.sh. Saat ini yang tersedia hanya
         // arm64-v8a; kalau armeabi-v7a ikut didaftarkan tanpa
         // libarka_core.so-nya, APK tetap terpasang di perangkat 32-bit lalu
         // crash saat memuat library. Jadi daftar ABI harus cocok dengan isi
-        // jniLibs (jalankan `rust/build-android.sh all` untuk menambah v7).
+        // jniLibs (jalankan `crates/arka-core/build-android.sh all` untuk menambah v7).
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

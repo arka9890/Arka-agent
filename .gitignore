@@ -3,7 +3,7 @@ android/build/
 android/app/build/
 android/.gradle/
 android/.kotlin/
-rust/target/
+target/
 
 # Signing secrets — jangan di-push ke repo publik
 android/arkacode.keystore

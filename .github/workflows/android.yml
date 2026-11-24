@@ -1,8 +1,9 @@
-name: Build APK
+name: Build & Test
 
-# Build APK debug di setiap push ke main + bisa dijalankan manual dari tab
-# Actions. Binary proot dan libarka_core.so sudah ada di jniLibs, jadi job ini
-# memvalidasi kode Kotlin/Compose dan menghasilkan APK yang bisa dipasang.
+# Dua job di setiap push ke main (+ bisa dijalankan manual dari tab Actions):
+#   rust -> `cargo check`/`cargo test` untuk logika inti di crates/arka-core.
+#   apk  -> build APK debug; memvalidasi Kotlin/Compose. Binary proot dan
+#           libarka_core.so sudah ada di jniLibs, jadi NDK tidak dibutuhkan.
 on:
   push:
     branches: [main]
@@ -12,6 +13,33 @@ permissions:
   contents: read
 
 jobs:
+  rust:
+    name: cargo check + test (arka-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Validasi logika inti (ai/memory/skill/db) tanpa perlu NDK.
+      - name: cargo check
+        run: cargo check --workspace --locked
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
   apk:
     name: assembleDebug
     runs-on: ubuntu-latest

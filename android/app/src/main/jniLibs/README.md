@@ -7,7 +7,7 @@ diberi nama `lib*.so`.
 
 | File | Asal | Ukuran |
 |---|---|---|
-| `libarka_core.so` | hasil `rust/build-android.sh` | — |
+| `libarka_core.so` | hasil `crates/arka-core/build-android.sh` | — |
 | `libproot.so` | paket Termux `proot_5.1.107.102_aarch64.deb` → `usr/bin/proot` | 259.832 B |
 | `libproot-loader.so` | paket yang sama → `usr/libexec/proot/loader` | 18.136 B |
 | `libtalloc.so` | `libtalloc_2.5.0_aarch64.deb` → `usr/lib/libtalloc.so.2.5.0` | 33.592 B |
