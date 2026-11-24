@@ -126,6 +126,7 @@ dependencies = [
  "arka_core",
  "flate2",
  "jni 0.21.1",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

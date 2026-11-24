@@ -72,6 +72,7 @@ fun TerminalScreen(vm: MainViewModel) {
     val distro by vm.distro.collectAsState()
     val lines by vm.terminalLines.collectAsState()
     val running by vm.terminalRunning.collectAsState()
+    val revision by vm.terminalRevision.collectAsState()
     val progress by vm.installProgress.collectAsState()
     val history by vm.terminalHistory.collectAsState()
 
@@ -80,7 +81,7 @@ fun TerminalScreen(vm: MainViewModel) {
     val listState = rememberLazyListState()
     val lang = LocalLanguage.current
 
-    LaunchedEffect(lines.size) {
+    LaunchedEffect(revision) {
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
     }
 

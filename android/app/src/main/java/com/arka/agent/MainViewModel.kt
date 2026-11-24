@@ -90,6 +90,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _terminalRunning = MutableStateFlow(false)
     val terminalRunning: StateFlow<Boolean> = _terminalRunning.asStateFlow()
 
+    /**
+     * Nomor urut setiap kali isi terminal berubah.
+     *
+     * `lines.size` tidak bisa dipakai sebagai pemicu scroll: setelah cap
+     * 2000 baris tercapai, ukuran selalu 2000 walaupun isinya bergeser,
+     * sehingga auto-scroll berhenti dan output baru tidak terlihat.
+     */
+    private val _terminalRevision = MutableStateFlow(0L)
+    val terminalRevision: StateFlow<Long> = _terminalRevision.asStateFlow()
+
     private val _distro = MutableStateFlow(DistroStatus())
     val distro: StateFlow<DistroStatus> = _distro.asStateFlow()
 
@@ -605,6 +615,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // pengguna tahu prosesnya benar-benar berjalan.
                 onOutput = { chunk -> appendTerminal(chunk) },
             )
+            flushTerminal()
             _installProgress.value = null
             refreshDistro()
             result
@@ -620,6 +631,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runCommand(command: String) {
         if (command.isBlank() || _terminalRunning.value) return
+        // Instalasi memegang TOOL_LOCK; kalau dibiarkan, perintah diam tanpa
+        // output sampai instalasi selesai. Lebih baik ditolak dengan jelas.
+        if (_installProgress.value != null) {
+            notify("Ubuntu masih dipasang — tunggu sampai selesai.")
+            return
+        }
         _terminalRunning.value = true
         appendTerminal("\$ $command\n")
         viewModelScope.launch {
@@ -630,8 +647,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Perintah bisa membuat/menghapus file: segarkan tab File.
                 refreshFiles(_currentDir.value)
             } catch (e: Exception) {
+                // Job dibatalkan (Activity hancur): hentikan juga proses native
+                // supaya TOOL_LOCK tidak terus dipegang oleh perintah yatim.
+                runCatching { repo.cancelExec() }
                 appendTerminal("${e.message}\n")
             } finally {
+                flushTerminal()
                 _terminalRunning.value = false
             }
         }
@@ -642,8 +663,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearTerminal() {
-        synchronized(terminalLock) { terminalPending = StringBuilder() }
-        _terminalLines.value = emptyList()
+        synchronized(terminalLock) {
+            terminalPending = StringBuilder()
+            // Reset di dalam lock supaya potongan dari thread native tidak
+            // menimpa hasil clear.
+            _terminalLines.value = emptyList()
+            _terminalRevision.value++
+        }
     }
 
     fun clearTerminalHistory() = viewModelScope.launch {
@@ -663,6 +689,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _diagnostic.value = it.message ?: "Tes distro gagal"
                 appendTerminal("${it.message}\n")
             }
+        flushTerminal()
     }
 
     /**
@@ -697,6 +724,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // baris output (mis. `apt upgrade`).
         val merged = _terminalLines.value + newLines
         _terminalLines.value = if (merged.size > 2000) merged.takeLast(2000) else merged
+        _terminalRevision.value++
+    }
+
+    /**
+     * Tampilkan sisa buffer yang belum punya newline.
+     *
+     * Tanpa ini, output seperti `printf hello` (tanpa `\n`) tertahan di
+     * `terminalPending` selamanya dan layar hanya menampilkan prompt-nya.
+     */
+    private fun flushTerminal() {
+        synchronized(terminalLock) {
+            val rest = terminalPending.toString()
+            terminalPending = StringBuilder()
+            if (rest.isNotEmpty()) pushTerminalLines(listOf(rest))
+        }
     }
 
     // --------------------------------------------------------- settings

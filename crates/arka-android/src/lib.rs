@@ -595,7 +595,14 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_execCommand<'local>(
     let token = cancel_token(exec_cancel());
     let events = JniEvents::new(env, cb);
     let result = shell::active().and_then(|s| {
-        s.exec(&command, token.as_ref(), &mut |chunk| events.output(chunk))
+        // Terminal manual boleh jalan lama (`pip install`, build). Beda dengan
+        // tool chat yang dibatasi 120 detik.
+        s.exec_with_timeout(
+            &command,
+            token.as_ref(),
+            &mut |chunk| events.output(chunk),
+            Some(std::time::Duration::from_secs(600)),
+        )
     });
     token.store(true, Ordering::SeqCst);
     match result {
@@ -604,8 +611,17 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_execCommand<'local>(
             // ketika perintah tidak menghasilkan output.
             if outcome.canceled {
                 events.output("\n^C dihentikan\n");
+            } else if outcome.timed_out {
+                // Tanpa penanda ini, perintah panjang (apt/build) terpotong di
+                // tengah output dan terlihat seperti terminal "macet".
+                events.output(&format!(
+                    "\n(timeout — perintah dihentikan karena melewati batas waktu, exit {})\n",
+                    outcome.code
+                ));
             } else if outcome.output.trim().is_empty() && outcome.code >= 0 {
                 events.output(&format!("(perintah selesai, exit {})\n", outcome.code));
+            } else if outcome.code > 0 {
+                events.output(&format!("\n(exit {})\n", outcome.code));
             }
             outcome.code
         }

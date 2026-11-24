@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -465,6 +466,18 @@ fn spawn_proot(command: &str, tmp: &Path) -> Result<std::process::Child, String>
     for (k, v) in proot_env(tmp)? {
         cmd.env(k, v);
     }
+    // Proses baru jadi leader group-nya sendiri. Saat timeout/Stop kita bisa
+    // membunuh SELURUH group (proot + bash + apt/dpkg anaknya) dengan
+    // kill(-pid). Tanpa ini, anak guest mewarisi pipe stdout/stderr dan
+    // reader.join() menggantung selamanya → TOOL_LOCK macet.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     cmd.spawn().map_err(|e| {
         format!(
@@ -537,11 +550,24 @@ pub fn run_capture(
     }
     drop(tx);
 
+    // Bunuh SELURUH process group (bukan hanya proot): anak guest seperti
+    // bash/apt/dpkg mewarisi pipe stdout/stderr. Kalau hanya proot yang mati,
+    // anak tetap hidup → pipe tidak pernah tertutup → reader.join()
+    // menggantung → TOOL_LOCK tidak pernah dilepas → semua perintah berikutnya
+    // diam tanpa output (gejala "terminal ngebug").
+    fn kill_group(child: &mut std::process::Child) {
+        let pid = child.id() as i32;
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+        let _ = child.kill();
+    }
+
     let mut collected = String::new();
     let mut timed_out = false;
     loop {
         if deadline.map(|d| Instant::now() >= d).unwrap_or(false) {
-            let _ = child.kill();
+            kill_group(&mut child);
             timed_out = true;
             break;
         }
@@ -550,19 +576,23 @@ pub fn run_capture(
                 collected.push_str(&chunk);
                 on_chunk(&chunk);
                 if cancel.load(Ordering::Relaxed) {
-                    let _ = child.kill();
+                    kill_group(&mut child);
                     break;
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if cancel.load(Ordering::Relaxed) {
-                    let _ = child.kill();
+                    kill_group(&mut child);
                     break;
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    // Reap child dulu: setelah SIGKILL ke group, semua penulis pipe ikut
+    // mati sehingga reader cepat selesai. `wait()` menutup fd pipe milik
+    // child sehingga `join()` tidak menggantung.
+    let status = child.wait();
     for r in readers {
         let _ = r.join();
     }
@@ -571,7 +601,7 @@ pub fn run_capture(
         collected.push_str(&chunk);
         on_chunk(&chunk);
     }
-    let status = child.wait().map_err(|e| e.to_string())?;
+    let status = status.map_err(|e| e.to_string())?;
     if timed_out {
         return Ok((-2, collected));
     }
@@ -637,17 +667,22 @@ impl Shell for ProotShell {
         cancel: &AtomicBool,
         on_chunk: &mut dyn FnMut(&str),
     ) -> Result<ExecOutcome, String> {
+        // Tool chat: 120 detik. Satu perintah macet tidak boleh menghentikan
+        // seluruh antrean TOOL_LOCK dan semua chat lain.
+        self.exec_with_timeout(command, cancel, on_chunk, Some(Duration::from_secs(120)))
+    }
+
+    fn exec_with_timeout(
+        &self,
+        command: &str,
+        cancel: &AtomicBool,
+        on_chunk: &mut dyn FnMut(&str),
+        timeout: Option<Duration>,
+    ) -> Result<ExecOutcome, String> {
         if command.trim().is_empty() {
             return Err("Perintah kosong".into());
         }
-        // 120 detik per perintah: satu perintah macet tidak boleh menghentikan
-        // seluruh antrean TOOL_LOCK dan semua chat lain.
-        let (code, output) = run_capture(
-            command,
-            cancel,
-            on_chunk,
-            Some(Duration::from_secs(120)),
-        )?;
+        let (code, output) = run_capture(command, cancel, on_chunk, timeout)?;
         Ok(ExecOutcome {
             code,
             output,

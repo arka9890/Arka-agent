@@ -51,6 +51,22 @@ pub trait Shell: Send + Sync {
         cancel: &AtomicBool,
         on_chunk: &mut dyn FnMut(&str),
     ) -> Result<ExecOutcome, String>;
+
+    /// [`exec`] dengan batas waktu (detik). Default mengabaikan [timeout].
+    ///
+    /// Dipisah dari [`exec`] karena dua pemanggil punya kebutuhan berbeda:
+    /// tool chat harus singkat (antrean `TOOL_LOCK`), terminal manual boleh
+    /// lama (`pip install`, build).
+    fn exec_with_timeout(
+        &self,
+        command: &str,
+        cancel: &AtomicBool,
+        on_chunk: &mut dyn FnMut(&str),
+        _timeout: Option<std::time::Duration>,
+    ) -> Result<ExecOutcome, String> {
+        self.exec(command, cancel, on_chunk)
+    }
+
     /// Tes cepat yang hasilnya ditampilkan apa adanya ke pengguna.
     fn diagnostic(&self) -> Result<String, String>;
 }
