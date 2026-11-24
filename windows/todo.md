@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅** (terverifikasi di GitHub Actions; M4/M5 menunggu uji dengan API key sungguhan) — M6 (file manager + pratinjau) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅** (terverifikasi di GitHub Actions; M4/M5 menunggu uji dengan API key sungguhan) — M7 (terminal + status shell) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -441,13 +441,31 @@ Catatan jujur:
 - **Tes koneksi & refresh model belum diuji dengan provider sungguhan** (tidak ada kredensial di lingkungan ini). Yang terbukti: pemanggilan berjalan di thread latar (UI tidak beku), hasil/kesalahan masuk ke form, dan tombol tidak menumpuk permintaan.
 - `key_unreadable` hanya muncul di Windows. Di Android kolom itu tidak pernah dikirim (`skip_serializing_if`) sehingga bentuk JSON untuk Kotlin tidak berubah.
 
-### M6 — File manager + pratinjau (3–4 hari)
-- [ ] `files.rs`: list + breadcrumb + naik/turun + ukuran + ikon per jenis
-- [ ] Aksi: buat folder, rename, hapus (konfirmasi; ke Recycle Bin via `IFileOperation` bila memungkinkan), impor (`rfd::FileDialog`), ekspor ("Simpan sebagai")
-- [ ] `preview.rs`: teks (≤ 2 MB), gambar (`egui_extras::image`), video/audio (thumbnail + "Buka di pemutar"), PDF (halaman 1 + jumlah halaman, `pdfium-render`), binary (metadata + unduh)
-- [ ] Drag & drop dari Explorer → impor ke workspace
-- [ ] Guard traversal + `\\?\` untuk path > 260 char
+### M6 — File manager + pratinjau (3–4 hari) — ✅ SELESAI (3 penyimpangan, lihat catatan)
+- [x] `files.rs`: list + breadcrumb + naik/turun + ukuran + ikon per jenis
+- [x] Aksi: buat folder, rename (inline), hapus (konfirmasi → `.trash` workspace), impor (pemilih di aplikasi), ekspor (dialog "Simpan sebagai" OS; fallback `<data>/exports`)
+- [x] `preview.rs`: teks (≤ 2 MB), gambar (`image` crate + batas 32 MB / 2048 px), video/audio (buka di pemutar OS), PDF (**jumlah halaman**), biner (metadata + ekspor)
+- [x] Drag & drop dari Explorer → impor ke workspace
+- [x] Guard traversal + `\\?\` untuk path > 260 char
 **Selesai bila:** file yang dibuat `run_command` langsung muncul, bisa dipratinjau, diimpor/ekspor/dihapus.
+
+Bukti (commit `5a375fb` + perbaikan `c3a538a`; CI [45380597496](https://github.com/arka9890/Arka-agent/actions/runs/45380597496) + [45380597173](https://github.com/arka9890/Arka-agent/actions/runs/45380597173) — 6/6 job hijau):
+- `cargo test --workspace` lokal: **157** test hijau (105 desktop + 51 core + 1 shim).
+- `windows-latest`: **99 test desktop** + **53 test `arka_core`** hijau (Linux: 105 & 51; selisih = test khusus Unix).
+- Tab File: 906 baris — breadcrumb, ukuran, ikon per jenis, buat folder, rename inline (Enter simpan / Esc batal), hapus dengan konfirmasi, impor banyak berkas, ekspor, cache folder (`FilesCache`), drag & drop dari Explorer (`mod.rs:177`).
+- `preview.rs`: 8 test — teks apa adanya, berkas hilang → `Error` bukan panic, gambar didekode & diperkecil, gambar kecil tidak diperkecil, berkas bukan gambar → `Error`, jumlah halaman PDF, PDF rusak → `Error`, video/biner → "buka di luar".
+- `file.rs` (core) 727 baris: `resolve_at`, `norm_rel`, `is_root_rel`, `trash_at`, `delete_at`, `mkdir_at`, `rename_at`, `import_at`, `export_at`, `copy_tree`.
+
+**Run pertama M6 MERAH di Windows** — dan yang gagal bukan kode baru, melainkan jalur yang **hanya** berbeda di Windows. Tiga bug nyata ditemukan CI (`c3a538a`):
+1. **Dua bentuk path.** `resolve_at` hanya meng-`canonicalize()` path yang sudah ada; di Windows `canonicalize()` menambahkan awalan `\\?\`. Jadi path yang sama punya dua bentuk → `starts_with`/`strip_prefix` gagal. Sekarang akar di-canonicalize sekali dan dipakai semua cabang.
+2. **`trash_at(root, ".")` menyalin workspace ke dalam dirinya sendiri** → di Windows proses mati `STATUS_STACK_OVERFLOW`; di Linux lolos karena `rename` gagal lebih dulu. Penjaga baru `is_root_rel()` (`""`, `"."`, `"/"`, `"./."`) + batas kedalaman 64 + penolakan tujuan di dalam sumber.
+3. **Test `sampah_tidak_bisa_menghapus_akar` cacat**: assert `is_ok() || is_err()` selalu benar → tidak menguji apa pun. Sekarang memeriksa semua bentuk akar untuk trash **dan** delete.
+
+Catatan jujur (penyimpangan dari rencana):
+- **Hapus → `.trash` workspace, bukan Recycle Bin Windows.** `IFileOperation` butuh COM + dependensi baru, dan workspace ini tanpa jaringan sehingga tidak ada bukti sebelum push. Bisa dipulihkan sampai dikosongkan; dicatat di dialog.
+- **Impor pakai pemilih di dalam aplikasi**, bukan `rfd::FileDialog` — alasan sama (dependensi baru tanpa jaringan). `import_now(paths)` sudah menerima daftar `PathBuf`, jadi penggantian ke `rfd` = satu fungsi.
+- **PDF: hanya jumlah halaman** (`lopdf`, murni Rust). Merender halaman 1 butuh `pdfium` (DLL per arsitektur) — sengaja dihindari karena bertentangan dengan "satu binary Rust tanpa DLL".
+- Rupa akhir di layar Windows tetap perlu tangkapan layar darimu.
 
 ### M7 — Terminal + status shell (2–3 hari)
 - [ ] Panel output monospace, auto-scroll, tombol Bersihkan
