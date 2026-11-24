@@ -72,6 +72,12 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-desktop-${{ hashFiles('**/Cargo.lock') }}
 
+      # Kerangka UI (egui) diuji tanpa jendela: tata letak dihitung di CPU,
+      # jadi tab benar-benar diklik pada koordinat hasil tata letak. Di sini
+      # (Windows) jalur `pwsh::detect()` yang sungguhan berhasil ikut diuji.
+      - name: Test UI headless + shell
+        run: cargo test -p arka-desktop --locked
+
       - name: Build
         run: cargo build --release -p arka-desktop --locked
 
