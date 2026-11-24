@@ -162,11 +162,29 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
+      # abiFilters di app/build.gradle.kts = arm64-v8a saja, jadi APK yang
+      # benar memang hanya memuat SATU libarka_core.so. Versi pertama asersi ini
+      # menuntut >= 2 (salah) dan job merah padahal build-nya sehat.
       - name: Pasang library di build asli?
         run: |
           APK=android/app/build/outputs/apk/debug/app-debug.apk
           unzip -l "$APK" | grep -E 'lib/.*/libarka_core\.so'
-          test "$(unzip -l "$APK" | grep -c 'libarka_core\.so')" -ge 2
+          test "$(unzip -l "$APK" | grep -c 'lib/arm64-v8a/libarka_core\.so')" -eq 1
+
+          FRESH=android/app/src/main/jniLibs/arm64-v8a/libarka_core.so
+          test -s "$FRESH"
+          rm -rf /tmp/apkcheck && mkdir -p /tmp/apkcheck
+          unzip -q -o "$APK" 'lib/arm64-v8a/libarka_core.so' -d /tmp/apkcheck
+          IN_APK=/tmp/apkcheck/lib/arm64-v8a/libarka_core.so
+
+          # APK harus memuat .so hasil job rust-android (bukan yang ter-commit).
+          # Dibandingkan sebagai ukuran, bukan hash: AGP boleh men-strip simbol
+          # sehingga byte tidak identik, tapi ukurannya tetap segaris.
+          A=$(stat -c%s "$IN_APK"); B=$(stat -c%s "$FRESH")
+          echo "ukuran .so: di APK=$A byte, hasil build=$B byte"
+          test "$A" -ge 1000000
+          test "$A" -ge $((B * 90 / 100))
+          test "$A" -le $((B * 110 / 100))
 
       - name: Verifikasi signature APK
         run: |
