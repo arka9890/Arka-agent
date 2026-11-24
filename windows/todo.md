@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅** — M2 (shell PowerShell) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ (terverifikasi di GitHub Actions)** — M2 (shell PowerShell) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -212,7 +212,9 @@ Arka-agent/
 - [x] `crates/arka-core/build-android.sh all` dijalankan di CI → memvalidasi **path baru** setelah `rust/` dipindah
 - [x] Asersi `test -s jniLibs/{arm64-v8a,armeabi-v7a}/libarka_core.so` (nama file harus sama dengan `System.loadLibrary("arka_core")`)
 - [x] `.so` di-upload sebagai artifact `jniLibs`, lalu job `apk` `needs: rust-android` + `download-artifact` menimpanya
-- [x] Asersi isi APK: `unzip -l` harus memuat ≥2 entri `lib/*/libarka_core.so` (kalau .so hilang, build gagal bukan lolos diam-diam)
+- [x] Asersi isi APK: `lib/arm64-v8a/libarka_core.so` harus **tepat satu** entri (sesuai `abiFilters`
+      arm64-v8a saja), dan ukurannya dibandingkan dengan `.so` hasil job `rust-android` — jadi
+      .so hilang **atau** APK memuat binary basi sama-sama menggagalkan build
 - [x] `ANDROID_NDK_HOME` dihitung dari `$ANDROID_HOME` saat runtime (ekspresi `${{ env.ANDROID_HOME }}` kosong karena di-set `GITHUB_ENV`)
 - [x] Job baru `rust-windows` (`windows-latest`): `cargo check`/`test -p arka_core` + tes penjaga prompt → gerbang regresi kode Unix bocor ke core
 - [x] Job `apk` tidak lagi memasang `ndk;...` (NDK hanya dipakai job Rust), mempercepat build Kotlin
@@ -222,6 +224,18 @@ Arka-agent/
 dijalankan di runner `windows-latest`, bukan cross-check dari Ubuntu.
 **Selesai bila:** ✅ push ke `main` menghasilkan APK yang `.so`-nya berasal dari commit itu sendiri,
 dan kegagalan build native menggagalkan job `apk` (tidak ada lagi artifact "sukses" dengan lib basi).
+
+**Bukti (verifikasi nyata, bukan asumsi):**
+- Run [`45302986207`](https://github.com/arka9890/Arka-agent/actions/runs/45302986207) — commit `30dadf2`:
+  3 job hijau, **job `apk` merah** di langkah asersi. Penyebabnya bukan build rusak, melainkan
+  **asersi yang salah**: kode menuntut ≥2 entri `lib/*/libarka_core.so`, padahal `abiFilters` hanya
+  `arm64-v8a` sehingga APK yang benar memang memuat satu `.so`. Diperbaiki di `6ff3d4e`.
+- Run [`45303743348`](https://github.com/arka9890/Arka-agent/actions/runs/45303743348) — commit `6ff3d4e`:
+  **4 job hijau**. Bukti dari log: `ukuran .so: di APK=3629976 byte, hasil build=3629976 byte`
+  (identik → AGP tidak men-strip, dan yang terpaket memang binary baru, bukan `.so` ter-commit dari 23 Nov).
+- Catatan: `armeabi-v7a` tetap dibangun job `rust-android` (memvalidasi `build-android.sh all`),
+  tetapi **tidak masuk APK** karena `abiFilters` hanya `arm64-v8a`. Menambah v7a = keputusan produk
+  tersendiri (butuh `libproot.so` 32-bit yang belum ada).
 
 ### M2 — Shell PowerShell (3–4 hari) ← sedang dikerjakan
 - [x] `trait Shell`: `status()`, `prepare(ev, cancel)`, `exec(cmd, cancel, on_chunk) -> ExecOutcome`, `diagnostic()`
