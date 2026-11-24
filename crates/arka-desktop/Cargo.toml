@@ -1,0 +1,28 @@
+[package]
+name = "arka-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Arka Agent untuk Windows: shell PowerShell, secret store, UI egui (M3+)"
+
+[[bin]]
+name = "arka-agent"
+path = "src/main.rs"
+
+[dependencies]
+arka_core = { path = "../arka-core" }
+serde_json = "1"
+base64 = "0.22"
+
+# Hanya di-resolve saat target Windows. Di Linux/CI linux, crate ini tetap
+# lolos `cargo check` tanpa dependensi Windows sama sekali.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    # Job Object: TerminateJobObject mematikan seluruh pohon proses.
+    "Win32_System_JobObjects",
+    # Dibutuhkan JOBOBJECT_EXTENDED_LIMIT_INFORMATION (memuat IO_COUNTERS).
+    "Win32_System_Threading",
+    # CreateJobObjectW memakai SECURITY_ATTRIBUTES.
+    "Win32_Security",
+] }

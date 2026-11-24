@@ -35,6 +35,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "arka-desktop"
+version = "0.1.0"
+dependencies = [
+ "arka_core",
+ "base64 0.22.1",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "arka_core"
 version = "0.1.0"
 dependencies = [

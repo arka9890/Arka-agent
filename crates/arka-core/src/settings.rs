@@ -8,6 +8,8 @@ use crate::prompt;
 use rusqlite::params;
 use std::collections::HashMap;
 
+/// Workspace bawaan Android (di dalam rootfs proot). Platform lain memakai
+/// [`workspace_default`], jadi konstanta ini tidak boleh dipakai langsung.
 pub const DEFAULT_WORKSPACE: &str = "/root/storage";
 
 /// Batas putaran tool bawaan (dipakai kalau pengguna belum mengubah setelan).
@@ -33,13 +35,28 @@ pub const TOOL_OUTPUT_CHARS_MIN: usize = 1_000;
 pub const TOOL_OUTPUT_CHARS_MAX: usize = 20_000;
 
 /// Workspace bawaan: path platform aktif kalau sudah diketahui.
+///
+/// Kalau `paths::init` belum dipanggil (mis. unit test), tebakan diambil dari
+/// platform hasil kompilasi: Windows memakai `%USERPROFILE%\ArkaAgent\workspace`,
+/// Android tetap `/root/storage` di dalam proot. Dulu di sini selalu
+/// `/root/storage`, sehingga UI Windows menampilkan folder Linux yang tidak ada.
 fn workspace_default() -> String {
     let p = crate::paths::workspace_display();
-    if p.is_empty() {
-        DEFAULT_WORKSPACE.to_string()
-    } else {
-        p
+    if !p.is_empty() {
+        return p;
     }
+    if cfg!(windows) {
+        let home = std::env::var("USERPROFILE")
+            .ok()
+            .filter(|h| !h.trim().is_empty())
+            .unwrap_or_else(|| "%USERPROFILE%".to_string());
+        return std::path::PathBuf::from(home)
+            .join("ArkaAgent")
+            .join("workspace")
+            .to_string_lossy()
+            .to_string();
+    }
+    DEFAULT_WORKSPACE.to_string()
 }
 
 /// Nilai default per kunci (dipakai saat kunci belum pernah disimpan).
@@ -160,6 +177,17 @@ mod tests {
     #[test]
     fn system_prompt_falls_back_to_builtin() {
         assert!(!system_prompt().is_empty());
+    }
+
+    #[test]
+    fn workspace_default_is_not_linux_path_on_windows_builds() {
+        let w = workspace_default();
+        if cfg!(windows) {
+            assert!(!w.contains("/root/storage"), "workspace Windows: {w}");
+            assert!(w.to_lowercase().contains("arkaagent"), "workspace Windows: {w}");
+        } else {
+            assert_eq!(w, DEFAULT_WORKSPACE);
+        }
     }
 
     #[test]

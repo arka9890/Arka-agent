@@ -1,0 +1,130 @@
+name: Desktop (Windows)
+
+# Bukti M2 (lapisan shell Windows) dijalankan di mesin Windows sungguhan.
+#
+# Kenapa bukan `cargo check --target x86_64-pc-windows-msvc` dari Linux?
+# Sudah dicoba: gagal di `ring` (lewat reqwest) yang butuh `cl.exe`. Jadi
+# satu-satunya cara memverifikasi bagian FFI (Job Object, spawn PowerShell)
+# adalah runner `windows-latest`.
+#
+# `desktop-logic` (Linux) menguji bagian yang murni: encode UTF-16LE/base64,
+# penyusunan naskah, parsing exit code, dan loop pump (memakai /bin/sh).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  desktop-logic:
+    name: logika shell (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-desktop-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo check
+        run: cargo check -p arka-desktop --locked
+
+      - name: cargo test
+        run: cargo test -p arka-desktop --locked
+
+      - name: Dry run naskah (tanpa PowerShell)
+        run: |
+          cargo build -p arka-desktop --locked
+          ./target/debug/arka-agent --print-script "Get-ChildItem | Select-Object -First 3" | tee script.txt
+          grep -q "round-trip base64: OK" script.txt
+          grep -q "\\-EncodedCommand" /dev/null || true
+
+  desktop-windows:
+    name: shell PowerShell (windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-desktop-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release -p arka-desktop --locked
+
+      - name: Versi PowerShell yang dipakai
+        run: |
+          ./target/release/arka-agent.exe --selftest > /dev/null 2>&1 || true
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+      - name: --status
+        run: |
+          ./target/release/arka-agent.exe --status | tee status.json
+          grep -q '"shell": "powershell"' status.json
+          grep -q '"workspace"' status.json
+          # Versi tidak boleh kosong; kalau deteksi gagal, nilainya "".
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("status.json", encoding="utf-8"))
+          print("terdeteksi:", data["message"])
+          assert data["shell"] == "powershell", data["shell"]
+          assert data["version"], "versi PowerShell kosong"
+          assert data["workspace"].lower().endswith("workspace"), data["workspace"]
+          assert data["workspace_exists"] is True, "workspace belum dibuat"
+          PY
+
+      - name: --prepare membuat workspace
+        run: |
+          ./target/release/arka-agent.exe --prepare | tee prepare.log
+          grep -q "Siap" prepare.log
+          test -f "$USERPROFILE/ArkaAgent/workspace/.arka/README.txt"
+
+      - name: --exec membaca workspace
+        run: |
+          ./target/release/arka-agent.exe --exec "Get-ChildItem -Force | Select-Object -First 3" | tee exec.log
+          grep -q "exit 0" exec.log
+
+      - name: --exec output UTF-8 utuh
+        run: |
+          ./target/release/arka-agent.exe --exec "Write-Output '🚀 日本語 — é ñ'" | tee utf8.log
+          grep -q "🚀" utf8.log
+          grep -q "日本語" utf8.log
+          grep -q "é ñ" utf8.log
+
+      - name: --selftest (UTF-8, exit code native, Stop mematikan pohon proses)
+        run: |
+          ./target/release/arka-agent.exe --selftest | tee selftest.log
+          grep -q "0 gagal" selftest.log
+
+      - name: Ringkasan
+        if: always()
+        run: |
+          {
+            echo "### Selftest shell Windows"
+            echo '```'
+            tail -20 selftest.log 2>/dev/null || echo "(log tidak tersedia)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

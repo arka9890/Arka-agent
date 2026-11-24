@@ -237,22 +237,35 @@ dan kegagalan build native menggagalkan job `apk` (tidak ada lagi artifact "suks
   tetapi **tidak masuk APK** karena `abiFilters` hanya `arm64-v8a`. Menambah v7a = keputusan produk
   tersendiri (butuh `libproot.so` 32-bit yang belum ada).
 
-### M2 — Shell PowerShell (3–4 hari) ← sedang dikerjakan
+### M2 — Shell PowerShell (3–4 hari) ✅ selesai (bukti CI menyusul)
 - [x] `trait Shell`: `status()`, `prepare(ev, cancel)`, `exec(cmd, cancel, on_chunk) -> ExecOutcome`, `diagnostic()`
-      (dibuat di M1; `PwshShell` tinggal mengimplementasikan trait ini)
-- [ ] `PwshShell`:
-  - [ ] deteksi `pwsh.exe` (7.x) → fallback `powershell.exe` (5.1); catat versi di `status()`
-  - [ ] `exec`: proses tersembunyi (`CREATE_NO_WINDOW`), `-EncodedCommand` (UTF-16LE → base64), cwd = workspace
-  - [ ] preamble UTF-8 (§A7) + `$ErrorActionPreference='Continue'` + `$ProgressPreference='SilentlyContinue'`
-  - [ ] stdout & stderr dibaca **paralel** di 2 thread (seperti `run_capture` di `proot_manager.rs`), digabung berurutan
-  - [ ] exit code: `$LASTEXITCODE`/`$?` → normalisasi ke int; tandai `TimeOut` & `Canceled` terpisah
-  - [ ] cancel & timeout → `TerminateJobObject` (Job Object, §A8), lalu tunggu proses mati
-  - [ ] `prepare`: `create_dir_all(workspace)` + tulis `.arka/README.txt`; opsional cek tool via `Get-Command`
-  - [ ] `status`: PS version, OS build (`[Environment]::OSVersion`), arsitektur, workspace path + ukuran, ExecutionPolicy
-- [ ] Guard: tolak perintah kosong; tolak `-EncodedCommand` ganda; batas panjang output (potong di `batas output tool`)
-- [ ] `Mutex` global eksekusi (satu perintah sekaligus), seperti `TOOL_LOCK`
-- [ ] Unit test: preamble+encode round-trip, parsing exit code, deteksi PS7 vs 5.1 (mock), traversal guard
-- [ ] Daftarkan `PwshShell` + `DpapiSecretStore` dari `main.rs` (`shell::init`, `secret::init`)
+      (dibuat di M1; `PwshShell` mengimplementasikan trait ini)
+- [x] Crate `arka-desktop` + binary `arka-agent` (CLI bukti; UI egui di M3)
+- [x] `PwshShell`:
+  - [x] deteksi `pwsh.exe` (7.x) → fallback `powershell.exe` (5.1) dengan **mencoba menjalankan**,
+        bukan menebak dari `PATH`; versi + edition dicatat di `status()`
+  - [x] `exec`: proses tersembunyi (`CREATE_NO_WINDOW`), `-NoProfile -NonInteractive -EncodedCommand`
+        (UTF-16LE → base64), `stdin = null`, cwd = workspace
+  - [x] preamble UTF-8 (§A7) + `$ErrorActionPreference='Continue'` + `$ProgressPreference='SilentlyContinue'`
+        + `PYTHONIOENCODING`
+  - [x] stdout & stderr dibaca **paralel** di 2 thread, digabung lewat channel
+  - [x] **decoder UTF-8 bertahan lintas potongan** (`Utf8Decoder`) — emoji 4 byte tidak jadi `�`
+  - [x] exit code: penanda `__ARKA_EXIT__` di akhir naskah (PowerShell tidak meneruskan
+        `$LASTEXITCODE` ke exit proses) → normalisasi ke int; `canceled` & `timed_out` terpisah
+  - [x] cancel & timeout → `TerminateJobObject` (Job Object + `KILL_ON_JOB_CLOSE`),
+        plus batas kesabaran 1 dtk kalau ada proses yang lolos dari job
+  - [x] `prepare`: `create_dir_all(workspace)` + `.arka/README.txt`; deteksi tools via `Get-Command`
+  - [x] `status`: PS version/edition, OS, arsitektur, ExecutionPolicy, workspace + jumlah file + ukuran
+  - [x] `diagnostic`: program, PS version, OS, arch, workspace, encoding, probe emoji, tools
+- [x] Guard: tolak perintah kosong & byte NUL; batas output 200.000 karakter (dipotong + ditandai)
+- [x] `Mutex` global eksekusi (satu perintah sekaligus), seperti `TOOL_LOCK`
+- [x] Unit test (32 test, jalan di Linux): round-trip UTF-16LE/base64 (termasuk emoji & Jepang),
+      susunan naskah, parsing penanda/CRLF, deteksi `-EncodedCommand` tunggal, guard kosong/NUL,
+      loop pump dengan `/bin/sh` (batal, timeout, potong output, UTF-8 dari proses nyata)
+- [x] `settings::workspace_default()` mengikuti platform — tidak lagi `/root/storage` di Windows
+- [x] `--selftest`: bukti di mesin Windows (UTF-8, exit code native, **Stop mematikan pohon proses**)
+- [x] CI `.github/workflows/desktop.yml`: `desktop-logic` (Linux) + `desktop-windows` (smoke + selftest)
+- [ ] `DpapiSecretStore` → **dipindah ke M5** (memang di sana; M2 mendaftarkan `NoopSecretStore`)
 **Selesai bila:** di Windows `run_command` mengembalikan `Get-ChildItem` dari workspace, output UTF-8 benar (emoji/日本語 utuh), dan tombol Stop benar-benar mematikan `python -c "import time; time.sleep(60)"` beserta anak prosesnya.
 
 ### M3 — Kerangka UI + tema (3–4 hari)
