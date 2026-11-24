@@ -1,0 +1,381 @@
+//! Test UI tanpa jendela dan tanpa GPU.
+//!
+//! `egui::Context` menghitung tata letak di CPU, jadi seluruh kerangka UI bisa
+//! dijalankan di CI Linux — termasuk **klik sungguhan** pada koordinat hasil
+//! tata letak. Ini bukan test "tidak panic": tiap test di bawah menuntut
+//! perilaku yang terlihat (tab berpindah, warna latar berganti, tinggi teks
+//! naik, snackbar hilang, isi folder terbaca).
+//!
+//! Yang tidak dibuktikan di sini: rupa akhir di layar (butuh GPU/jendela).
+//! Itu diperiksa manual di Windows; lihat `windows/todo.md` M3.
+
+use std::fs;
+
+use eframe::egui::epaint::ClippedShape;
+use eframe::egui::{
+    self, Color32, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, Vec2,
+};
+
+use arka_core::paths::AppPaths;
+
+use crate::gui::i18n::Lang;
+use crate::gui::state::{AppState, Modal, Persisted, Tab};
+use crate::gui::theme::{self, FontScale, ThemeMode};
+use crate::gui::ArkaGui;
+
+/// Path palsu. Test tidak memakai `paths::init` global, kecuali test tab File
+/// yang menunjuk folder sementara sendiri.
+fn paths() -> AppPaths {
+    let base = std::env::temp_dir().join("arka-gui-test");
+    AppPaths::windows(base.join("home"), base.join("data"))
+}
+
+fn tempdir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("arka-gui-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+struct Harness {
+    ctx: egui::Context,
+    gui: ArkaGui,
+    time: f64,
+    screen: Rect,
+}
+
+impl Harness {
+    fn new(state: AppState) -> Self {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        Self {
+            ctx,
+            gui: ArkaGui::from_state(state),
+            time: 0.0,
+            screen: Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 880.0)),
+        }
+    }
+
+    fn with_default_state() -> Self {
+        Self::new(AppState::new(paths(), Persisted::default()))
+    }
+
+    fn state(&self) -> &AppState {
+        self.gui.state()
+    }
+
+    fn state_mut(&mut self) -> &mut AppState {
+        self.gui.state_mut()
+    }
+
+    fn advance(&mut self, secs: f64) {
+        self.time += secs;
+    }
+
+    fn frame_with(&mut self, events: Vec<Event>) -> Vec<Shape> {
+        self.time += 1.0 / 60.0;
+        let input = RawInput {
+            screen_rect: Some(self.screen),
+            time: Some(self.time),
+            events,
+            ..Default::default()
+        };
+        let ctx = self.ctx.clone();
+        let gui = &mut self.gui;
+        let out = ctx.run(input, |c| gui.draw(c));
+        flatten(&out.shapes)
+    }
+
+    fn frame(&mut self) -> Vec<Shape> {
+        self.frame_with(Vec::new())
+    }
+
+    /// Klik kiri pada satu titik: tekan di satu frame, lepas di frame berikut.
+    fn click(&mut self, pos: Pos2) -> Vec<Shape> {
+        let modifiers = Modifiers::default();
+        self.frame_with(vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers,
+            },
+        ]);
+        self.frame_with(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers,
+        }])
+    }
+}
+
+fn flatten(shapes: &[ClippedShape]) -> Vec<Shape> {
+    fn walk(s: &Shape, out: &mut Vec<Shape>) {
+        match s {
+            Shape::Vec(v) => {
+                for s in v {
+                    walk(s, out);
+                }
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    let mut out = Vec::new();
+    for c in shapes {
+        walk(&c.shape, &mut out);
+    }
+    out
+}
+
+/// Semua teks yang benar-benar tergambar, beserta kotaknya di layar.
+fn texts(shapes: &[Shape]) -> Vec<(Rect, String)> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Text(t) => Some((
+                Rect::from_min_size(t.pos, t.galley.size()),
+                t.galley.job.text.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Kotak teks yang isinya persis `needle`. Gagal bila tidak ada atau ganda —
+/// kegandaan biasanya berarti tata letak berubah dan test perlu ditinjau.
+fn find_text(shapes: &[Shape], needle: &str) -> Rect {
+    let all = texts(shapes);
+    let hits: Vec<Rect> = all
+        .iter()
+        .filter(|(_, t)| t == needle)
+        .map(|(r, _)| *r)
+        .collect();
+    assert!(
+        !hits.is_empty(),
+        "teks {needle:?} tidak tergambar. Yang ada: {:?}",
+        all.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
+    );
+    assert_eq!(hits.len(), 1, "teks {needle:?} muncul {} kali", hits.len());
+    hits[0]
+}
+
+fn height_of(shapes: &[Shape], needle: &str) -> f32 {
+    find_text(shapes, needle).height()
+}
+
+fn fill_count(shapes: &[Shape], color: Color32) -> usize {
+    shapes
+        .iter()
+        .filter(|s| matches!(s, Shape::Rect(r) if r.fill == color))
+        .count()
+}
+
+// ── Kriteria "selesai bila" M3 ──────────────────────────────────────────────
+
+/// "5 tab bisa diklik" — dibuktikan dengan klik nyata pada koordinat label.
+#[test]
+fn lima_tab_bisa_diklik() {
+    for target in Tab::ALL {
+        let mut h = Harness::with_default_state();
+        // Mulai dari tab lain supaya klik pada Chat pun benar-benar diuji.
+        h.state_mut().tab = if target == Tab::Chat {
+            Tab::Settings
+        } else {
+            Tab::Chat
+        };
+        let shapes = h.frame();
+
+        let label = format!("{} {}", target.glyph(), target.label(Lang::Id));
+        let rect = find_text(&shapes, &label);
+        h.click(rect.center());
+        h.frame();
+
+        assert_eq!(h.state().tab, target, "klik {label:?} tidak berpindah tab");
+    }
+}
+
+/// "Tema gelap/terang bisa diganti dan langsung terlihat" — diperiksa dari
+/// warna yang benar-benar dilukis, bukan dari nilai setelan.
+#[test]
+fn tema_gelap_dan_terang_mengubah_warna_latar() {
+    let mut h = Harness::with_default_state();
+
+    h.state_mut().theme = ThemeMode::Light;
+    let shapes = h.frame();
+    assert!(fill_count(&shapes, theme::LIGHT.background) > 0, "latar terang tidak dilukis");
+    assert_eq!(fill_count(&shapes, theme::DARK.background), 0);
+
+    h.state_mut().theme = ThemeMode::Dark;
+    let shapes = h.frame();
+    assert!(fill_count(&shapes, theme::DARK.background) > 0, "latar gelap tidak dilukis");
+    assert_eq!(fill_count(&shapes, theme::LIGHT.background), 0);
+}
+
+/// "Ukuran font bisa diganti dan langsung terlihat".
+///
+/// Ini menjaga bug yang pernah terjadi di versi Android: setelan ukuran teks
+/// tersimpan, tetapi ukuran di layar tidak berubah karena semua `.size(...)`
+/// ditulis mentah. Di sini teks harus benar-benar membesar.
+#[test]
+fn ukuran_teks_benar_benar_membesar() {
+    let measure = |scale: FontScale| {
+        let mut h = Harness::with_default_state();
+        h.state_mut().font_scale = scale;
+        height_of(&h.frame(), "Arka Agent")
+    };
+
+    let small = measure(FontScale::Small);
+    let medium = measure(FontScale::Medium);
+    let large = measure(FontScale::Large);
+
+    assert!(small < medium, "Kecil ({small}) harus lebih kecil dari Sedang ({medium})");
+    assert!(medium < large, "Besar ({large}) harus lebih besar dari Sedang ({medium})");
+
+    let ratio = large / small;
+    let want = FontScale::Large.factor() / FontScale::Small.factor();
+    assert!(
+        (ratio - want).abs() < 0.05,
+        "rasio tinggi teks {ratio:.3}, seharusnya {want:.3}"
+    );
+}
+
+// ── Interaksi lewat layar ───────────────────────────────────────────────────
+
+#[test]
+fn setelan_tema_bisa_diklik() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().tab = Tab::Settings;
+    h.state_mut().theme = ThemeMode::Light;
+
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Gelap");
+    h.click(rect.center());
+    h.frame();
+
+    assert_eq!(h.state().theme, ThemeMode::Dark);
+
+    // Dan hasilnya terlihat: frame berikutnya berlatar gelap.
+    let shapes = h.frame();
+    assert!(fill_count(&shapes, theme::DARK.background) > 0);
+}
+
+#[test]
+fn snackbar_hilang_sendiri() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().notify("halo dunia");
+
+    let shapes = h.frame();
+    assert!(
+        texts(&shapes).iter().any(|(_, t)| t == "halo dunia"),
+        "snackbar tidak tampil"
+    );
+
+    h.advance(5.0); // NOTICE_SECS = 4
+    let shapes = h.frame();
+    assert!(
+        !texts(&shapes).iter().any(|(_, t)| t == "halo dunia"),
+        "snackbar masih tampil setelah 5 detik"
+    );
+    assert!(h.state().notice.is_none());
+}
+
+#[test]
+fn dialog_tentang_bisa_ditutup() {
+    let mut h = Harness::with_default_state();
+    h.state_mut().modal = Modal::About;
+
+    // egui butuh satu frame untuk mengukur jendela baru (ukurannya belum
+    // diketahui pada frame pertama); di aplikasi nyata ini tidak terasa.
+    h.frame();
+    let shapes = h.frame();
+    let rect = find_text(&shapes, "Tutup");
+    h.click(rect.center());
+    h.frame();
+
+    assert_eq!(h.state().modal, Modal::None);
+}
+
+/// Tab File membaca disk sungguhan, dan **tidak** membacanya tiap frame.
+#[test]
+fn tab_file_membaca_folder_dan_memakai_cache() {
+    let dir = tempdir("files");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("catatan.txt"), b"halo").unwrap();
+
+    let mut p = paths();
+    p.workspace = dir.clone();
+    let mut h = Harness::new(AppState::new(p, Persisted::default()));
+    h.state_mut().tab = Tab::File;
+
+    let shapes = h.frame();
+    assert!(h.state().files.loaded);
+    let names: Vec<String> = h.state().files.entries.iter().map(|e| e.name.clone()).collect();
+    assert_eq!(names, ["sub", "catatan.txt"], "folder dulu, lalu nama");
+    assert!(
+        texts(&shapes).iter().any(|(_, t)| t == "catatan.txt"),
+        "nama berkas tidak tergambar"
+    );
+
+    // Berkas baru muncul di disk, tetapi frame berikutnya tidak membacanya
+    // ulang: itulah gunanya cache.
+    fs::write(dir.join("baru.txt"), b"x").unwrap();
+    let shapes = h.frame();
+    assert_eq!(h.state().files.entries.len(), 2, "cache membaca ulang tiap frame");
+    assert!(!texts(&shapes).iter().any(|(_, t)| t == "baru.txt"));
+
+    // Tombol "Muat ulang" memaksa baca.
+    let rect = find_text(&shapes, "Muat ulang");
+    h.click(rect.center());
+    h.frame();
+    assert_eq!(h.state().files.entries.len(), 3);
+    assert!(h.state().files.entries.iter().any(|e| e.name == "baru.txt"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ── Ketahanan ───────────────────────────────────────────────────────────────
+
+/// Setiap layar × setiap bahasa harus tergambar tanpa panic, dan menghasilkan
+/// teks (bukan kartu kosong).
+#[test]
+fn semua_tab_semua_bahasa_tergambar() {
+    for lang in Lang::ALL {
+        for tab in Tab::ALL {
+            let mut h = Harness::with_default_state();
+            h.state_mut().lang = lang;
+            h.state_mut().tab = tab;
+            let shapes = h.frame();
+            assert!(
+                !texts(&shapes).is_empty(),
+                "tab {tab:?} bahasa {lang:?} tidak menghasilkan teks"
+            );
+            assert!(
+                shapes.iter().any(|s| matches!(s, Shape::Rect(_))),
+                "tab {tab:?} bahasa {lang:?} tidak melukis apa pun"
+            );
+        }
+    }
+}
+
+/// Setelan harus bertahan setelah aplikasi ditutup: serialisasi → deserialisasi.
+#[test]
+fn setelan_bertahan_setelah_dibuka_ulang() {
+    let mut a = AppState::new(paths(), Persisted::default());
+    a.theme = ThemeMode::Dark;
+    a.font_scale = FontScale::Large;
+    a.lang = Lang::Ja;
+    a.tab = Tab::Terminal;
+    a.sidebar_open = false;
+
+    let json = serde_json::to_string(&a.persist()).unwrap();
+    let loaded: Persisted = serde_json::from_str(&json).unwrap();
+    let b = AppState::new(paths(), loaded);
+
+    assert_eq!(b.theme, ThemeMode::Dark);
+    assert_eq!(b.font_scale, FontScale::Large);
+    assert_eq!(b.lang, Lang::Ja);
+    assert_eq!(b.tab, Tab::Terminal);
+    assert!(!b.sidebar_open);
+}

@@ -692,8 +692,6 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_clearTerminalHistory<'local
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Pastikan crate ini tetap kompilasi & nama modul tidak berubah.
     #[test]
     fn shell_registry_is_shared_with_core() {

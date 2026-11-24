@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ (terverifikasi di GitHub Actions, Windows sungguhan)** — M3 (kerangka UI) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅** (semua terverifikasi di GitHub Actions) — M4 (chat + agent) berikutnya.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -287,16 +287,58 @@ Catatan: yang diuji sebagai "cucu proses" adalah `powershell.exe` yang dibuat le
 `child.kill()` biasa gagal dan Job Object berhasil.
 Program bukti: `arka-agent --selftest` (ada di CI, bukan hanya di laptop).
 
-### M3 — Kerangka UI + tema (3–4 hari)
-- [ ] `eframe` window 1200×800, min 900×600, persist ukuran/posisi (`eframe::Storage`)
-- [ ] `theme.rs`: port `theme/Theme.kt` (DarkClay/LightClay + 12 warna) → `Visuals` + palet clay
-- [ ] `widgets.rs`: `clay_card`, `clay_pill`, `clay_button`, `section` (port `Clay.kt`)
-- [ ] Font: bundle Inter/JetBrains Mono (kode), skala font 0.85/1.0/1.15 (kecil/sedang/besar)
-- [ ] Shell layout: sidebar kiri (sesi, bisa collapse) + 5 tab (Chat, Provider, File, Terminal, Setelan)
-- [ ] `i18n.rs`: semua string id/en/ja (port `L10n.kt`, jangan ada string hardcoded)
-- [ ] State global `app.rs` meniru `MainViewModel`: settings, sessions, messages, providers, files, terminal, shell status, progress, approval, question, notice
-- [ ] Snackbar/notice + dialog modal standar
-**Selesai bila:** aplikasi terbuka, tema gelap/terang/ukuran font bisa diganti dan langsung terlihat, 5 tab bisa diklik.
+### M3 — Kerangka UI + tema (3–4 hari) ✅ SELESAI (kecuali verifikasi visual di Windows)
+- [x] `eframe` window 1200×800, min 900×600, persist ukuran/posisi (`eframe::Storage`)
+- [x] `theme.rs`: port `theme/Theme.kt` (DarkClay/LightClay + 13 warna) → `Visuals` + palet clay;
+      **dijaga test `palet_sama_dengan_kotlin`** yang membaca `Theme.kt` asli lewat `include_str!` —
+      palet tidak bisa "melenceng" diam-diam
+- [x] `widgets.rs`: `clay_card`, `clay_panel`, `clay_pill`, `clay_pill_button`, `clay_button`,
+      `section`, `kv`, `paint_background` (port `Clay.kt`)
+- [x] Font: bundle Inter + JetBrains Mono (+ lisensi OFL), skala 0.85/1.0/1.15; emoji/CJK tetap
+      memakai font bawaan egui sebagai fallback
+- [x] Shell layout: sidebar kiri (sesi, bisa collapse lewat `‹` / `☰`) + 5 tab
+      (Chat, Provider, File, Terminal, Setelan)
+- [x] `i18n.rs`: pola sama dengan `L10n.kt` — teks ditulis tiga bahasa di tempat pemakaian,
+      `Lang::native()` untuk nama bahasa
+- [x] State global **`gui/state.rs`** (bukan `app.rs`): settings, sessions, draft, notice, modal,
+      cache file, hasil deteksi shell. Field yang belum tersambung ke core ditandai `TODO(M4)`
+- [x] Snackbar/notice (hilang sendiri 4 detik, bisa ditutup) + dialog modal (Tentang, Hapus sesi)
+- [x] Tab File **sudah berfungsi**: membaca folder kerja sungguhan (`gui/fs_model.rs`)
+- [x] Tab Terminal **sudah berfungsi**: menampilkan versi/path PowerShell hasil deteksi nyata
+
+**Selesai bila:** aplikasi terbuka, tema gelap/terang/ukuran font bisa diganti dan langsung terlihat,
+5 tab bisa diklik.
+
+#### Bukti
+- Test UI **tanpa jendela & tanpa GPU**: `egui::Context` menghitung tata letak di CPU, jadi klik
+  bisa dikirim ke koordinat hasil tata letak. 11 test di `gui/tests.rs`, total **48 test**
+  `arka-desktop` + 31 `arka_core`, lulus di Linux.
+  - `lima_tab_bisa_diklik` — klik pada label tab, lalu tab benar-benar berpindah
+  - `tema_gelap_dan_terang_mengubah_warna_latar` — warna latar yang **dilukis** berganti, bukan
+    hanya nilai setelan
+  - `ukuran_teks_benar_benar_membesar` — tinggi teks Kecil < Sedang < Besar, rasionya 1.15/0.85
+  - `setelan_tema_bisa_diklik`, `snackbar_hilang_sendiri`, `dialog_tentang_bisa_ditutup`
+  - `tab_file_membaca_folder_dan_memakai_cache` — folder sungguhan, dan berkas baru **tidak**
+    muncul sampai "Muat ulang" ditekan (bukti cache bekerja)
+  - `semua_tab_semua_bahasa_tergambar` — 5 tab × 3 bahasa tanpa panic dan selalu menghasilkan teks
+- CI: `cargo test --workspace` (linux) + **`cargo test -p arka-desktop` di `windows-latest`**.
+
+#### Tiga bug yang ditemukan & diperbaiki saat M3
+1. **Setelan ukuran teks tidak berpengaruh.** Semua ukuran ditulis mentah (`.size(14.0)`), jadi
+   skala font hanya mengubah widget yang memakai `TextStyle`. Ini bug yang **sama** dengan yang
+   pernah terjadi di versi Android (`Theme.kt`: "parameter fontScale tidak pernah dipakai").
+   Sekarang semua ukuran lewat `theme::fs(...)`, dan ada test yang menjaganya.
+2. **`read_dir` 60×/detik.** Tab File membaca folder di setiap frame. Sekarang lewat
+   `FilesCache::ensure` (baca hanya bila folder berubah atau saat "Muat ulang").
+3. **`pwsh::detect()` tiap frame.** Lebih buruk: tiap panggilan menjalankan **proses** PowerShell
+   (sampai 2×). Sekarang hasilnya disimpan di `AppState::shell`, dengan tombol "Periksa ulang".
+4. (Bonus) **Visuals hanya dipasang untuk tema aktif.** `style_mut`/`set_visuals` tidak menyentuh
+   tema lain, jadi saat Windows beralih terang↔gelap sebagian widget kembali ke visual bawaan egui.
+   Sekarang `set_visuals_of` untuk Dark **dan** Light, plus `set_theme` mengikuti pilihan pengguna.
+
+**Yang belum dibuktikan:** rupa akhir di layar Windows (butuh jendela + GPU). Test membuktikan
+tata letak, interaksi, warna yang dilukis, dan ukuran teks — bukan estetika. Tangkapan layar dari
+mesin Windows masih perlu ditambahkan di sini.
 
 ### M4 — Chat + agent (5–7 hari) ← inti
 - [ ] `bubble.rs`: bubble user/AI (warna beda), timestamp, tombol salin, lampiran

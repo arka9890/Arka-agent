@@ -13,6 +13,19 @@ path = "src/main.rs"
 arka_core = { path = "../arka-core" }
 serde_json = "1"
 base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+
+# egui/eframe: UI murni Rust, satu binary, tanpa WebView.
+[dependencies.eframe]
+version = "0.32"
+default-features = false
+features = [
+    "glow",           # OpenGL; jalan di GPU lama & software (llvmpipe)
+    "default_fonts",  # font bawaan + emoji sebagai fallback
+    "persistence",    # simpan ukuran/posisi jendela + setelan UI
+    "x11",            # Linux: untuk pengembangan UI (Xvfb) & CI
+    "wayland",
+]
 
 # Hanya di-resolve saat target Windows. Di Linux/CI linux, crate ini tetap
 # lolos `cargo check` tanpa dependensi Windows sama sekali.
