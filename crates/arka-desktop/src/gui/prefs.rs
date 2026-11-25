@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(NumSpec::ROUNDS.parse(""), Err(NumError::Empty));
         assert_eq!(NumSpec::ROUNDS.parse("abc"), Err(NumError::NotNumber));
         assert_eq!(NumSpec::ROUNDS.parse("0"), Err(NumError::TooSmall));
-        assert_eq!(NumSpec::ROUNDS.parse("300"), Err(NumError::TooLarge));
+        assert_eq!(NumSpec::ROUNDS.parse("3000"), Err(NumError::TooLarge));
         assert_eq!(NumSpec::ROUNDS.parse(" 40 "), Ok(40));
 
         assert_eq!(NumSpec::CONTEXT.parse("3999"), Err(NumError::TooSmall));
