@@ -1,5 +1,6 @@
 package com.arka.agent.ui
 
+import android.app.Activity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -44,9 +45,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.arka.agent.ChatEngine
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.screens.ChatScreen
@@ -75,8 +79,27 @@ enum class Tab(
 @Composable
 fun AppScreen(vm: MainViewModel) {
     var tab by remember { mutableStateOf(Tab.Chat) }
+    var desktopFullscreen by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val notice by vm.notice.collectAsState()
+    val context = LocalContext.current
+
+    // Fullscreen desktop: sembunyikan tab bar + system bar, kembalikan saat
+    // keluar. Swipe dari tepi masih bisa memunculkan system bar sementara.
+    DisposableEffect(desktopFullscreen) {
+        val activity = context as? Activity
+        val controller = activity?.let {
+            WindowInsetsControllerCompat(it.window, it.window.decorView)
+        }
+        if (desktopFullscreen) {
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
 
     LaunchedEffect(notice) {
         notice?.let {
@@ -94,7 +117,9 @@ fun AppScreen(vm: MainViewModel) {
         modifier = Modifier.imePadding(),
         containerColor = clay.background,
         snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = { ClayTabBar(current = tab, onSelect = { tab = it }) },
+        bottomBar = {
+            if (!desktopFullscreen) ClayTabBar(current = tab, onSelect = { tab = it })
+        },
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
         // ChatEngine hanya perlu tahu sesi mana yang *terlihat* supaya
@@ -110,11 +135,18 @@ fun AppScreen(vm: MainViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .windowInsetsPadding(WindowInsets.statusBars),
+                .then(
+                    if (desktopFullscreen) Modifier
+                    else Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                ),
         ) {
             when (tab) {
                 Tab.Chat -> ChatScreen(vm)
-                Tab.Desktop -> DesktopScreen(vm)
+                Tab.Desktop -> DesktopScreen(
+                    vm,
+                    fullscreen = desktopFullscreen,
+                    onToggleFullscreen = { desktopFullscreen = !desktopFullscreen },
+                )
                 Tab.Provider -> ProvidersScreen(vm)
                 Tab.File -> FilesScreen(vm)
                 Tab.Terminal -> TerminalScreen(vm)

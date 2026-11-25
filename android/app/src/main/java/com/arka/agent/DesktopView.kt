@@ -54,11 +54,18 @@ class DesktopView(context: Context) : View(context) {
         val y = ((event.y - g[2]) / g[0]).toInt().coerceIn(0, bmp.height - 1)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // LazyColumn induk bisa merebut drag sebagai scroll. Tanpa ini
+                // jari bergerak tapi pesan PointerEvent tidak pernah sampai ke
+                // VNC — cursor terlihat "tidak bisa diarahkan".
+                parent.requestDisallowInterceptTouchEvent(true)
                 onPointer(x, y, 1)
                 performClick()
             }
             MotionEvent.ACTION_MOVE -> onPointer(x, y, 1)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> onPointer(x, y, 0)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                parent.requestDisallowInterceptTouchEvent(false)
+                onPointer(x, y, 0)
+            }
         }
         return true
     }

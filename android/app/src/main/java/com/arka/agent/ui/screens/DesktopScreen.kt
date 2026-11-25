@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.arka.agent.DesktopView
 import com.arka.agent.MainViewModel
+import com.arka.agent.VncFrame
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.tr
 import com.arka.agent.ui.theme.Space
@@ -52,7 +53,15 @@ import com.arka.agent.ui.theme.clay
  * mematikan desktop. Klien RFB ada di [com.arka.agent.VncClient].
  */
 @Composable
-fun DesktopScreen(vm: MainViewModel) {
+fun DesktopScreen(
+    vm: MainViewModel,
+    fullscreen: Boolean = false,
+    onToggleFullscreen: () -> Unit = {},
+) {
+    if (fullscreen) {
+        DesktopFullscreen(vm, onToggleFullscreen)
+        return
+    }
     val status by vm.desktopStatus.collectAsState()
     val distro by vm.distro.collectAsState()
     val session by vm.desktopSession.collectAsState()
@@ -153,6 +162,9 @@ fun DesktopScreen(vm: MainViewModel) {
                         OutlinedButton(onClick = { vm.connectDesktop(status.host, status.port) }) {
                             Text(tr("Sambung ulang", "Reconnect", "再接続"))
                         }
+                        OutlinedButton(onClick = onToggleFullscreen) {
+                            Text(tr("Layar penuh", "Fullscreen", "全画面"))
+                        }
                     }
                 }
                 if (log.isNotBlank()) {
@@ -182,33 +194,14 @@ fun DesktopScreen(vm: MainViewModel) {
                         Text(state, style = MaterialTheme.typography.labelSmall, color = clay.muted)
                     }
                     Spacer(Modifier.height(Space.sm))
-                    val bitmap = frame?.bitmap
-                    Box(
+                    DesktopViewer(
+                        vm = vm,
+                        frame = frame,
+                        state = state,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(320.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF10151B))
-                            .border(1.dp, clay.shadowLight.copy(alpha = 0.2f), RoundedCornerShape(14.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AndroidView(
-                            modifier = Modifier.fillMaxSize(),
-                            factory = { ctx ->
-                                DesktopView(ctx).apply {
-                                    onPointer = { x, y, buttons -> vm.desktopPointer(x, y, buttons) }
-                                }
-                            },
-                            update = { view -> view.bitmap = bitmap },
-                        )
-                        if (bitmap == null) {
-                            Text(
-                                tr("Menunggu frame desktop…", "Waiting for desktop frame…", "待機中…"),
-                                color = clay.muted,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
+                            .height(320.dp),
+                    )
                     Spacer(Modifier.height(Space.sm))
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -245,6 +238,106 @@ fun DesktopScreen(vm: MainViewModel) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** Permukaan desktop yang dipakai mode biasa maupun fullscreen. */
+@Composable
+private fun DesktopViewer(
+    vm: MainViewModel,
+    frame: VncFrame?,
+    state: String,
+    modifier: Modifier = Modifier,
+) {
+    val bitmap = frame?.bitmap
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF10151B))
+            .border(1.dp, clay.shadowLight.copy(alpha = 0.2f), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                DesktopView(ctx).apply {
+                    onPointer = { x, y, buttons -> vm.desktopPointer(x, y, buttons) }
+                }
+            },
+            update = { view -> view.bitmap = bitmap },
+        )
+        if (bitmap == null) {
+            Text(
+                tr("Menunggu frame desktop…", "Waiting for desktop frame…", "待機中…"),
+                color = clay.muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+/** Mode fullscreen: tab bar & system bar disembunyikan AppScreen. */
+@Composable
+private fun DesktopFullscreen(vm: MainViewModel, onExit: () -> Unit) {
+    val frame by vm.desktopFrame.collectAsState()
+    val state by vm.desktopState.collectAsState()
+    var typed by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(clay.background)
+            .padding(horizontal = Space.sm, vertical = Space.sm),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(tr("Ubuntu desktop", "Ubuntu desktop", "Ubuntu デスクトップ"), style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.width(Space.sm))
+            Text(state, style = MaterialTheme.typography.labelSmall, color = clay.muted)
+            Spacer(Modifier.weight(1f))
+            OutlinedButton(onClick = onExit) {
+                Text(tr("Keluar", "Exit", "終了"))
+            }
+        }
+        Spacer(Modifier.height(Space.sm))
+        DesktopViewer(
+            vm = vm,
+            frame = frame,
+            state = state,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+        )
+        Spacer(Modifier.height(Space.sm))
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            KeyButton("Esc", 0xFF1B, vm)
+            KeyButton("Tab", 0xFF09, vm)
+            KeyButton("⌫", 0xFF08, vm)
+            KeyButton("↵", 0xFF0D, vm)
+            KeyButton("←", 0xFF51, vm)
+            KeyButton("→", 0xFF53, vm)
+            KeyButton("↑", 0xFF52, vm)
+            KeyButton("↓", 0xFF54, vm)
+        }
+        Spacer(Modifier.height(Space.sm))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = typed,
+                onValueChange = { typed = it },
+                modifier = Modifier.weight(1f),
+                label = { Text(tr("Kirim teks ke desktop", "Send text to desktop", "テキストを送信")) },
+                singleLine = true,
+            )
+            Spacer(Modifier.width(Space.sm))
+            Button(onClick = {
+                if (typed.isNotEmpty()) {
+                    vm.desktopType(typed)
+                    typed = ""
+                }
+            }) { Text(tr("Kirim", "Send", "送信")) }
+            Spacer(Modifier.width(6.dp))
+            OutlinedButton(onClick = { vm.desktopKey(0xFF0D) }) { Text("Enter") }
         }
     }
 }
