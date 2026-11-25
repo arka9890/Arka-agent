@@ -12,6 +12,7 @@ use crate::ctx;
 use arka_core::events::Events;
 use arka_core::shell::{ExecOutcome, Shell};
 use serde::Serialize;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{BufReader, Read, Write};
@@ -697,6 +698,157 @@ pub fn check_executable() -> Result<(), String> {
     if meta.permissions().mode() & 0o111 == 0 {
         fs::set_permissions(&proot, fs::Permissions::from_mode(0o755))
             .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// -------------------------------------------------------- desktop (VNC/XFCE)
+
+/// Proses daemon desktop yang masih harus hidup setelah perintah `start` selesai.
+///
+/// `run_capture` sengaja TIDAK dipakai untuk daemon: ia memakai
+/// `--kill-on-exit`, sehingga anak guest ikut mati begitu bash selesai. Di sini
+/// proot dijalankan tanpa flag itu, stdio dibuang ke /dev/null, dan child
+/// disimpan supaya grupnya bisa dibunuh lewat `kill(-pid)` saat Stop.
+static DESKTOP_CHILDREN: OnceLock<Mutex<Vec<(std::process::Child, PathBuf)>>> = OnceLock::new();
+
+fn desktop_children() -> &'static Mutex<Vec<(std::process::Child, PathBuf)>> {
+    DESKTOP_CHILDREN.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Status ringkas untuk kartu tab Desktop.
+pub fn desktop_status() -> Result<String, String> {
+    let installed = is_installed();
+    let vnc = ctx::rootfs_dir()?.join("usr/bin/Xvnc").is_file();
+    let xfce = ctx::rootfs_dir()?.join("usr/bin/startxfce4").is_file();
+    let running = desktop_children()
+        .lock()
+        .map(|g| !g.is_empty())
+        .unwrap_or(false);
+    Ok(json!({
+        "ubuntu": installed,
+        "vnc_installed": vnc,
+        "xfce_installed": xfce,
+        "running": running,
+        "host": "127.0.0.1",
+        "port": 5901,
+        "width": 1024,
+        "height": 640,
+    })
+    .to_string())
+}
+
+/// Pasang paket yang dibutuhkan desktop grafis di dalam proot.
+pub fn install_desktop(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
+    if !is_installed() {
+        return Err("Ubuntu 24 belum dipasang. Pasang dulu lewat tab Setelan.".into());
+    }
+    let cmd = "apt-get update -qq && \
+               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+               tigervnc-standalone-server xfce4 xterm";
+    let (code, out) = run_capture(
+        cmd,
+        cancel,
+        &mut |chunk| ev.output(chunk),
+        Some(Duration::from_secs(30 * 60)),
+    )?;
+    if code != 0 {
+        return Err(format!(
+            "Gagal memasang desktop (exit {code}). {}",
+            tail_text(&out, 1_200)
+        ));
+    }
+    Ok(())
+}
+
+fn tail_text(s: &str, n: usize) -> String {
+    let v: Vec<char> = s.chars().collect();
+    if v.len() <= n {
+        return s.to_string();
+    }
+    v[v.len() - n..].iter().collect()
+}
+
+/// Jalankan satu daemon di proot tanpa `--kill-on-exit`.
+fn spawn_daemon(command: &str) -> Result<(std::process::Child, PathBuf), String> {
+    let tmp = proot_run_tmp_dir()?;
+    let mut argv = proot_argv(command, &tmp)?;
+    argv.retain(|a| a != "--kill-on-exit");
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    for (k, v) in proot_env(&tmp)? {
+        cmd.env(k, v);
+    }
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = cmd.spawn().map_err(|e| format!("Gagal menjalankan desktop: {e}"))?;
+    Ok((child, tmp))
+}
+
+/// Nyalakan Xvnc (:1, port 5901, tanpa password karena hanya di 127.0.0.1)
+/// lalu sesi XFCE di display yang sama.
+pub fn start_desktop() -> Result<String, String> {
+    stop_desktop()?;
+    let vnc_cmd = "mkdir -p /root/.vnc /tmp/.X11-unix && \
+                   exec /usr/bin/Xvnc :1 -geometry 1024x640 -depth 24 \
+                   -rfbport 5901 -localhost yes -SecurityTypes None -desktop Arka";
+    let wm_cmd = "export DISPLAY=:1; exec /usr/bin/startxfce4";
+    let vnc = spawn_daemon(vnc_cmd)?;
+    std::thread::sleep(Duration::from_secs(2));
+    let wm = spawn_daemon(wm_cmd)?;
+
+    // Pastikan port benar-benar terbuka sebelum UI mulai menghubungkan viewer.
+    let mut ready = false;
+    for _ in 0..20 {
+        if std::net::TcpStream::connect_timeout(
+            &"127.0.0.1:5901"
+                .parse::<std::net::SocketAddr>()
+                .map_err(|e| e.to_string())?,
+            Duration::from_millis(500),
+        )
+        .is_ok()
+        {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    if !ready {
+        stop_desktop()?;
+        return Err(
+            "Server VNC tidak membuka port 5901. Coba 'Tes distro' di Setelan.".to_string(),
+        );
+    }
+    desktop_children()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .extend([vnc, wm]);
+    Ok(json!({"port": 5901, "width": 1024, "height": 640}).to_string())
+}
+
+/// Matikan seluruh grup proses desktop dan bersihkan folder tmp proot-nya.
+pub fn stop_desktop() -> Result<(), String> {
+    let taken = desktop_children()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .drain(..)
+        .collect::<Vec<_>>();
+    for (mut child, tmp) in taken {
+        let pid = child.id() as i32;
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+        let _ = child.wait();
+        let _ = fs::remove_dir_all(&tmp);
     }
     Ok(())
 }

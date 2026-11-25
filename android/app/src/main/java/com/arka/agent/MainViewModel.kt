@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.arka.agent.core.ApprovalRequest
 import com.arka.agent.core.ArkaRepo
 import com.arka.agent.core.AttachmentRef
+import com.arka.agent.core.DesktopSession
+import com.arka.agent.core.DesktopStatus
 import com.arka.agent.core.DistroStatus
 import com.arka.agent.core.FileInfo
 import com.arka.agent.core.Message
@@ -103,6 +105,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _distro = MutableStateFlow(DistroStatus())
     val distro: StateFlow<DistroStatus> = _distro.asStateFlow()
 
+    /** Status paket desktop (Xvnc + XFCE) di dalam Ubuntu. */
+    private val _desktopStatus = MutableStateFlow(DesktopStatus())
+    val desktopStatus: StateFlow<DesktopStatus> = _desktopStatus.asStateFlow()
+
+    /** Sesi VNC yang sedang aktif; null kalau belum dinyalakan. */
+    private val _desktopSession = MutableStateFlow<DesktopSession?>(null)
+    val desktopSession: StateFlow<DesktopSession?> = _desktopSession.asStateFlow()
+
+    private val _desktopBusy = MutableStateFlow(false)
+    val desktopBusy: StateFlow<Boolean> = _desktopBusy.asStateFlow()
+
+    /** Log apt saat memasang desktop grafis. */
+    private val _desktopInstallLog = MutableStateFlow("")
+    val desktopInstallLog: StateFlow<String> = _desktopInstallLog.asStateFlow()
+
+    /** Frame desktop terakhir untuk viewer VNC. */
+    private val _desktopFrame = MutableStateFlow<VncFrame?>(null)
+    val desktopFrame: StateFlow<VncFrame?> = _desktopFrame.asStateFlow()
+
+    private val _desktopState = MutableStateFlow("")
+    val desktopState: StateFlow<String> = _desktopState.asStateFlow()
+
+    /** Klien VNC dimiliki ViewModel supaya tidak putus saat tab berganti. */
+    private var vncClient: VncClient? = null
+
     private val _installProgress = MutableStateFlow<Pair<Int, String>?>(null)
     val installProgress: StateFlow<Pair<Int, String>?> = _installProgress.asStateFlow()
 
@@ -147,6 +174,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _providerStats.value = runCatching { repo.providerStats() }.getOrDefault(emptyList())
             _sessions.value = runCatching { repo.sessions() }.getOrDefault(emptyList())
             _distro.value = runCatching { repo.distroStatus() }.getOrDefault(DistroStatus())
+            _desktopStatus.value = runCatching { repo.desktopStatus() }
+                .getOrDefault(DesktopStatus())
             _files.value = runCatching { repo.files("") }.getOrDefault(emptyList())
             _terminalHistory.value = runCatching { repo.terminalHistory() }.getOrDefault(emptyList())
             ArkaApp.initError?.let { notify(it) }
@@ -601,6 +630,87 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshDistro() = viewModelScope.launch {
         _distro.value = runCatching { repo.distroStatus() }.getOrElse { DistroStatus() }
+    }
+
+    // --------------------------------------------------------- desktop/VNC
+
+    fun refreshDesktop() = viewModelScope.launch {
+        _desktopStatus.value = runCatching { repo.desktopStatus() }
+            .getOrDefault(DesktopStatus())
+    }
+
+    /** Pasang Xvnc + XFCE (~ratusan MB). Output apt ditampilkan di kartu. */
+    fun installDesktop() {
+        if (_desktopBusy.value) return
+        _desktopBusy.value = true
+        _desktopInstallLog.value = "Menyiapkan apt di Ubuntu…\n"
+        viewModelScope.launch {
+            val result = repo.installDesktop { chunk ->
+                val gabung = _desktopInstallLog.value + chunk
+                _desktopInstallLog.value = if (gabung.length > 6_000) {
+                    gabung.takeLast(6_000)
+                } else {
+                    gabung
+                }
+            }
+            result.onFailure { notify(it.message ?: "Gagal memasang desktop") }
+            if (result.isSuccess) refreshDesktop()
+            _desktopBusy.value = false
+        }
+    }
+
+    /** Nyalakan Xvnc + XFCE, lalu simpan sesinya untuk viewer. */
+    fun startDesktop() {
+        if (_desktopBusy.value) return
+        _desktopBusy.value = true
+        viewModelScope.launch {
+            val result = runCatching { repo.startDesktop() }
+            result.onSuccess {
+                _desktopSession.value = it
+                refreshDesktop()
+            }
+            result.onFailure { notify(it.message ?: "Gagal menyalakan desktop") }
+            _desktopBusy.value = false
+        }
+    }
+
+    fun stopDesktop() {
+        if (_desktopBusy.value) return
+        disconnectDesktop()
+        viewModelScope.launch {
+            runCatching { repo.stopDesktop() }
+                .onFailure { notify(it.message ?: "Gagal mematikan desktop") }
+            _desktopSession.value = null
+            refreshDesktop()
+        }
+    }
+
+    fun connectDesktop(host: String, port: Int) {
+        vncClient?.stop()
+        _desktopFrame.value = null
+        vncClient = VncClient(
+            host,
+            port,
+            onFrame = { _desktopFrame.value = it },
+            onState = { _desktopState.value = it },
+        )
+        vncClient?.start()
+    }
+
+    fun disconnectDesktop() {
+        vncClient?.stop()
+        vncClient = null
+        _desktopFrame.value = null
+        _desktopState.value = ""
+    }
+
+    fun desktopPointer(x: Int, y: Int, buttons: Int) = vncClient?.pointer(x, y, buttons)
+    fun desktopKey(keysym: Int) = vncClient?.keyPress(keysym)
+    fun desktopType(text: String) = vncClient?.typeText(text)
+
+    override fun onCleared() {
+        disconnectDesktop()
+        super.onCleared()
     }
 
     fun installUbuntu() {

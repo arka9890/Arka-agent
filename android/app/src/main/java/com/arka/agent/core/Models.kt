@@ -121,3 +121,22 @@ data class DistroStatus(
     @SerialName("rootfs_path") val rootfsPath: String = "",
     val message: String = "",
 )
+
+@Serializable
+data class DesktopStatus(
+    val ubuntu: Boolean = false,
+    @SerialName("vnc_installed") val vncInstalled: Boolean = false,
+    @SerialName("xfce_installed") val xfceInstalled: Boolean = false,
+    val running: Boolean = false,
+    val host: String = "127.0.0.1",
+    val port: Int = 5901,
+    val width: Int = 1024,
+    val height: Int = 640,
+)
+
+@Serializable
+data class DesktopSession(
+    val port: Int = 5901,
+    val width: Int = 1024,
+    val height: Int = 640,
+)

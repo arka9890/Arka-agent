@@ -99,6 +99,12 @@ object Arka {
     external fun cancelExec()
     external fun diagnostic(): String
 
+    // --------------------------------------------------- desktop / VNC
+    external fun desktopStatusJson(): String
+    external fun installDesktop(cb: InstallCallback)
+    external fun startDesktop(): String
+    external fun stopDesktop()
+
     // --------------------------------------------------------- setting
     external fun settingsJson(): String
     external fun setSetting(key: String, value: String)

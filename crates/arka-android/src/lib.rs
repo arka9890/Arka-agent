@@ -666,6 +666,47 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_diagnostic<'local>(
     json_result(&mut env, || shell::active()?.diagnostic())
 }
 
+// ---------------------------------------------------------- desktop / VNC
+
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_desktopStatusJson<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JString<'local> {
+    json_result(&mut env, proot_manager::desktop_status)
+}
+
+/// Pasang Xvnc + XFCE di dalam Ubuntu. Blocking; panggil dari `Dispatchers.IO`.
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_installDesktop<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    cb: JObject<'local>,
+) {
+    let events = JniEvents::new(env, cb);
+    let cancel = cancel_token(install_cancel());
+    if let Err(e) = proot_manager::install_desktop(&events, &cancel) {
+        events.error(&e);
+    }
+    cancel.store(true, Ordering::SeqCst);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_startDesktop<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JString<'local> {
+    json_result(&mut env, proot_manager::start_desktop)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_stopDesktop<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) {
+    unit_result(&mut env, proot_manager::stop_desktop)
+}
+
 // -------------------------------------------------------------- settings
 
 /// Prompt sistem bawaan (isi awal editor prompt di Setelan).

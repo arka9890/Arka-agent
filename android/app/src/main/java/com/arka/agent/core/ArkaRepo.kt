@@ -423,6 +423,34 @@ class ArkaRepo(private val context: Context) {
 
     suspend fun cancelInstall() = io { Arka.cancelInstall() }
 
+    // ------------------------------------------------------- desktop/VNC
+
+    suspend fun desktopStatus(): DesktopStatus = io {
+        json.decodeFromString(Arka.desktopStatusJson())
+    }
+
+    /** Pasang Xvnc + XFCE di Ubuntu. Output apt mengalir ke [onOutput]. */
+    suspend fun installDesktop(onOutput: (String) -> Unit): Result<Unit> = io {
+        runCatching {
+            var error: String? = null
+            Arka.installDesktop(object : Arka.InstallCallback {
+                override fun onProgress(percent: Int, label: String) = Unit
+                override fun onOutput(chunk: String) = onOutput(chunk)
+                override fun onError(message: String) {
+                    error = message
+                }
+            })
+            error?.let { throw IllegalStateException(it) }
+            Unit
+        }
+    }
+
+    suspend fun startDesktop(): DesktopSession = io {
+        json.decodeFromString(Arka.startDesktop())
+    }
+
+    suspend fun stopDesktop() = io { Arka.stopDesktop() }
+
     /**
      * Jalankan perintah di Ubuntu. Output mengalir ke [onOutput]; nilai
      * kembalian adalah exit code (-1 kalau gagal/dihentikan).

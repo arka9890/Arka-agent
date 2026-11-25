@@ -22,6 +22,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Chat
+import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Settings
@@ -49,13 +50,14 @@ import androidx.compose.ui.unit.dp
 import com.arka.agent.ChatEngine
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.screens.ChatScreen
+import com.arka.agent.ui.screens.DesktopScreen
 import com.arka.agent.ui.screens.FilesScreen
 import com.arka.agent.ui.screens.ProvidersScreen
 import com.arka.agent.ui.screens.SettingsScreen
 import com.arka.agent.ui.screens.TerminalScreen
 import com.arka.agent.ui.theme.clay
 
-/** Lima tab sesuai PRD. */
+/** Tab aplikasi (termasuk Desktop untuk akses Ubuntu grafis lewat VNC). */
 enum class Tab(
     val label: String,
     val labelEn: String,
@@ -63,6 +65,7 @@ enum class Tab(
     val icon: ImageVector,
 ) {
     Chat("Chat", "Chat", "チャット", Icons.Outlined.Chat),
+    Desktop("Desktop", "Desktop", "デスクトップ", Icons.Outlined.Computer),
     Provider("Provider", "Provider", "プロバイダー", Icons.Outlined.Hub),
     File("File", "Files", "ファイル", Icons.Outlined.Description),
     Terminal("Terminal", "Terminal", "ターミナル", Icons.Outlined.Terminal),
@@ -111,6 +114,7 @@ fun AppScreen(vm: MainViewModel) {
         ) {
             when (tab) {
                 Tab.Chat -> ChatScreen(vm)
+                Tab.Desktop -> DesktopScreen(vm)
                 Tab.Provider -> ProvidersScreen(vm)
                 Tab.File -> FilesScreen(vm)
                 Tab.Terminal -> TerminalScreen(vm)
