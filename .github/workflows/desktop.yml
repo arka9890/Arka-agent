@@ -133,26 +133,40 @@ jobs:
       #       Python yang sudah keburu memuat banyak DLL;
       #   (3) `dumpbin /imports` -> daftar fungsi per DLL **termasuk
       #       bagian delay-load**, yang tidak pernah dicek parser lama.
-      - name: Bukti mutlak (dumpbin + biner debug)
+      # 0xC0000139 = STATUS_ENTRYPOINT_NOT_FOUND.
+      #
+      # Fakta dari run 31e7adb (semua sudah diverifikasi, bukan dugaan):
+      #   * biner rilis DAN biner debug aplikasi sama-sama 0xC0000139
+      #     -> bukan LTO/strip/opt-level (debug tidak memakainya);
+      #   * biner uji `cargo test` lulus 156 test -> toolchain sehat;
+      #   * daftar 30 DLL dari dumpbin identik antara biner aplikasi dan
+      #     biner uji (bedanya hanya 7 DLL GUI yang memang dipakai
+      #     aplikasi) -> bukan DLL yang hilang;
+      #   * folder bersih (hanya .exe) tetap gagal, dan tidak ada satu
+      #     pun .dll di target/ -> bukan DLL kotor yang menyalip sistem;
+      #   * parser lama hanya memeriksa 21 DLL — 9 DLL CRT
+      #     (VCRUNTIME140 + 8 api-ms-win-crt-*) TERLEWAT, jadi kesimpulan
+      #     "semua fungsi OK" sebelumnya memang belum lengkap.
+      #
+      # Kegagalan terjadi sebelum `main()` sempat mencetak apa pun (bahkan
+      # `--help` kosong), jadi penyebabnya ada di resolusi impor statis.
+      # Langkah ini mengambil keputusan dalam satu run:
+      #   (1) dumpbin /headers -> entry point + section (gambar PE utuh?);
+      #   (2) dumpbin /imports -> daftar fungsi resmi per DLL, termasuk
+      #       bagian delay-load yang tidak pernah dicek sebelumnya;
+      #   (3) untuk SETIAP fungsi di SETIAP DLL: muat DLL dari **path
+      #       absolut System32** lalu GetProcAddress. Path absolut dipakai
+      #       supaya tidak memakai salinan yang sudah keburu termuat di
+      #       proses Python — itulah cacat pemeriksaan lama;
+      #   (4) kontrol yang sama pada biner uji (terbukti jalan).
+      - name: Bukti mutlak (fungsi hilang per DLL)
         run: |
           set +e
-
-          echo "=== (1) bangun biner DEBUG aplikasi lalu jalankan ==="
-          cargo build -p arka-desktop --locked 2>&1 | tail -4
-          ls -la target/debug/arka-agent.exe 2>&1
-          echo "--- jalankan --help ---"
-          ./target/debug/arka-agent.exe --help
-          echo "debug --help rc=$?"
-          echo "--- jalankan --status ---"
-          ./target/debug/arka-agent.exe --status | head -c 400
-          echo ""
-          echo "debug --status rc=$?"
-
-          echo "=== isi target & semua .exe/.dll ==="
-          find target -maxdepth 4 \( -iname '*.exe' -o -iname '*.dll' \) -print 2>/dev/null
+          echo "=== biner yang diperiksa ==="
+          find target -maxdepth 6 -iname '*.exe' -print 2>/dev/null
 
           python - <<'PY'
-          import glob, os, subprocess
+          import glob, os, re, subprocess, ctypes, sys
 
           def cari_dumpbin():
               pola = [r"C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe",
@@ -165,85 +179,89 @@ jobs:
           dumpbin = cari_dumpbin()
           print("dumpbin =", dumpbin)
 
-          def dump(*args):
-              if not dumpbin:
-                  return ""
+          def dump(*a):
+              if not dumpbin: return ""
               try:
-                  p = subprocess.run([dumpbin, "/nologo"] + list(args),
-                                     capture_output=True, text=True, timeout=240)
+                  p = subprocess.run([dumpbin, "/nologo"] + list(a),
+                                     capture_output=True, text=True, timeout=300)
               except Exception as e:
                   return "EXC %s: %s" % (type(e).__name__, e)
               return (p.stdout or "") + (p.stderr or "")
 
-          def dependents(path):
-              """DLL dari tabel impor FILE, bukan dari proses Python."""
-              teks = dump("/dependents", path)
-              hasil, ambil = [], False
-              for b in teks.splitlines():
-                  s = b.strip()
-                  if s.lower().startswith("image has the following dependencies"):
-                      ambil = True; continue
-                  if ambil:
-                      if not s: break
-                      hasil.append(s.lower())
-              return hasil, teks
-
-          kandidat = []
+          targets = []
           for pola in ("target/release/arka-agent.exe",
                        "target/debug/arka-agent.exe",
                        "target/debug/**/arka_agent-*.exe"):
-              kandidat += sorted(glob.glob(pola, recursive=True))
-          kandidat = list(dict.fromkeys(kandidat))
+              targets += sorted(glob.glob(pola, recursive=True))
+          targets = list(dict.fromkeys(targets))
 
-          semua = {}
-          for p in kandidat:
-              print("=" * 72)
-              print("FILE:", p, os.path.getsize(p), "byte")
-              d, mentah = dependents(p)
-              semua[p] = d
-              if d:
-                  print("  %d DLL:" % len(d), ", ".join(d))
-              else:
-                  print("  dependents kosong. mentah:")
-                  print("  " + mentah[:900].replace("\n", "\n  "))
+          # (1) struktur PE
+          for t in targets:
+              print("=" * 74)
+              print("[1] HEADERS:", t)
+              h = dump("/headers", t)
+              for line in h.splitlines():
+                  s = line.strip()
+                  low = s.lower()
+                  if "entry point" in low or "image base" in low or "subsystem" in low:
+                      print("     ", s)
+                  elif re.search(r"\.(text|data|rdata|pdata|reloc|bss|tls|idata|didat|crt|xdata)\b", low):
+                      print("      section:", s)
 
-          print("=" * 72)
-          print("PERBANDINGAN DLL (biner rilis yang GAGAL vs yang lain):")
-          rilis = semua.get("target/release/arka-agent.exe")
-          if rilis:
-              for p, d in semua.items():
-                  if p == "target/release/arka-agent.exe" or not d: continue
-                  hanya_rilis = sorted(set(rilis) - set(d))
-                  hanya_lain  = sorted(set(d) - set(rilis))
-                  print("  vs", p)
-                  print("     hanya di RILIS :", hanya_rilis or "(sama)")
-                  print("     hanya di lainnya:", hanya_lain or "(sama)")
+          def parse_imports(teks):
+              """dll -> set(fungsi). Berhenti di blok Summary."""
+              hasil, dll = {}, None
+              for line in teks.splitlines():
+                  s = line.strip()
+                  if not s: continue
+                  if s.lower() == "summary":
+                      dll = None; continue
+                  if s.lower().endswith(".dll"):
+                      dll = s.lower(); hasil.setdefault(dll, set()); continue
+                  if dll is None: continue
+                  m = re.match(r"^(\d+)\s+(.+)$", s)
+                  if m:
+                      hasil[dll].add(m.group(2).strip())
+                  elif re.match(r"^\d+$", s):
+                      hasil[dll].add("#" + s)
+              return hasil
 
-          print("=" * 72)
-          teks = dump("/imports", "target/release/arka-agent.exe")
-          print("dumpbin /imports biner rilis (%d karakter):" % len(teks))
-          print(teks[:4000])
-          if len(teks) > 4000: print("...[dipotong]")
-          low = teks.lower()
-          for kunci in ("delay import", "delay-load", "summary"):
-              idx = low.find(kunci)
-              if idx >= 0:
-                  print("--- bagian '%s' ---" % kunci)
-                  print(teks[idx:idx+1200])
-          PY
+          k32 = ctypes.WinDLL("kernel32")
+          k32.GetProcAddress.restype = ctypes.c_void_p
+          k32.GetProcAddress.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+          sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
 
-          echo "=== (uji beda) biner uji yang LULUS vs biner rilis ==="
-          python - <<'PY'
-          import glob, subprocess, os
-          uji = sorted(glob.glob(os.path.join("target","debug","**","arka_agent-*.exe"), recursive=True))
-          print("biner uji:", uji)
-          for u in uji[:3]:
-              try:
-                  p = subprocess.run([u, "--list"], capture_output=True, text=True, timeout=60)
-                  print(" ", os.path.basename(u), "rc=", p.returncode,
-                        "out=", (p.stdout or "")[:120].replace("\n"," | "))
-              except Exception as e:
-                  print(" ", os.path.basename(u), type(e).__name__, e)
+          # (2)+(3) daftar fungsi resmi, lalu uji satu per satu
+          for t in targets:
+              print("=" * 74)
+              print("[2] IMPORTS:", t)
+              teks = dump("/imports", t)
+              print("     %d karakter; delay-load: %s" %
+                    (len(teks), "ADA" if "delay" in teks.lower() else "tidak"))
+              imp = parse_imports(teks)
+              print("     %d DLL ditemukan" % len(imp))
+              for dll in sorted(imp):
+                  fns = imp[dll]
+                  path = os.path.join(sys32, dll)
+                  if not os.path.exists(path):
+                      print("     !! DLL TIDAK ADA DI SYSTEM32:", dll); continue
+                  try:
+                      h = ctypes.WinDLL(path)
+                  except OSError as e:
+                      print("     !! MUAT GAGAL:", dll, "->", e); continue
+                  kurang = []
+                  for fn in sorted(fns):
+                      if fn.startswith("#"):
+                          addr = k32.GetProcAddress(h._handle, ctypes.c_void_p(int(fn[1:])))
+                      else:
+                          buf = ctypes.create_string_buffer(fn.encode("latin1"))
+                          addr = k32.GetProcAddress(h._handle, ctypes.cast(buf, ctypes.c_void_p))
+                      if not addr:
+                          kurang.append(fn)
+                  if kurang:
+                      print("     >>> FUNGSI HILANG di", dll, "->", kurang)
+                  else:
+                      print("     OK  %-44s %d fungsi" % (dll, len(fns)))
           PY
       - name: Diagnostik biner
         run: |
