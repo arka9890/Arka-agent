@@ -708,9 +708,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _desktopState.value = ""
     }
 
-    fun desktopPointer(x: Int, y: Int, buttons: Int) {
+    /** Geser kursor tanpa menekan tombol. */
+    fun desktopMove(x: Int, y: Int) {
         _desktopPointerCount.value += 1
-        vncClient?.pointer(x, y, buttons)
+        vncClient?.pointer(x, y, 0)
+        viewModelScope.launch { runCatching { repo.desktopMouse(x, y, false) } }
+    }
+
+    /** Geser ke titik lalu klik kiri. */
+    fun desktopClick(x: Int, y: Int) {
+        _desktopPointerCount.value += 1
+        vncClient?.pointer(x, y, 1)
+        vncClient?.pointer(x, y, 0)
+        viewModelScope.launch { runCatching { repo.desktopMouse(x, y, true) } }
     }
     fun desktopKey(keysym: Int) = vncClient?.keyPress(keysym)
     fun desktopType(text: String) = vncClient?.typeText(text)

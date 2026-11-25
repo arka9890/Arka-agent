@@ -707,6 +707,36 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_stopDesktop<'local>(
     unit_result(&mut env, proot_manager::stop_desktop)
 }
 
+/// Input mouse cadangan: jalankan xdotool langsung di sesi X (:1).
+///
+/// Dipakai kalau PointerEvent RFB tidak menggerakkan kursor. xdotool memakai
+/// XTEST di server X, jadi tidak bergantung pada encoding/viewer VNC.
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_desktopMouse<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    x: jint,
+    y: jint,
+    click: jboolean,
+) -> jint {
+    let cmd = if click != 0 {
+        format!("DISPLAY=:1 xdotool mousemove {x} {y} click 1")
+    } else {
+        format!("DISPLAY=:1 xdotool mousemove {x} {y}")
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match proot_manager::run_capture(
+        &cmd,
+        &cancel,
+        &mut |_| {},
+        Some(std::time::Duration::from_secs(10)),
+    ) {
+        Ok((code, _)) => code,
+        Err(_) => -1,
+    }
+    .into()
+}
+
 // -------------------------------------------------------------- settings
 
 /// Prompt sistem bawaan (isi awal editor prompt di Setelan).

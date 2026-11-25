@@ -270,8 +270,7 @@ private fun DesktopViewer(
                     onTap = { offset ->
                         val bmp = bitmap ?: return@detectTapGestures
                         val (x, y) = desktopCoords(offset, size, bmp)
-                        vm.desktopPointer(x, y, 1)
-                        vm.desktopPointer(x, y, 0)
+                        vm.desktopClick(x, y)
                     },
                 )
             }
@@ -282,24 +281,24 @@ private fun DesktopViewer(
                         last = offset
                         val bmp = bitmap ?: return@detectDragGestures
                         val (x, y) = desktopCoords(offset, size, bmp)
-                        vm.desktopPointer(x, y, 1)
+                        vm.desktopMove(x, y)
                     },
                     onDrag = { change, _ ->
                         last = change.position
                         val bmp = bitmap ?: return@detectDragGestures
                         val (x, y) = desktopCoords(change.position, size, bmp)
-                        vm.desktopPointer(x, y, 1)
+                        vm.desktopMove(x, y)
                         change.consume()
                     },
                     onDragEnd = {
                         val bmp = bitmap ?: return@detectDragGestures
                         val (x, y) = desktopCoords(last, size, bmp)
-                        vm.desktopPointer(x, y, 0)
+                        vm.desktopMove(x, y)
                     },
                     onDragCancel = {
                         val bmp = bitmap ?: return@detectDragGestures
                         val (x, y) = desktopCoords(last, size, bmp)
-                        vm.desktopPointer(x, y, 0)
+                        vm.desktopMove(x, y)
                     },
                 )
             },

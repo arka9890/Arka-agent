@@ -104,6 +104,7 @@ object Arka {
     external fun installDesktop(cb: InstallCallback)
     external fun startDesktop(): String
     external fun stopDesktop()
+    external fun desktopMouse(x: Int, y: Int, click: Boolean): Int
 
     // --------------------------------------------------------- setting
     external fun settingsJson(): String

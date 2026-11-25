@@ -750,7 +750,7 @@ pub fn install_desktop(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), Strin
     }
     let cmd = "apt-get update -qq && \
                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-               tigervnc-standalone-server xfce4 xterm dbus-x11";
+               tigervnc-standalone-server xfce4 xterm dbus-x11 xdotool";
     let (code, out) = run_capture(
         cmd,
         cancel,
@@ -812,7 +812,7 @@ pub fn start_desktop() -> Result<String, String> {
                      exit 1; \
                    fi; \
                    exec \"$VNC\" :1 -geometry 1024x640 -depth 24 \
-                   -rfbport 5901 -localhost yes -SecurityTypes None -desktop Arka \
+                   -rfbport 5901 -localhost yes -ac -SecurityTypes None -desktop Arka \
                    > /tmp/arka-vnc.log 2>&1";
     let wm_cmd = "export DISPLAY=:1; \
                   exec /usr/bin/startxfce4 > /tmp/arka-wm.log 2>&1";

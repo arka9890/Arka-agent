@@ -451,6 +451,11 @@ class ArkaRepo(private val context: Context) {
 
     suspend fun stopDesktop() = io { Arka.stopDesktop() }
 
+    /** Gerakkan kursor X lewat xdotool di dalam Ubuntu (cadangan RFB). */
+    suspend fun desktopMouse(x: Int, y: Int, click: Boolean): Int = io {
+        Arka.desktopMouse(x, y, click)
+    }
+
     /**
      * Jalankan perintah di Ubuntu. Output mengalir ke [onOutput]; nilai
      * kembalian adalah exit code (-1 kalau gagal/dihentikan).
