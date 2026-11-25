@@ -17,8 +17,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,14 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
-import androidx.compose.ui.input.pointer.awaitPointerEvent
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.arka.agent.DesktopView
 import com.arka.agent.MainViewModel
 import com.arka.agent.ui.components.ClayCard
 import com.arka.agent.ui.tr
@@ -192,55 +187,24 @@ fun DesktopScreen(vm: MainViewModel) {
                             .height(320.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(Color(0xFF10151B))
-                            .border(1.dp, clay.shadowLight.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
-                            .then(
-                                if (bitmap != null) {
-                                    Modifier.pointerInput(bitmap) {
-                                        awaitPointerEventScope {
-                                            while (true) {
-                                                val event = awaitPointerEvent()
-                                                val change = event.changes.lastOrNull() ?: continue
-                                                val bmp = frame?.bitmap ?: continue
-                                                val sw = size.width.toFloat()
-                                                val sh = size.height.toFloat()
-                                                val scale = minOf(sw / bmp.width, sh / bmp.height)
-                                                val ox = (sw - bmp.width * scale) / 2f
-                                                val oy = (sh - bmp.height * scale) / 2f
-                                                val px = ((change.position.x - ox) / scale).toInt()
-                                                val py = ((change.position.y - oy) / scale).toInt()
-                                                when (event.type) {
-                                                    PointerEventType.Press -> vm.desktopPointer(px, py, 1)
-                                                    PointerEventType.Move -> if (change.pressed) vm.desktopPointer(px, py, 1)
-                                                    PointerEventType.Release -> vm.desktopPointer(px, py, 0)
-                                                    else -> Unit
-                                                }
-                                                change.consume()
-                                            }
-                                        }
-                                    }
-                                } else Modifier
-                            ),
+                            .border(1.dp, clay.shadowLight.copy(alpha = 0.2f), RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
+                        AndroidView(
+                            modifier = Modifier.fillMaxSize(),
+                            factory = { ctx ->
+                                DesktopView(ctx).apply {
+                                    onPointer = { x, y, buttons -> vm.desktopPointer(x, y, buttons) }
+                                }
+                            },
+                            update = { view -> view.bitmap = bitmap },
+                        )
                         if (bitmap == null) {
                             Text(
                                 tr("Menunggu frame desktop…", "Waiting for desktop frame…", "待機中…"),
                                 color = clay.muted,
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                        } else {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val image = bitmap.asImageBitmap()
-                                val scale = minOf(size.width / image.width, size.height / image.height)
-                                val w = image.width * scale
-                                val h = image.height * scale
-                                drawImage(
-                                    image,
-                                    dstOffsetX = (size.width - w) / 2f,
-                                    dstOffsetY = (size.height - h) / 2f,
-                                    dstSize = androidx.compose.ui.geometry.Size(w, h),
-                                )
-                            }
                         }
                     }
                     Spacer(Modifier.height(Space.sm))
