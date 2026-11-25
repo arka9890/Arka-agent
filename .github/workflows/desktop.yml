@@ -86,100 +86,105 @@ jobs:
           ./target/release/arka-agent.exe --selftest > /dev/null 2>&1 || true
           pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
-      # Diagnosis: `--status` pernah gagal dengan exit 127 dalam <100 ms tanpa
-      # output satu byte pun — `--help` pun ikut 127, padahal biner debug lolos
-      # tes. Artinya biner rilis gagal dimuat SEBELUM `main` (kemungkinan DLL
-      # impor hilang atau PE rusak akibat LTO/strip). Langkah ini memeriksa
-      # header PE, mencocokkan tiap DLL impor dengan file yang benar-benar ada,
-      # lalu menjalankan biner lewat Python supaya kode error Windows asli
-      # (bukan penerjemahan bash) terlihat, dan membandingkannya dengan debug.
+      # Diagnosis (lanjutan): biner mati dengan 0xC0000139
+      # STATUS_ENTRYPOINT_NOT_FOUND — biner rilis DAN debug sama-sama gagal,
+      # jadi bukan LTO/strip. Ada satu fungsi impor yang tidak ditemukan di
+      # salah satu DLL. Langkah ini menelusuri tiap fungsi impor biner dan
+      # mencocokkannya dengan GetProcAddress, sehingga nama fungsi + DLL yang
+      # bermasalah tercetak langsung di log.
       - name: Diagnostik biner
         run: |
-          ls -la target/release/arka-agent.exe
           python - <<'PY'
-          import struct, os
-          path = "target/release/arka-agent.exe"
-          data = open(path, "rb").read()
-          print("size =", len(data))
-          if data[:2] != b"MZ":
-              print("BUKAN PE, header =", data[:8]); raise SystemExit
-          e = struct.unpack_from("<I", data, 0x3C)[0]
-          print("signature =", data[e:e+4])
-          if data[e:e+4] != b"PE\0\0":
-              raise SystemExit("signature PE tidak valid")
-          coff = e + 4
-          machine, nsec = struct.unpack_from("<HH", data, coff)
-          optsz = struct.unpack_from("<H", data, coff+16)[0]
-          opt = coff + 20
-          magic = struct.unpack_from("<H", data, opt)[0]
-          pe32p = magic == 0x20B
-          print("machine = 0x%04X  magic = 0x%04X  nsec = %d" % (machine, magic, nsec))
-          num_dd = struct.unpack_from("<I", data, opt + (108 if pe32p else 92))[0]
-          dd = opt + (112 if pe32p else 96)
-          secs = []
-          for i in range(nsec):
-              o = opt + optsz + i*40
-              vsz, va, rsz, ptr = struct.unpack_from("<IIII", data, o+8)
-              secs.append((va, vsz, ptr, rsz))
-          def rva2off(rva):
-              for va, vsz, ptr, rsz in secs:
-                  if va <= rva < va + max(vsz, rsz):
-                      return ptr + (rva - va)
-              return None
-          def cstr(off):
-              return data[off:off+80].split(b"\0")[0].decode("latin1", "replace")
-          def read_dd(idx):
-              if idx >= num_dd: return (0, 0)
-              return struct.unpack_from("<II", data, dd + idx*8)
-          dlls = []
-          rva, _ = read_dd(1)
-          off = rva2off(rva) if rva else None
-          while off:
-              ilt, _, _, nrva, iat = struct.unpack_from("<IIIII", data, off)
-              if not (ilt or nrva or iat): break
-              no = rva2off(nrva)
-              if no is None: break
-              dlls.append(cstr(no))
-              off += 20
-          print("DLL impor (%d):" % len(dlls))
-          for d in dlls: print("   ", d)
-          rva, _ = read_dd(13)
-          off = rva2off(rva) if rva else None
-          delay = []
-          while off:
-              attrs, name_rva = struct.unpack_from("<II", data, off)
-              if not name_rva: break
-              no = rva2off(name_rva)
-              if no is None: break
-              delay.append(cstr(no))
-              off += 32
-          if delay: print("delay-load:", delay)
-          win = os.environ.get("SystemRoot", r"C:\Windows")
-          dirs = [os.getcwd(), os.path.join(win, "System32"), os.path.join(win, "SysWOW64")]
-          dirs += [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
-          for d in dlls + delay:
-              hit = next((os.path.join(b, d) for b in dirs
-                          if b and os.path.exists(os.path.join(b, d))), None)
-              print(("  OK      " if hit else "  HILANG  ") + d, "->", hit or "-")
+          import struct, ctypes, os, traceback
+          def periksa(path):
+              print("=====", path, "=====")
+              data = open(path, "rb").read()
+              if data[:2] != b"MZ":
+                  print("BUKAN PE"); return
+              e = struct.unpack_from("<I", data, 0x3C)[0]
+              if data[e:e+4] != b"PE\0\0":
+                  print("signature rusak:", data[e:e+4]); return
+              coff = e + 4
+              machine, nsec = struct.unpack_from("<HH", data, coff)
+              optsz = struct.unpack_from("<H", data, coff+16)[0]
+              opt = coff + 20
+              magic = struct.unpack_from("<H", data, opt)[0]
+              pe32p = magic == 0x20B
+              num_dd = struct.unpack_from("<I", data, opt + (108 if pe32p else 92))[0]
+              dd = opt + (112 if pe32p else 96)
+              secs = []
+              for i in range(nsec):
+                  o = opt + optsz + i*40
+                  vsz, va, rsz, ptr = struct.unpack_from("<IIII", data, o+8)
+                  secs.append((va, vsz, ptr, rsz))
+              def rva2off(rva):
+                  for va, vsz, ptr, rsz in secs:
+                      if va <= rva < va + max(vsz, rsz):
+                          return ptr + (rva - va)
+                  return None
+              def cstr(off):
+                  return data[off:off+128].split(b"\0")[0].decode("latin1", "replace")
+              def read_dd(idx):
+                  if idx >= num_dd: return (0, 0)
+                  return struct.unpack_from("<II", data, dd + idx*8)
+              def fungsi(iltrva):
+                  out = []
+                  off = rva2off(iltrva) if iltrva else None
+                  if off is None: return out
+                  while True:
+                      ent = struct.unpack_from("<Q", data, off)[0]
+                      if ent == 0: break
+                      if ent & (1 << 63):
+                          out.append(("#", ent & 0xFFFF))
+                      else:
+                          fo = rva2off(ent & 0x7FFFFFFF)
+                          out.append(("n", cstr(fo + 2) if fo is not None else "?"))
+                      off += 8
+                  return out
+              imp = []
+              rva, _ = read_dd(1)
+              off = rva2off(rva) if rva else None
+              while off:
+                  ilt, _, _, nrva, iat = struct.unpack_from("<IIIII", data, off)
+                  if not (ilt or nrva or iat): break
+                  imp.append((cstr(rva2off(nrva)), fungsi(ilt or iat)))
+                  off += 20
+              k32 = ctypes.WinDLL("kernel32")
+              k32.GetProcAddress.restype = ctypes.c_void_p
+              k32.GetProcAddress.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+              for dll, fs in imp:
+                  try:
+                      h = ctypes.WinDLL(dll)
+                  except OSError as ex:
+                      print("  MUAT GAGAL:", dll, "->", ex); continue
+                  kurang = []
+                  for kind, val in fs:
+                      if kind == "#":
+                          addr = k32.GetProcAddress(h._handle, ctypes.c_void_p(val))
+                      else:
+                          buf = ctypes.create_string_buffer(val.encode("latin1"))
+                          addr = k32.GetProcAddress(h._handle, ctypes.cast(buf, ctypes.c_void_p))
+                      if not addr:
+                          kurang.append(val if kind == "n" else "#%d" % val)
+                  if kurang:
+                      print("  TIDAK ADA FUNGSI di", dll, ":", kurang)
+                  else:
+                      print("  OK  %-40s %d fungsi" % (dll, len(fs)))
+          for p in ("target/release/arka-agent.exe", "target/debug/arka-agent.exe"):
+              if os.path.exists(p): periksa(p)
+              else: print("tidak ada:", p)
           PY
+          echo "=== jalankan via python (kode error Windows asli) ==="
           python - <<'PY'
           import subprocess, os
-          path = os.path.abspath("target/release/arka-agent.exe")
-          for args in (["--help"], ["--status"]):
+          for p in ("target/release/arka-agent.exe", "target/debug/arka-agent.exe"):
+              if not os.path.exists(p): continue
               try:
-                  p = subprocess.run([path] + args, capture_output=True, timeout=60)
-                  print(args, "rc =", p.returncode)
-                  print("   stdout:", p.stdout[:900])
-                  print("   stderr:", p.stderr[:900])
-              except OSError as e:
-                  print(args, "OSError winerror =", getattr(e, "winerror", None), e)
+                  r = subprocess.run([os.path.abspath(p), "--help"], capture_output=True, timeout=60)
+                  print(p, "rc = 0x%08X" % (r.returncode & 0xFFFFFFFF), r.stdout[:200])
               except Exception as e:
-                  print(args, type(e).__name__, e)
+                  print(p, type(e).__name__, e)
           PY
-          echo "=== perbandingan debug ==="
-          (cargo build -p arka-desktop --locked 2>&1 | tail -3) || true
-          ./target/debug/arka-agent.exe --help > debug-help.txt 2>&1 || echo "debug exit=$?"
-          head -5 debug-help.txt
 
       - name: --status
         run: |
