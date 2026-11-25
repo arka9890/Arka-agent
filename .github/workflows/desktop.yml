@@ -87,15 +87,99 @@ jobs:
           pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
       # Diagnosis: `--status` pernah gagal dengan exit 127 dalam <100 ms tanpa
-      # output satu byte pun (JSON tidak pernah tercetak, PowerShell tidak
-      # sempat dipanggil) — artinya binernya gagal dimuat sebelum `main`.
-      # Langkah ini mengeluarkan isi folder rilis dan mencoba perintah CLI
-      # paling ringan lebih dulu, supaya penyebabnya terbaca langsung di log.
+      # output satu byte pun — `--help` pun ikut 127, padahal biner debug lolos
+      # tes. Artinya biner rilis gagal dimuat SEBELUM `main` (kemungkinan DLL
+      # impor hilang atau PE rusak akibat LTO/strip). Langkah ini memeriksa
+      # header PE, mencocokkan tiap DLL impor dengan file yang benar-benar ada,
+      # lalu menjalankan biner lewat Python supaya kode error Windows asli
+      # (bukan penerjemahan bash) terlihat, dan membandingkannya dengan debug.
       - name: Diagnostik biner
         run: |
-          ls -la target/release/ | tail -30
-          ./target/release/arka-agent.exe --help || echo "help exit=$?"
-          ./target/release/arka-agent.exe --status || echo "status exit=$?"
+          ls -la target/release/arka-agent.exe
+          python - <<'PY'
+          import struct, os
+          path = "target/release/arka-agent.exe"
+          data = open(path, "rb").read()
+          print("size =", len(data))
+          if data[:2] != b"MZ":
+              print("BUKAN PE, header =", data[:8]); raise SystemExit
+          e = struct.unpack_from("<I", data, 0x3C)[0]
+          print("signature =", data[e:e+4])
+          if data[e:e+4] != b"PE\0\0":
+              raise SystemExit("signature PE tidak valid")
+          coff = e + 4
+          machine, nsec = struct.unpack_from("<HH", data, coff)
+          optsz = struct.unpack_from("<H", data, coff+16)[0]
+          opt = coff + 20
+          magic = struct.unpack_from("<H", data, opt)[0]
+          pe32p = magic == 0x20B
+          print("machine = 0x%04X  magic = 0x%04X  nsec = %d" % (machine, magic, nsec))
+          num_dd = struct.unpack_from("<I", data, opt + (108 if pe32p else 92))[0]
+          dd = opt + (112 if pe32p else 96)
+          secs = []
+          for i in range(nsec):
+              o = opt + optsz + i*40
+              vsz, va, rsz, ptr = struct.unpack_from("<IIII", data, o+8)
+              secs.append((va, vsz, ptr, rsz))
+          def rva2off(rva):
+              for va, vsz, ptr, rsz in secs:
+                  if va <= rva < va + max(vsz, rsz):
+                      return ptr + (rva - va)
+              return None
+          def cstr(off):
+              return data[off:off+80].split(b"\0")[0].decode("latin1", "replace")
+          def read_dd(idx):
+              if idx >= num_dd: return (0, 0)
+              return struct.unpack_from("<II", data, dd + idx*8)
+          dlls = []
+          rva, _ = read_dd(1)
+          off = rva2off(rva) if rva else None
+          while off:
+              ilt, _, _, nrva, iat = struct.unpack_from("<IIIII", data, off)
+              if not (ilt or nrva or iat): break
+              no = rva2off(nrva)
+              if no is None: break
+              dlls.append(cstr(no))
+              off += 20
+          print("DLL impor (%d):" % len(dlls))
+          for d in dlls: print("   ", d)
+          rva, _ = read_dd(13)
+          off = rva2off(rva) if rva else None
+          delay = []
+          while off:
+              attrs, name_rva = struct.unpack_from("<II", data, off)
+              if not name_rva: break
+              no = rva2off(name_rva)
+              if no is None: break
+              delay.append(cstr(no))
+              off += 32
+          if delay: print("delay-load:", delay)
+          win = os.environ.get("SystemRoot", r"C:\Windows")
+          dirs = [os.getcwd(), os.path.join(win, "System32"), os.path.join(win, "SysWOW64")]
+          dirs += [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+          for d in dlls + delay:
+              hit = next((os.path.join(b, d) for b in dirs
+                          if b and os.path.exists(os.path.join(b, d))), None)
+              print(("  OK      " if hit else "  HILANG  ") + d, "->", hit or "-")
+          PY
+          python - <<'PY'
+          import subprocess, os
+          path = os.path.abspath("target/release/arka-agent.exe")
+          for args in (["--help"], ["--status"]):
+              try:
+                  p = subprocess.run([path] + args, capture_output=True, timeout=60)
+                  print(args, "rc =", p.returncode)
+                  print("   stdout:", p.stdout[:900])
+                  print("   stderr:", p.stderr[:900])
+              except OSError as e:
+                  print(args, "OSError winerror =", getattr(e, "winerror", None), e)
+              except Exception as e:
+                  print(args, type(e).__name__, e)
+          PY
+          echo "=== perbandingan debug ==="
+          (cargo build -p arka-desktop --locked 2>&1 | tail -3) || true
+          ./target/debug/arka-agent.exe --help > debug-help.txt 2>&1 || echo "debug exit=$?"
+          head -5 debug-help.txt
 
       - name: --status
         run: |
