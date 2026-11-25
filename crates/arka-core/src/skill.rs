@@ -204,7 +204,22 @@ pub fn system_prompt_section() -> String {
     let mut out = format!(
         "## Skill agen\nSkill berikut tersimpan di `{dir}`. Gunakan yang relevan dengan permintaan pengguna dan ikuti instruksinya.\n"
     );
-    let mut used = 0usize;
+    // Daftar nama selalu lengkap. Sebelumnya skill yang kelewatan batas
+    // panjang dibuang begitu saja, sehingga model "lupa" skill itu ada.
+    const INVENTORY_MAX: usize = 5_000;
+    out.push_str("\nDaftar lengkap skill terpasang (nama persis):\n");
+    let mut inv_used = 0usize;
+    for s in &skills {
+        let line = format!("- `{}` — {}\n", s.name, s.description);
+        if inv_used + line.len() > INVENTORY_MAX {
+            out.push_str("- _(sisa skill terpotong)_ \n");
+            break;
+        }
+        inv_used += line.len();
+        out.push_str(&line);
+    }
+
+    let mut used = inv_used;
     for s in skills {
         let block = format!(
             "\n### {}\nDeskripsi: {}\n\n{}\n",
@@ -217,7 +232,7 @@ pub fn system_prompt_section() -> String {
             s.content
         );
         if used + block.len() > MAX_PROMPT_CHARS {
-            out.push_str("\n_(Skill lain tidak dimuat karena batas panjang.)_\n");
+            out.push_str("\n_(Isi skill lain dipotong karena batas panjang; daftar namanya tetap di atas.)_\n");
             break;
         }
         used += block.len();

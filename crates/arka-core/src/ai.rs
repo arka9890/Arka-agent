@@ -146,10 +146,21 @@ fn request_body(
     include_usage: bool,
     platform: Platform,
 ) -> Value {
-    let system = messages
-        .iter()
-        .find(|m| m.role == "system")
-        .map(|m| m.content.clone());
+    // Gabungkan SEMUA pesan system. Dulu hanya yang pertama yang dikirim,
+    // jadi kartu memori/pengingat yang ditambahkan di ujung riwayat diam-diam
+    // hilang sebelum sampai ke model.
+    let system = {
+        let parts: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.as_str())
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        }
+    };
     let rest: Vec<Value> = messages
         .iter()
         .filter(|m| m.role != "system")
@@ -907,6 +918,20 @@ mod tests {
         assert_eq!(arr[0]["role"], "system");
         assert_eq!(arr[0]["content"], "aturan penting");
         assert_eq!(arr[1]["role"], "user");
+    }
+
+    #[test]
+    fn all_system_messages_are_sent() {
+        let msgs = vec![
+            ChatMsg::plain("system", "aturan dasar"),
+            ChatMsg::plain("user", "halo"),
+            ChatMsg::plain("system", "kartu memori: workspace /data/arka"),
+        ];
+        let body = request_body(false, "m", &msgs, false, false, Platform::Android);
+        let sys = body["messages"][0]["content"].as_str().unwrap();
+        assert!(sys.contains("aturan dasar"));
+        assert!(sys.contains("kartu memori: workspace /data/arka"));
+        assert_eq!(body["messages"].as_array().unwrap().len(), 2);
     }
 
     #[test]

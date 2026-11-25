@@ -41,6 +41,15 @@ pub fn init(path: &str) -> Result<(), String> {
         "ALTER TABLE sessions ADD COLUMN summary_upto INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    // Batas ringkasan berbasis URUTAN pesan, bukan waktu. `created_at`
+    // beresolusi milidetik, jadi dua pesan yang dibuat di ms yang sama bisa
+    // tertukar / ikut terbuang saat ringkasan disimpan — itu bikin model
+    // mendadak lupa kalimat terakhir. Kolom ini menghitung pesan tersimpan
+    // yang sudah masuk ringkasan.
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN summary_count INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // Kalau dua thread balapan, yang kalah cukup memakai koneksi pemenang.
     let _ = DB.set(Mutex::new(conn));
     Ok(())
@@ -81,8 +90,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     model       TEXT,
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL,
-    summary      TEXT NOT NULL DEFAULT '',
-    summary_upto INTEGER NOT NULL DEFAULT 0
+    summary       TEXT NOT NULL DEFAULT '',
+    summary_upto  INTEGER NOT NULL DEFAULT 0,
+    summary_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (

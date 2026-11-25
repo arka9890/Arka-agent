@@ -155,7 +155,7 @@ pub fn messages(session_id: &str) -> Result<Vec<Message>, String> {
         let mut stmt = c
             .prepare(
                 "SELECT id, session_id, role, content, attachments, created_at
-                 FROM messages WHERE session_id = ?1 ORDER BY created_at ASC",
+                 FROM messages WHERE session_id = ?1 ORDER BY created_at ASC, rowid ASC",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -272,26 +272,40 @@ pub fn set_model(session_id: &str, provider_id: &str, model: &str) -> Result<(),
 
 // ------------------------------------------------------- ringkasan konteks
 
-/// Ringkasan percakapan yang tersimpan + waktu pesan terakhir yang sudah
-/// tercakup ringkasan (`summary_upto`, ms epoch).
-pub fn memory(session_id: &str) -> Result<(String, i64), String> {
+/// Ringkasan percakapan yang tersimpan + batas pesan yang sudah diringkas.
+///
+/// `upto` (ms epoch) dipertahankan untuk kompatibilitas, tapi penentu utamanya
+/// `count`: jumlah pesan tersimpan paling awal yang sudah masuk ringkasan.
+/// Urutan dipakai karena `created_at` punya resolusi milidetik — dua pesan
+/// dalam ms yang sama tidak bisa dibedakan hanya dari waktunya.
+pub fn memory(session_id: &str) -> Result<(String, i64, i64), String> {
     db::with(|c| {
         c.query_row(
-            "SELECT summary, summary_upto FROM sessions WHERE id = ?1",
+            "SELECT summary, summary_upto, summary_count FROM sessions WHERE id = ?1",
             params![session_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            )),
         )
         .map_err(|e| e.to_string())
     })
 }
 
-/// Simpan ringkasan baru. `upto` = `created_at` pesan terakhir yang sudah
-/// diringkas, supaya pesan itu tidak dikirim ulang di request berikutnya.
-pub fn set_memory(session_id: &str, summary: &str, upto: i64) -> Result<(), String> {
+/// Simpan ringkasan baru. `count` = jumlah pesan tersimpan paling awal yang
+/// sudah diringkas; `upto` hanya penanda waktu untuk diagnostik/DB lama.
+pub fn set_memory(
+    session_id: &str,
+    summary: &str,
+    upto: i64,
+    count: i64,
+) -> Result<(), String> {
     db::with(|c| {
         c.execute(
-            "UPDATE sessions SET summary = ?2, summary_upto = ?3 WHERE id = ?1",
-            params![session_id, summary, upto],
+            "UPDATE sessions SET summary = ?2, summary_upto = ?3, summary_count = ?4
+             WHERE id = ?1",
+            params![session_id, summary, upto, count],
         )
         .map_err(|e| e.to_string())
         .map(|_| ())

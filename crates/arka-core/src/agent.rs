@@ -159,9 +159,6 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
             return Err(e);
         }
     };
-    if !msgs.iter().any(|m| m.role == "system") {
-        msgs.insert(0, ChatMsg::plain("system", &system_prompt_with_skills()));
-    }
     let model = if req.model.trim().is_empty() {
         p.model.clone()
     } else {
@@ -172,6 +169,27 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
     // jendela konteks model, jadi model 128k tidak dipaksa meringkas di 24k
     // dan model kecil tidak kena error konteks.
     let budget = effective_context_budget(&p, &model);
+
+    // Kartu memori dibangun dari riwayat LENGKAP, sebelum `memory::prepare`
+    // membuang/meringkas pesan. Berisi path workspace + skill persis (juga
+    // dipakai walau pengguna mengganti system prompt) dan ringkasan tetap
+    // berisi tujuan/keputusan/path yang tidak ikut terkompresi.
+    let memory_card = memory::context_section(&msgs, budget);
+    match msgs.iter().position(|m| m.role == "system") {
+        // Sub agent sudah punya instruksi khusus di system prompt-nya;
+        // kartu ditambahkan supaya ia tetap tahu workspace & skill yang sama.
+        Some(i) => {
+            msgs[i].content.push_str("\n\n");
+            msgs[i].content.push_str(&memory_card);
+        }
+        None => {
+            let mut system = system_prompt_with_skills();
+            system.push_str("\n\n");
+            system.push_str(&memory_card);
+            msgs.insert(0, ChatMsg::plain("system", &system));
+        }
+    }
+
     if settings::auto_summary() {
         msgs = memory::prepare(&p, &model, &session_id, msgs, budget, cancel.as_ref());
     }
@@ -725,7 +743,7 @@ fn run_subagent(
     let seq = SUBAGENT_SEQ.fetch_add(1, Ordering::SeqCst);
     let session_id = format!("{parent_session}:sub{seq}");
 
-    let system = format!(
+    let mut system = format!(
         "{}\n\n---\nKamu sedang berjalan sebagai SUB AGENT milik Arka Agent. \
 Tugasmu TERBATAS pada satu perintah dari agent utama di bawah ini. \
 Kerjakan sampai selesai, verifikasi hasilnya dengan tool, lalu jawab ringkas \
@@ -735,6 +753,15 @@ membuktikannya. Jangan bertanya ke pengguna (tanya lewat agent utama). \
 Kalau tugas di luar kemampuanmu, katakan terus terang.",
         system_prompt_with_skills()
     );
+    // Sub agent tidak mewarisi riwayat percakapan induk. Tanpa ini ia bisa
+    // mengulang pekerjaan yang sudah selesai atau bertentangan dengan
+    // keputusan yang sudah diambil pengguna di sesi yang sama.
+    if let Ok((ringkasan, _, _)) = session::memory(parent_session) {
+        if !ringkasan.trim().is_empty() {
+            system.push_str("\n\n## Ringkasan sesi induk (baca sebelum bekerja)\n");
+            system.push_str(&tail_chars(ringkasan, 2_400));
+        }
+    }
     let messages_json = json!([
         { "role": "system", "content": system },
         { "role": "user", "content": format!("Tugas: {task}") },

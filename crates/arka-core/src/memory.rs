@@ -11,8 +11,9 @@
 //! tidak perlu dihitung ulang setiap request.
 
 use crate::ai::{self, ChatMsg};
+use crate::paths::{self, Platform};
 use crate::provider::Provider;
-use crate::session;
+use crate::{session, skill};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -174,6 +175,162 @@ fn summarize_batch(
     Ok(truncate_chars(&summary, MAX_SUMMARY_CHARS))
 }
 
+/// Batas kartu memori yang disuntikkan tiap request. Diperkecil pada model
+/// kecil supaya kartu tidak mengalahkan percakapan terbaru.
+const BRIEF_MAX_CHARS: usize = 4_200;
+const BRIEF_SMALL_CHARS: usize = 1_400;
+
+fn one_line(s: &str, max: usize) -> String {
+    let flat = s.trim().replace(['\r', '\n', '\t'], " ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let mut out: String = flat.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+fn path_token(word: &str) -> bool {
+    let w = word.trim_matches(|c: char| {
+        c == '"' || c == '\'' || c == '`' || c == ',' || c == ')' || c == '('
+    });
+    w.starts_with('/')
+        || w.starts_with("~/")
+        || (w.len() >= 3 && w.as_bytes()[1] == b':' && (w.as_bytes()[2] == b'\\' || w.as_bytes()[2] == b'/'))
+}
+
+/// Versi kartu memori yang bisa diuji tanpa menginisialisasi `paths`.
+#[allow(clippy::too_many_arguments)]
+pub fn context_section_with(
+    history: &[ChatMsg],
+    budget: usize,
+    platform: Platform,
+    workspace: &str,
+    skills_dir: &str,
+    config_dir: &str,
+    skills: &[(String, String)],
+) -> String {
+    let platform_name = match platform {
+        Platform::Android => "Android (Ubuntu 24.04 di proot)",
+        Platform::Windows => "Windows (PowerShell)",
+    };
+    let cap = if budget < 8_000 {
+        BRIEF_SMALL_CHARS
+    } else {
+        BRIEF_MAX_CHARS
+    };
+    let mut env = format!(
+        "## LINGKUNGAN AKTIF — fakta tetap, jangan ditebak ulang\n\
+         - Platform: {platform_name}\n\
+         - Workspace persis: `{workspace}`\n\
+         - Folder skill persis: `{skills_dir}`\n\
+         - Folder konfigurasi skill: `{config_dir}`\n"
+    );
+    if skills.is_empty() {
+        env.push_str("- Skill terpasang: (belum ada). Gunakan `install_skill` + persetujuan pengguna.\n");
+    } else {
+        env.push_str("- Skill terpasang (nama persis):\n");
+        for (name, desc) in skills {
+            env.push_str(&format!("  - `{}` — {}\n", one_line(name, 80), one_line(desc, 160)));
+        }
+    }
+    env.push_str(
+        "- Selalu pakai path di atas apa adanya saat menjalankan perintah atau menyebut skill. \
+         Jangan mengarang path/workspace lain.\n",
+    );
+    let mut out = env;
+    let rest_cap = cap.saturating_sub(out.len());
+
+    // Kartu ini dibangun dari riwayat LENGKAP, sebelum `prepare` membuang
+    // pesan lama. Jadi tujuan awal dan keputusan pengguna tetap terlihat
+    // walaupun ringkasan sudah dipadatkan berkali-kali.
+    let users: Vec<&ChatMsg> = history.iter().filter(|m| m.role == "user").collect();
+    let mut brief = String::from("\n## MEMORI SESI — tidak ikut dipangkas\n");
+    if let Some(first) = users.first() {
+        brief.push_str(&format!("- Permintaan awal: {}\n", one_line(&first.content, 500)));
+    }
+    if users.len() > 1 {
+        brief.push_str("- Instruksi/keputusan pengguna berikutnya:\n");
+        for m in users.iter().skip(1).rev().take(14).rev() {
+            let text = one_line(&m.content, 260);
+            if !text.is_empty() {
+                brief.push_str(&format!("  - {text}\n"));
+            }
+        }
+    }
+
+    let mut paths_seen: Vec<String> = Vec::new();
+    for m in history {
+        for word in m.content.split_whitespace() {
+            if !path_token(word) {
+                continue;
+            }
+            let p = one_line(word.trim_matches(|c: char| c == '`' || c == '"' || c == '\''), 140);
+            if p.len() > 2 && !paths_seen.iter().any(|x| x == &p) {
+                paths_seen.push(p);
+                if paths_seen.len() >= 12 {
+                    break;
+                }
+            }
+        }
+    }
+    if !paths_seen.is_empty() {
+        brief.push_str("- Path/file penting yang disebut: ");
+        brief.push_str(&paths_seen.join(" | "));
+        brief.push('\n');
+    }
+
+    let menunggu = ["belum", "lanjut", "todo", "next", "nanti", "tersisa", "pending"];
+    let pending: Vec<&ChatMsg> = history
+        .iter()
+        .filter(|m| {
+            m.role == "assistant"
+                && menunggu.iter().any(|k| m.content.to_lowercase().contains(k))
+        })
+        .rev()
+        .take(6)
+        .collect();
+    if !pending.is_empty() {
+        brief.push_str("- Catatan pekerjaan yang belum tuntas:\n");
+        for m in pending.iter().rev() {
+            brief.push_str(&format!("  - {}\n", one_line(&m.content, 220)));
+        }
+    }
+
+    if brief.len() > rest_cap {
+        brief = one_line(&brief, rest_cap);
+    }
+    out.push_str(&brief);
+    out
+}
+
+/// Kartu memori aktif: path workspace/skill + ringkasan tetap dari seluruh
+/// riwayat. Disuntikkan ke system prompt setiap request, jadi tidak ikut
+/// hilang saat pesan lama diringkas.
+pub fn context_section(history: &[ChatMsg], budget: usize) -> String {
+    let platform = paths::platform().unwrap_or(Platform::Android);
+    let workspace = paths::workspace_display();
+    let skills_dir = paths::skills_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "~/.claude/skills".to_string());
+    let config_dir = paths::skills_config_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "~/.claude/skills/<nama>/config.json".to_string());
+    let installed: Vec<(String, String)> = skill::list()
+        .into_iter()
+        .map(|s| (s.name, s.description))
+        .collect();
+    context_section_with(
+        history,
+        budget,
+        platform,
+        &workspace,
+        &skills_dir,
+        &config_dir,
+        &installed,
+    )
+}
+
 fn build_system(base: &str, summary: &str) -> String {
     if summary.trim().is_empty() {
         base.to_string()
@@ -223,14 +380,23 @@ pub fn prepare(
     let mut msgs = msgs;
     let base_system = msgs.remove(system_idx).content;
 
-    let (mut summary, mut summary_upto) = session::memory(session_id).unwrap_or_default();
+    let (mut summary, mut summary_upto, mut summary_count) =
+        session::memory(session_id).unwrap_or_default();
+    // Pakai URUTAN pesan tersimpan, bukan perbandingan timestamp. Dua pesan
+    // yang dibuat di milidetik yang sama dulu bisa ikut terbuang bersama
+    // batch yang baru diringkas — itulah salah satu penyebab "mendadak lupa".
+    let mut seen = 0i64;
     let mut rest: Vec<ChatMsg> = msgs
         .into_iter()
-        .filter(|m| match m.created_at {
+        .filter(|m| {
             // Pesan tanpa metadata (mis. hasil tool di agent loop) jangan
             // dibuang; hanya pesan yang benar-benar sudah diringkas.
-            Some(t) => t > summary_upto,
-            None => true,
+            if m.created_at.is_none() {
+                return true;
+            }
+            let keep = seen >= summary_count;
+            seen += 1;
+            keep
         })
         .collect();
 
@@ -251,12 +417,15 @@ pub fn prepare(
             .filter_map(|m| m.created_at)
             .max()
             .unwrap_or(summary_upto);
+        let new_count = summary_count
+            + batch.iter().filter(|m| m.created_at.is_some()).count() as i64;
 
         match summarize_batch(p, model, &summary, &batch) {
             Ok(s) => {
                 summary = s;
                 summary_upto = new_upto;
-                let _ = session::set_memory(session_id, &summary, summary_upto);
+                summary_count = new_count;
+                let _ = session::set_memory(session_id, &summary, summary_upto, summary_count);
             }
             Err(e) => {
                 // Jangan tandai batch ini sudah diringkas: kalau nanti jaringan
@@ -370,10 +539,12 @@ pub fn compact_now(p: &Provider, model: &str, session_id: &str) -> Result<String
     if messages.len() <= KEEP_RECENT {
         return Err("Percakapan masih pendek; belum perlu diringkas.".into());
     }
-    let (mut summary, upto) = session::memory(session_id)?;
+    let (mut summary, upto, count) = session::memory(session_id)?;
+    // Urutan pesan lebih aman daripada timestamp (bisa tabrakan di ms yang
+    // sama). `messages` sudah diurutkan berdasarkan created_at + rowid.
     let pending: Vec<ChatMsg> = messages
         .iter()
-        .filter(|m| m.created_at > upto)
+        .skip(count.max(0) as usize)
         .map(from_session_message)
         .collect();
     let take = pending.len().saturating_sub(KEEP_RECENT);
@@ -387,7 +558,8 @@ pub fn compact_now(p: &Provider, model: &str, session_id: &str) -> Result<String
         .filter_map(|m| m.created_at)
         .max()
         .unwrap_or(upto);
-    session::set_memory(session_id, &summary, new_upto)?;
+    let new_count = count + batch.iter().filter(|m| m.created_at.is_some()).count() as i64;
+    session::set_memory(session_id, &summary, new_upto, new_count)?;
     Ok(summary)
 }
 
@@ -436,5 +608,59 @@ mod tests {
         assert!(s.contains("dasar"));
         assert!(s.contains("Ringkasan percakapan sebelumnya"));
         assert!(s.contains("build APK"));
+    }
+
+    #[test]
+    fn memory_card_keeps_goal_paths_and_skills() {
+        let history = vec![
+            ChatMsg::plain("user", "Perbaiki terminal Android di /data/arka/workspace/repos/arka"),
+            ChatMsg::plain("assistant", "Sudah coba satu perbaikan, belum diverifikasi."),
+            ChatMsg::plain("user", "Gunakan skill code-review jika ada"),
+        ];
+        let skills = vec![("code-review".to_string(), "Tinjau kode".to_string())];
+        let card = context_section_with(
+            &history,
+            24_000,
+            Platform::Android,
+            "/data/arka/workspace",
+            "/data/arka/workspace/.claude/skills",
+            "/data/arka/workspace/.claude/skills/code-review/config.json",
+            &skills,
+        );
+        for needle in [
+            "/data/arka/workspace",
+            "code-review",
+            "Perbaiki terminal Android",
+            "Gunakan skill code-review",
+            "belum diverifikasi",
+        ] {
+            assert!(card.contains(needle), "kartu memori kehilangan: {needle}");
+        }
+    }
+
+    #[test]
+    fn memory_card_on_small_budget_is_shorter_but_keeps_anchor() {
+        let mut history = vec![ChatMsg::plain(
+            "user",
+            "Tolong perbaiki modal di /data/arka/workspace",
+        )];
+        for i in 0..20 {
+            history.push(ChatMsg::plain(
+                "user",
+                &format!("Instruksi tambahan {i}: periksa berkas /data/arka/workspace/file{i}.md dan lanjutkan pekerjaannya"),
+            ));
+        }
+        let skills: Vec<(String, String)> = Vec::new();
+        let big = context_section_with(
+            &history, 64_000, Platform::Windows, "C:\\Arka\\workspace",
+            "C:\\Arka\\.claude\\skills", "C:\\Arka\\.claude\\skills\\cfg", &skills,
+        );
+        let small = context_section_with(
+            &history, 4_000, Platform::Windows, "C:\\Arka\\workspace",
+            "C:\\Arka\\.claude\\skills", "C:\\Arka\\.claude\\skills\\cfg", &skills,
+        );
+        assert!(small.contains("C:\\Arka\\workspace"));
+        assert!(small.contains("Tolong perbaiki modal"));
+        assert!(small.len() < big.len());
     }
 }
