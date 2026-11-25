@@ -2,6 +2,8 @@ package com.arka.agent.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,8 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.arka.agent.DesktopView
 import com.arka.agent.MainViewModel
@@ -251,20 +256,58 @@ private fun DesktopViewer(
     modifier: Modifier = Modifier,
 ) {
     val bitmap = frame?.bitmap
+    val pointerCount by vm.desktopPointerCount.collectAsState()
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .background(Color(0xFF10151B))
-            .border(1.dp, clay.shadowLight.copy(alpha = 0.2f), RoundedCornerShape(14.dp)),
+            .border(1.dp, clay.shadowLight.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+            // Gesture ditangani di Compose, bukan di AndroidView: node scroll
+            // LazyColumn bisa merebut MOVE sebelum sampai ke View. Di sini
+            // event dikonsumsi sehingga jari benar-benar jadi mouse.
+            .pointerInput(bitmap) {
+                detectTapGestures(
+                    onTap = { offset ->
+                        val bmp = bitmap ?: return@detectTapGestures
+                        val (x, y) = desktopCoords(offset, size, bmp)
+                        vm.desktopPointer(x, y, 1)
+                        vm.desktopPointer(x, y, 0)
+                    },
+                )
+            }
+            .pointerInput(bitmap) {
+                var last = Offset.Zero
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        last = offset
+                        val bmp = bitmap ?: return@detectDragGestures
+                        val (x, y) = desktopCoords(offset, size, bmp)
+                        vm.desktopPointer(x, y, 1)
+                    },
+                    onDrag = { change, _ ->
+                        last = change.position
+                        val bmp = bitmap ?: return@detectDragGestures
+                        val (x, y) = desktopCoords(change.position, size, bmp)
+                        vm.desktopPointer(x, y, 1)
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        val bmp = bitmap ?: return@detectDragGestures
+                        val (x, y) = desktopCoords(last, size, bmp)
+                        vm.desktopPointer(x, y, 0)
+                    },
+                    onDragCancel = {
+                        val bmp = bitmap ?: return@detectDragGestures
+                        val (x, y) = desktopCoords(last, size, bmp)
+                        vm.desktopPointer(x, y, 0)
+                    },
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                DesktopView(ctx).apply {
-                    onPointer = { x, y, buttons -> vm.desktopPointer(x, y, buttons) }
-                }
-            },
+            factory = { ctx -> DesktopView(ctx) },
             update = { view -> view.bitmap = bitmap },
         )
         if (bitmap == null) {
@@ -274,7 +317,27 @@ private fun DesktopViewer(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        if (pointerCount > 0) {
+            Text(
+                "$state · pointer ×$pointerCount",
+                style = MaterialTheme.typography.labelSmall,
+                color = clay.accent,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp),
+            )
+        }
     }
+}
+
+/** Ubah koordinat jari (dp) ke koordinat framebuffer VNC. */
+private fun desktopCoords(offset: Offset, size: IntSize, bitmap: android.graphics.Bitmap): Pair<Int, Int> {
+    val scale = minOf(size.width.toFloat() / bitmap.width, size.height.toFloat() / bitmap.height)
+    val ox = (size.width - bitmap.width * scale) / 2f
+    val oy = (size.height - bitmap.height * scale) / 2f
+    val x = ((offset.x - ox) / scale).toInt().coerceIn(0, bitmap.width - 1)
+    val y = ((offset.y - oy) / scale).toInt().coerceIn(0, bitmap.height - 1)
+    return x to y
 }
 
 /** Mode fullscreen: tab bar & system bar disembunyikan AppScreen. */

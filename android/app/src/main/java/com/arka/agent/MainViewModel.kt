@@ -127,6 +127,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _desktopState = MutableStateFlow("")
     val desktopState: StateFlow<String> = _desktopState.asStateFlow()
 
+    /** Jumlah PointerEvent yang benar-benar dikirim ke VNC (diagnostik UI). */
+    private val _desktopPointerCount = MutableStateFlow(0)
+    val desktopPointerCount: StateFlow<Int> = _desktopPointerCount.asStateFlow()
+
     /** Klien VNC dimiliki ViewModel supaya tidak putus saat tab berganti. */
     private var vncClient: VncClient? = null
 
@@ -704,7 +708,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _desktopState.value = ""
     }
 
-    fun desktopPointer(x: Int, y: Int, buttons: Int) = vncClient?.pointer(x, y, buttons)
+    fun desktopPointer(x: Int, y: Int, buttons: Int) {
+        _desktopPointerCount.value += 1
+        vncClient?.pointer(x, y, buttons)
+    }
     fun desktopKey(keysym: Int) = vncClient?.keyPress(keysym)
     fun desktopType(text: String) = vncClient?.typeText(text)
 

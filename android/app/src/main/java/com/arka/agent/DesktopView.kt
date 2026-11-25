@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
-import android.view.MotionEvent
 import android.view.View
 import kotlin.math.min
 
@@ -23,9 +22,6 @@ class DesktopView(context: Context) : View(context) {
             field = value
             invalidate()
         }
-
-    /** Mask tombol RFB: bit 0 = klik kiri. */
-    var onPointer: (x: Int, y: Int, buttons: Int) -> Unit = { _, _, _ -> }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
@@ -46,27 +42,7 @@ class DesktopView(context: Context) : View(context) {
         canvas.drawBitmap(bmp, null, dst, paint)
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        val bmp = bitmap ?: return false
-        val g = geometry()
-        if (g[0] <= 0f) return false
-        val x = ((event.x - g[1]) / g[0]).toInt().coerceIn(0, bmp.width - 1)
-        val y = ((event.y - g[2]) / g[0]).toInt().coerceIn(0, bmp.height - 1)
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                // LazyColumn induk bisa merebut drag sebagai scroll. Tanpa ini
-                // jari bergerak tapi pesan PointerEvent tidak pernah sampai ke
-                // VNC — cursor terlihat "tidak bisa diarahkan".
-                parent.requestDisallowInterceptTouchEvent(true)
-                onPointer(x, y, 1)
-                performClick()
-            }
-            MotionEvent.ACTION_MOVE -> onPointer(x, y, 1)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                parent.requestDisallowInterceptTouchEvent(false)
-                onPointer(x, y, 0)
-            }
-        }
-        return true
-    }
+    // Touch sengaja ditangani di Compose (lihat DesktopViewer). Event yang
+    // masuk ke AndroidView bisa direbut LazyColumn sebagai scroll, sehingga
+    // jari bergerak tapi PointerEvent RFB tidak pernah dikirim.
 }
