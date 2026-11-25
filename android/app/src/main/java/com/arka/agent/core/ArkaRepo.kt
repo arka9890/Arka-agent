@@ -456,6 +456,10 @@ class ArkaRepo(private val context: Context) {
         Arka.desktopMouse(x, y, click)
     }
 
+    suspend fun desktopKey(key: String): Int = io { Arka.desktopKey(key) }
+
+    suspend fun desktopType(text: String): Int = io { Arka.desktopType(text) }
+
     /**
      * Jalankan perintah di Ubuntu. Output mengalir ke [onOutput]; nilai
      * kembalian adalah exit code (-1 kalau gagal/dihentikan).

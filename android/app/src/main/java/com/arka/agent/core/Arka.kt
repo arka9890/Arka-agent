@@ -105,6 +105,8 @@ object Arka {
     external fun startDesktop(): String
     external fun stopDesktop()
     external fun desktopMouse(x: Int, y: Int, click: Boolean): Int
+    external fun desktopKey(key: String): Int
+    external fun desktopType(text: String): Int
 
     // --------------------------------------------------------- setting
     external fun settingsJson(): String

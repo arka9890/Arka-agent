@@ -707,6 +707,20 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_stopDesktop<'local>(
     unit_result(&mut env, proot_manager::stop_desktop)
 }
 
+/// Jalankan satu perintah xdotool di sesi X dengan batas waktu singkat.
+fn xdotool(cmd: &str) -> i32 {
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match proot_manager::run_capture(
+        cmd,
+        &cancel,
+        &mut |_| {},
+        Some(std::time::Duration::from_secs(20)),
+    ) {
+        Ok((code, _)) => code,
+        Err(_) => -1,
+    }
+}
+
 /// Input mouse cadangan: jalankan xdotool langsung di sesi X (:1).
 ///
 /// Dipakai kalau PointerEvent RFB tidak menggerakkan kursor. xdotool memakai
@@ -724,17 +738,39 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_desktopMouse<'local>(
     } else {
         format!("DISPLAY=:1 xdotool mousemove {x} {y}")
     };
-    let cancel = std::sync::atomic::AtomicBool::new(false);
-    match proot_manager::run_capture(
-        &cmd,
-        &cancel,
-        &mut |_| {},
-        Some(std::time::Duration::from_secs(10)),
-    ) {
-        Ok((code, _)) => code,
-        Err(_) => -1,
+    xdotool(&cmd)
+}
+
+/// Tombol khusus. Hanya nama yang ada di whitelist yang diteruskan ke shell.
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_desktopKey<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    key: JString<'local>,
+) -> jint {
+    let name = ju::arg_str(&mut env, &key);
+    let aman = matches!(
+        name.as_str(),
+        "Return" | "Escape" | "BackSpace" | "Tab" | "Left" | "Right" | "Up" | "Down"
+    );
+    if !aman {
+        return -1;
     }
-    .into()
+    xdotool(&format!("DISPLAY=:1 xdotool key --clearmodifiers {name}"))
+}
+
+/// Ketik teks ke desktop. Tanda kutip tunggal di-escape supaya aman di shell.
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_desktopType<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    text: JString<'local>,
+) -> jint {
+    let isi = ju::arg_str(&mut env, &text);
+    let escaped = isi.replace('\'', "'\\''");
+    xdotool(&format!(
+        "DISPLAY=:1 xdotool type --clearmodifiers --delay 12 -- '{escaped}'"
+    ))
 }
 
 // -------------------------------------------------------------- settings

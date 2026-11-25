@@ -722,8 +722,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         vncClient?.pointer(x, y, 0)
         viewModelScope.launch { runCatching { repo.desktopMouse(x, y, true) } }
     }
-    fun desktopKey(keysym: Int) = vncClient?.keyPress(keysym)
-    fun desktopType(text: String) = vncClient?.typeText(text)
+    /** Kirim tombol lewat xdotool di sesi X (sama seperti jalur mouse). */
+    fun desktopKey(keysym: Int) {
+        val name = when (keysym) {
+            0xFF0D -> "Return"
+            0xFF1B -> "Escape"
+            0xFF08 -> "BackSpace"
+            0xFF09 -> "Tab"
+            0xFF51 -> "Left"
+            0xFF53 -> "Right"
+            0xFF52 -> "Up"
+            0xFF54 -> "Down"
+            else -> null
+        } ?: return
+        viewModelScope.launch { runCatching { repo.desktopKey(name) } }
+    }
+
+    /** Ketik teks lewat xdotool, bukan KeyEvent RFB yang tidak sampai. */
+    fun desktopType(text: String) {
+        if (text.isEmpty()) return
+        viewModelScope.launch { runCatching { repo.desktopType(text) } }
+    }
 
     override fun onCleared() {
         disconnectDesktop()
