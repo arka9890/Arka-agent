@@ -86,6 +86,17 @@ jobs:
           ./target/release/arka-agent.exe --selftest > /dev/null 2>&1 || true
           pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
+      # Diagnosis: `--status` pernah gagal dengan exit 127 dalam <100 ms tanpa
+      # output satu byte pun (JSON tidak pernah tercetak, PowerShell tidak
+      # sempat dipanggil) — artinya binernya gagal dimuat sebelum `main`.
+      # Langkah ini mengeluarkan isi folder rilis dan mencoba perintah CLI
+      # paling ringan lebih dulu, supaya penyebabnya terbaca langsung di log.
+      - name: Diagnostik biner
+        run: |
+          ls -la target/release/ | tail -30
+          ./target/release/arka-agent.exe --help || echo "help exit=$?"
+          ./target/release/arka-agent.exe --status || echo "status exit=$?"
+
       - name: --status
         run: |
           ./target/release/arka-agent.exe --status | tee status.json
