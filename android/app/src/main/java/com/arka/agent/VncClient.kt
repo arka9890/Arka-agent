@@ -265,13 +265,19 @@ class VncClient(
 
     // ---------------------------------------------------------------- input
 
-    /** buttonMask: bit 0 = klik kiri, bit 1 = tengah, bit 2 = kanan. */
+    /**
+     * PointerEvent RFB = 6 byte: type(1), buttonMask(1), x(2), y(2).
+     *
+     * Sebelumnya ditulis 8 byte (type, padding, mask 2 byte, x, y). Tiap
+     * gerakan jari menyisakan 1 byte asing di stream, sehingga server
+     * menafsirkan pesan berikutnya salah dan kursor tidak pernah bergerak.
+     * buttonMask: bit 0 = klik kiri, bit 1 = tengah, bit 2 = kanan.
+     */
     fun pointer(x: Int, y: Int, buttonMask: Int) {
         if (width == 0) return
         send { o ->
             o.writeByte(5)
-            o.writeByte(0)
-            o.writeShort(buttonMask)
+            o.writeByte(buttonMask and 0xFF)
             o.writeShort(x.coerceIn(0, width - 1))
             o.writeShort(y.coerceIn(0, height - 1))
         }
