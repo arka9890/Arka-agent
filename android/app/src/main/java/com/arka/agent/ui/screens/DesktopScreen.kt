@@ -112,7 +112,9 @@ fun DesktopScreen(vm: MainViewModel) {
                     }
                     OutlinedButton(
                         onClick = { vm.installDesktop() },
-                        enabled = !busy && status.ubuntu && (!status.vncInstalled || !status.xfceInstalled),
+                        // Tetap bisa ditekan walau paket utama sudah ada: ada
+                        // paket pendukung baru (dbus-x11) yang perlu diambil.
+                        enabled = !busy && status.ubuntu,
                     ) {
                         Text(if (busy) "Memasang…" else tr("Pasang desktop", "Install desktop", "導入"))
                     }
