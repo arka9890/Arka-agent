@@ -86,12 +86,136 @@ jobs:
           ./target/release/arka-agent.exe --selftest > /dev/null 2>&1 || true
           pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
+      # Bukti mutlak untuk kegagalan 0xC0000139 (STATUS_ENTRYPOINT_NOT_FOUND).
+      #
+      # Loader Windows mencari DLL dengan urutan: **folder aplikasi dulu**,
+      # baru System32, baru PATH. Jadi ada dua kemungkinan yang harus
+      # dipisahkan:
+      #   (a) ada DLL kotor/basi di `target/release/` yang menyalip DLL
+      #       sistem — kalau biner jalan dari folder bersih, ini penyebabnya;
+      #   (b) biner memang mengimpor fungsi yang tidak ada di OS ini — kalau
+      #       tetap gagal dari folder bersih, `dumpbin /dependents` (baca
+      #       tabel impor langsung dari file, tanpa parser buatan sendiri)
+      #       akan menunjukkan DLL mana yang dipakai.
+      # Catatan: `cargo test` lolos karena biner uji berada di
+      # `target/debug/deps/`, folder yang tidak ikut tercemar.
+      - name: Bukti mutlak (folder bersih + dumpbin)
+        run: |
+          set +e
+          echo "=== isi lengkap target/release ==="
+          ls -la target/release/
+          echo "=== isi lengkap target/debug (tanpa deps) ==="
+          ls -la target/debug/ 2>/dev/null | head -40
+          echo "=== semua .dll di target (maxdepth 3) ==="
+          find target -maxdepth 3 -iname '*.dll' -print 2>/dev/null | head -40
+          echo "=== .dll di root repo (CWD ikut dicari loader) ==="
+          find . -maxdepth 1 -iname '*.dll' -print 2>/dev/null
+          echo "=== biner ada? ==="
+          ls -la target/release/arka-agent.exe target/debug/arka-agent.exe 2>&1
+
+          echo "=== (c) KONTROL: biner uji di folder deps (yang lolos cargo test) ==="
+          TESTBIN=$(ls target/debug/deps/arka_agent-*.exe 2>/dev/null | head -1)
+          echo "testbin=$TESTBIN"
+          if [ -n "$TESTBIN" ]; then
+            "$TESTBIN" --help 2>&1 | head -6
+            echo "deps rc=$?"
+          fi
+
+          echo "=== (a) FOLDER BERSIH: salin .exe saja, jalankan langsung ==="
+          rm -rf /tmp/arka-bersih
+          mkdir -p /tmp/arka-bersih
+          cp target/release/arka-agent.exe /tmp/arka-bersih/
+          /tmp/arka-bersih/arka-agent.exe --help
+          echo "bersih(shell) rc=$?"
+          echo "--- ulang via CreateProcess Python (path Windows asli) ---"
+          python -c "
+          import shutil,subprocess,os,tempfile,sys
+          src=r'target/release/arka-agent.exe'
+          if not os.path.exists(src):
+              print('SKIP: tidak ada',src); sys.exit(0)
+          bersih=os.path.join(tempfile.gettempdir(),'arka-bersih')
+          exe=os.path.join(bersih,'arka-agent.exe')
+          os.makedirs(bersih,exist_ok=True)
+          shutil.copy(src,exe)
+          print('folder=',bersih)
+          print('isi folder=',os.listdir(bersih))
+          for label,argv in (('bersih',[exe,'--help']),
+                             ('asli',[os.path.abspath(src),'--help'])):
+              try:
+                  p=subprocess.run(argv,capture_output=True,text=True,timeout=60)
+                  print(label,'rc=',p.returncode,'hex=',hex(p.returncode&0xffffffff))
+                  print(label,'out=',p.stdout[:200].replace(chr(10),' | '))
+                  print(label,'err=',p.stderr[:200].replace(chr(10),' | '))
+              except Exception as e:
+                  print(label,'EXC:',type(e).__name__,e)
+          "
+          echo "=== (a2) salin ke folder deps yang SUDAH terbukti jalan ==="
+          python -c "
+          import shutil,subprocess,os,sys
+          src=r'target/release/arka-agent.exe'
+          if not os.path.exists(src):
+              print('SKIP: tidak ada',src); sys.exit(0)
+          dst=os.path.join('target','debug','deps','arka-agent-release.exe')
+          shutil.copy(src,dst)
+          p=subprocess.run([dst,'--help'],capture_output=True,text=True,timeout=60)
+          print('deps-folder rc=',p.returncode,'hex=',hex(p.returncode&0xffffffff))
+          print('out=',p.stdout[:200].replace(chr(10),' | '))
+          print('err=',p.stderr[:200].replace(chr(10),' | '))
+          "
+
+          echo "=== (b) dumpbin /dependents (baca tabel impor dari file) ==="
+          DUMP=$(find "/c/Program Files/Microsoft Visual Studio" \
+                      "/c/Program Files (x86)/Microsoft Visual Studio" \
+                      -name dumpbin.exe -path '*Hostx64/x64*' 2>/dev/null | head -1)
+          echo "dumpbin=$DUMP"
+          if [ -n "$DUMP" ]; then
+            "$DUMP" /nologo /dependents target/release/arka-agent.exe 2>&1
+            echo "--- dependents biner DEBUG ---"
+            "$DUMP" /nologo /dependents target/debug/arka-agent.exe 2>&1
+          else
+            echo "dumpbin tidak ditemukan"
+          fi
+
+          echo "=== (d) UJI BEDA: biner YANG BERHASIL vs biner YANG GAGAL ==="
+          # Biner uji (`cargo test`) terbukti jalan di runner ini, biner
+          # aplikasi tidak. Keduanya menautkan crate yang sama, jadi
+          # **selisih tabel import-nya** adalah kandidat langsung penyebab
+          # 0xC0000139. Kalau daftar DLL-nya identik, berarti selisihnya
+          # ada di fungsi — dumpbin /imports akan menunjukkannya.
+          if [ -n "$DUMP" ]; then
+            TESTBIN=$(ls target/debug/deps/arka_agent-*.exe 2>/dev/null | head -1)
+            echo "testbin=$TESTBIN"
+            if [ -n "$TESTBIN" ]; then
+              "$DUMP" /nologo /dependents "$TESTBIN" 2>&1 | sed 's/^ *//' | sort -u > /tmp/dep_biner.txt
+              "$DUMP" /nologo /dependents target/release/arka-agent.exe 2>&1 | sed 's/^ *//' | sort -u > /tmp/dep_gagal.txt
+              echo "--- daftar biner BERHASIL ---"; cat /tmp/dep_biner.txt
+              echo "--- daftar biner GAGAL ---";     cat /tmp/dep_gagal.txt
+              echo "--- HANYA ADA DI BINER GAGAL (kandidat penyebab) ---"
+              comm -13 /tmp/dep_biner.txt /tmp/dep_gagal.txt
+              echo "--- HANYA ADA DI BINER BERHASIL ---"
+              comm -23 /tmp/dep_biner.txt /tmp/dep_gagal.txt
+              echo "--- (d2) dumpbin /imports biner GAGAL (daftar fungsi per DLL) ---"
+              "$DUMP" /nologo /imports target/release/arka-agent.exe 2>&1 | head -250
+            else
+              echo "biner uji tidak ditemukan, uji beda dilewati"
+            fi
+          fi
+
       # Diagnosis (lanjutan): biner mati dengan 0xC0000139
       # STATUS_ENTRYPOINT_NOT_FOUND — biner rilis DAN debug sama-sama gagal,
       # jadi bukan LTO/strip. Ada satu fungsi impor yang tidak ditemukan di
       # salah satu DLL. Langkah ini menelusuri tiap fungsi impor biner dan
       # mencocokkannya dengan GetProcAddress, sehingga nama fungsi + DLL yang
       # bermasalah tercetak langsung di log.
+      #
+      # Bukti mutlak dari Windows sendiri, dipisah jadi langkah terpisah
+      # supaya hasilnya terbaca walau langkah lain gagal:
+      #   (a) `dumpbin /dependents` membaca tabel impor langsung dari file —
+      #       parser buatan sendiri bisa berhenti diam-diam dan kehilangan
+      #       satu DLL, sehingga daftar 30 DLL di atas belum tentu lengkap;
+      #   (b) menjalankan biner dari **folder bersih** memisahkan dua sebab:
+      #       DLL kotor di `target/release/` yang menyalip DLL sistem, atau
+      #       biner yang memang mengimpor fungsi yang tidak ada di OS ini.
       - name: Diagnostik biner
         run: |
           python - <<'PY'
