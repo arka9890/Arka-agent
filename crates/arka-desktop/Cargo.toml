@@ -83,7 +83,12 @@ default-features = false
 [target.'cfg(windows)'.dependencies.muda]
 version = "0.17"
 default-features = false
-features = ["common-controls-v6"]
+# JANGAN aktifkan `common-controls-v6`: fitur ini mengganti dialog "About"
+# bawaan muda dengan TaskDialogIndirect dari comctl32.dll versi 6. Tanpa
+# manifest aplikasi yang mendeklarasikan Common-Controls v6, Windows memuat
+# comctl32 v5 yang tidak mengekspor fungsi itu -> proses gagal start dengan
+# 0xC0000139 (STATUS_ENTRYPOINT_NOT_FOUND). Aplikasi memakai modal "Tentang"
+# sendiri, jadi fitur ini tidak dibutuhkan.
 
 # Dialog berkas OS (Impor / Simpan sebagai). Hanya dikompilasi di Windows —
 # di Linux rfd akan mencari GTK/portal yang tidak ada, padahal UI dikembangkan
@@ -91,4 +96,6 @@ features = ["common-controls-v6"]
 [target.'cfg(windows)'.dependencies.rfd]
 version = "0.18"
 default-features = false
-features = ["common-controls-v6"]
+# Sama seperti muda: `common-controls-v6` hanya dipakai rfd untuk MessageDialog
+# (TaskDialogIndirect). Aplikasi hanya memakai FileDialog, jadi fitur ini
+# sengaja dimatikan agar tidak mengimpor simbol comctl32 v6.
