@@ -719,8 +719,13 @@ fn desktop_children() -> &'static Mutex<Vec<(std::process::Child, PathBuf)>> {
 /// Status ringkas untuk kartu tab Desktop.
 pub fn desktop_status() -> Result<String, String> {
     let installed = is_installed();
-    let vnc = ctx::rootfs_dir()?.join("usr/bin/Xvnc").is_file();
-    let xfce = ctx::rootfs_dir()?.join("usr/bin/startxfce4").is_file();
+    let rootfs = ctx::rootfs_dir()?;
+    // Ubuntu 24.04 (noble) mengganti nama biner Xvnc menjadi `Xtigervnc`.
+    // Cek keduanya supaya paket yang sudah terpasang tidak dilaporkan "belum".
+    let vnc = ["usr/bin/Xtigervnc", "usr/bin/Xvnc"]
+        .iter()
+        .any(|p| rootfs.join(p).is_file());
+    let xfce = rootfs.join("usr/bin/startxfce4").is_file();
     let running = desktop_children()
         .lock()
         .map(|g| !g.is_empty())
@@ -745,7 +750,7 @@ pub fn install_desktop(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), Strin
     }
     let cmd = "apt-get update -qq && \
                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-               tigervnc-standalone-server xfce4 xterm";
+               tigervnc-standalone-server xfce4 xterm dbus-x11";
     let (code, out) = run_capture(
         cmd,
         cancel,
@@ -798,10 +803,19 @@ fn spawn_daemon(command: &str) -> Result<(std::process::Child, PathBuf), String>
 /// lalu sesi XFCE di display yang sama.
 pub fn start_desktop() -> Result<String, String> {
     stop_desktop()?;
-    let vnc_cmd = "mkdir -p /root/.vnc /tmp/.X11-unix && \
-                   exec /usr/bin/Xvnc :1 -geometry 1024x640 -depth 24 \
-                   -rfbport 5901 -localhost yes -SecurityTypes None -desktop Arka";
-    let wm_cmd = "export DISPLAY=:1; exec /usr/bin/startxfce4";
+    // noble memakai `Xtigervnc`; rilis lama memakai `Xvnc`. Jangan hardcode:
+    // resolve di dalam proot supaya apa pun yang terpasang yang dipakai.
+    let vnc_cmd = "mkdir -p /root/.vnc /tmp/.X11-unix; \
+                   VNC=$(command -v Xtigervnc || command -v Xvnc || true); \
+                   if [ -z \"$VNC\" ]; then \
+                     echo 'Biner Xtigervnc/Xvnc tidak ditemukan di Ubuntu' > /tmp/arka-vnc.log; \
+                     exit 1; \
+                   fi; \
+                   exec \"$VNC\" :1 -geometry 1024x640 -depth 24 \
+                   -rfbport 5901 -localhost yes -SecurityTypes None -desktop Arka \
+                   > /tmp/arka-vnc.log 2>&1";
+    let wm_cmd = "export DISPLAY=:1; \
+                  exec /usr/bin/startxfce4 > /tmp/arka-wm.log 2>&1";
     let vnc = spawn_daemon(vnc_cmd)?;
     std::thread::sleep(Duration::from_secs(2));
     let wm = spawn_daemon(wm_cmd)?;
@@ -824,9 +838,20 @@ pub fn start_desktop() -> Result<String, String> {
     }
     if !ready {
         stop_desktop()?;
-        return Err(
-            "Server VNC tidak membuka port 5901. Coba 'Tes distro' di Setelan.".to_string(),
-        );
+        // Baca log dari host (rootfs adalah folder biasa di /data/data/app)
+        // supaya pesan error asli Xvnc ikut tampil di UI, bukan tebakan.
+        let log = ctx::rootfs_dir()
+            .ok()
+            .and_then(|r| std::fs::read_to_string(r.join("tmp/arka-vnc.log")).ok())
+            .unwrap_or_default();
+        return Err(format!(
+            "Server VNC tidak membuka port 5901. {}",
+            if log.trim().is_empty() {
+                "Coba 'Tes distro' di Setelan.".to_string()
+            } else {
+                format!("Log: {}", tail_text(&log, 600))
+            }
+        ));
     }
     desktop_children()
         .lock()
