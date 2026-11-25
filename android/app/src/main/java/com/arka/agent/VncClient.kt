@@ -73,6 +73,10 @@ class VncClient(
             socket = s
             s.tcpNoDelay = true
             s.connect(InetSocketAddress(host, port), 8_000)
+            // Jangan pernah menunggu selamanya: kalau server mengirim data
+            // setengah, UI harus menampilkan error, bukan "Menghubungkan…"
+            // selama-lamanya.
+            s.soTimeout = 20_000
             val input = DataInputStream(s.getInputStream())
             val out = DataOutputStream(s.getOutputStream())
             output = out
@@ -83,6 +87,7 @@ class VncClient(
             out.write("RFB 003.008\n".toByteArray(StandardCharsets.US_ASCII))
             out.flush()
 
+            onState("Negosiasi keamanan…")
             val oldProtocol = version.contains("003.003")
             val count = input.readUnsignedByte()
             if (count == 0) throw IllegalStateException("Server tidak menawarkan security type")
@@ -102,21 +107,25 @@ class VncClient(
             out.write(1) // ClientInit: shared session
             out.flush()
 
-            // ServerInit: width, height, pixelFormat(16), nameLength(4), name
+            onState("Menerima info layar…")
+            // ServerInit header = 24 byte:
+            //   width(2), height(2), pixelFormat(16), nameLength(4)
+            // diikuti nameLength byte nama.asal. NameLength ADA DI DALAM
+            // header (offset 20) — jangan membaca 4 byte lagi dari stream.
             val init = ByteArray(24)
             input.readFully(init)
             width = u16(init, 0)
             height = u16(init, 2)
             bytesPerPixel = max(1, (init[4].toInt() and 0xff) / 8)
-            bigEndian = (init[5].toInt() and 0xff) != 0
-            rMax = u16(init, 6)
-            gMax = u16(init, 8)
-            bMax = u16(init, 10)
-            rShift = init[12].toInt() and 0xff
-            gShift = init[13].toInt() and 0xff
-            bShift = init[14].toInt() and 0xff
-            val nameLen = readU32(input)
-            if (nameLen > 0) skipFully(input, nameLen.toLong())
+            bigEndian = (init[6].toInt() and 0xff) != 0
+            rMax = u16(init, 8)
+            gMax = u16(init, 10)
+            bMax = u16(init, 12)
+            rShift = init[14].toInt() and 0xff
+            gShift = init[15].toInt() and 0xff
+            bShift = init[16].toInt() and 0xff
+            val nameLen = u32(init, 20) and 0xFFFF
+            if (nameLen > 0 && nameLen < 65_536) skipFully(input, nameLen.toLong())
 
             pixels = IntArray(width * height)
 
@@ -133,7 +142,14 @@ class VncClient(
             onState("Terhubung · ${width}×${height}")
 
             while (!stopped.get()) {
-                val type = input.read()
+                // Timeout saat idle bukan error: desktop yang tidak berubah
+                // memang bisa lama tidak mengirim pesan. Minta update lagi.
+                val type = try {
+                    input.read()
+                } catch (e: java.net.SocketTimeoutException) {
+                    requestUpdate(true)
+                    continue
+                }
                 if (type < 0) break
                 when (type) {
                     0 -> readFramebufferUpdate(input)
@@ -305,6 +321,12 @@ class VncClient(
 
 private fun u16(b: ByteArray, i: Int): Int =
     ((b[i].toInt() and 0xff) shl 8) or (b[i + 1].toInt() and 0xff)
+
+private fun u32(b: ByteArray, i: Int): Long =
+    ((b[i].toLong() and 0xff) shl 24) or
+        ((b[i + 1].toLong() and 0xff) shl 16) or
+        ((b[i + 2].toLong() and 0xff) shl 8) or
+        (b[i + 3].toLong() and 0xff)
 
 private fun readU32(input: DataInputStream): Long {
     val b = ByteArray(4)
