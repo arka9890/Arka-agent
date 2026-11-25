@@ -10,7 +10,7 @@
 //! (proot) tidak ikut dicompile.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 /// Platform tempat core ini berjalan. Dipakai untuk memilih prompt & shell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +95,15 @@ impl AppPaths {
 
 static PATHS: OnceLock<AppPaths> = OnceLock::new();
 
+/// Folder kerja yang dipilih pengguna di tab Setelan.
+///
+/// Disimpan terpisah dari [`PATHS`] karena workspace dibaca **setelah**
+/// database terbuka (setelannya ada di tabel `settings`), sedangkan `PATHS`
+/// harus didaftarkan lebih dulu supaya letak database diketahui. `OnceLock`
+/// biasa tidak bisa diubah lagi setelah di-`set`, jadi pilihan pengguna
+/// ditampung di sini tanpa mengubah urutan inisialisasi.
+static WORKSPACE_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+
 /// Daftarkan path sekali di awal (dipanggil `nativeInit` / `main`).
 pub fn init(paths: AppPaths) -> Result<(), String> {
     PATHS
@@ -123,19 +132,48 @@ pub fn cache_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Pakai folder kerja pilihan pengguna mulai sekarang.
+///
+/// Nilainya juga tersimpan di tabel `settings`, jadi start berikutnya
+/// memanggil ini lagi dari `main`. Berbeda dengan [`PATHS`], pilihan ini
+/// **boleh berubah** saat aplikasi berjalan (tombol "Simpan" di tab Setelan).
+/// `RwLock` dipakai supaya perubahan itu langsung terlihat oleh thread agent
+/// yang sedang berjalan, tanpa perlu restart.
+pub fn override_workspace(dir: PathBuf) {
+    if let Ok(mut g) = WORKSPACE_OVERRIDE.write() {
+        *g = Some(dir);
+    }
+}
+
+/// Folder kerja yang sedang berlaku: pilihan pengguna kalau ada.
+///
+/// Dipakai juga oleh unit test yang tidak boleh mengubah workspace global
+/// (test berjalan paralel dalam satu proses).
+pub fn workspace_current() -> PathBuf {
+    let chosen = WORKSPACE_OVERRIDE.read().ok().and_then(|g| g.clone());
+    chosen.unwrap_or_else(|| get().map(|p| p.workspace.clone()).unwrap_or_default())
+}
+
+/// Lupakan pilihan workspace, kembali ke bawaan [`AppPaths`].
+///
+/// Dipakai saat kotak folder kerja dikosongkan (tombol Simpan) dan oleh test
+/// yang menunjuk folder sementara.
+pub fn clear_workspace_override() {
+    if let Ok(mut g) = WORKSPACE_OVERRIDE.write() {
+        *g = None;
+    }
+}
+
 /// Folder kerja agent, dibuat kalau belum ada.
 pub fn workspace() -> Result<PathBuf, String> {
-    let dir = get()?.workspace.clone();
+    let dir = workspace_current();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 
 /// Path workspace untuk ditampilkan di prompt/UI (tanpa membuat folder).
 pub fn workspace_display() -> String {
-    PATHS
-        .get()
-        .map(|p| p.workspace.to_string_lossy().to_string())
-        .unwrap_or_default()
+    workspace_current().to_string_lossy().to_string()
 }
 
 pub fn skills_dir() -> Result<PathBuf, String> {

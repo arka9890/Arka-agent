@@ -73,7 +73,9 @@ pub fn pick_files() -> Option<Vec<PathBuf>> {
 #[cfg(windows)]
 /// Dialog "Simpan sebagai".
 pub fn pick_save(default_name: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new().set_file_name(default_name).save_file()
+    rfd::FileDialog::new()
+        .set_file_name(default_name)
+        .save_file()
 }
 
 #[cfg(not(windows))]

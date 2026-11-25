@@ -231,7 +231,11 @@ pub fn install_fonts(ctx: &Context) {
 
 /// Palet → `Visuals` egui.
 fn visuals(c: &ClayColors, dark: bool) -> Visuals {
-    let mut v = if dark { Visuals::dark() } else { Visuals::light() };
+    let mut v = if dark {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
 
     v.panel_fill = c.background;
     v.window_fill = c.surface;
@@ -296,11 +300,26 @@ pub fn apply(ctx: &Context, scale: f32, mode: ThemeMode) {
     let s = scale;
     ctx.all_styles_mut(|style| {
         style.text_styles = [
-            (TextStyle::Heading, FontId::new(26.0 * s, FontFamily::Proportional)),
-            (TextStyle::Body, FontId::new(15.0 * s, FontFamily::Proportional)),
-            (TextStyle::Button, FontId::new(15.0 * s, FontFamily::Proportional)),
-            (TextStyle::Small, FontId::new(12.0 * s, FontFamily::Proportional)),
-            (TextStyle::Monospace, FontId::new(14.0 * s, FontFamily::Monospace)),
+            (
+                TextStyle::Heading,
+                FontId::new(26.0 * s, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Body,
+                FontId::new(15.0 * s, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Button,
+                FontId::new(15.0 * s, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Small,
+                FontId::new(12.0 * s, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Monospace,
+                FontId::new(14.0 * s, FontFamily::Monospace),
+            ),
         ]
         .into();
         style.spacing.item_spacing = egui::vec2(SP_SM * s, SP_SM * s);
@@ -315,14 +334,15 @@ mod tests {
 
     /// Berkas Kotlin dibaca saat kompilasi: kalau palet di Android berubah dan
     /// di sini tidak (atau sebaliknya), test ini merah.
-    const KOTLIN_THEME: &str = include_str!(
-        "../../../../android/app/src/main/java/com/arka/agent/ui/theme/Theme.kt"
-    );
+    const KOTLIN_THEME: &str =
+        include_str!("../../../../android/app/src/main/java/com/arka/agent/ui/theme/Theme.kt");
 
     /// Ambil `0xFFRRGGBB` untuk field tertentu di dalam blok `DarkClay` /
     /// `LightClay`.
     fn kotlin_hex(block: &str, field: &str) -> u32 {
-        let start = KOTLIN_THEME.find(block).unwrap_or_else(|| panic!("blok {block} tidak ada"));
+        let start = KOTLIN_THEME
+            .find(block)
+            .unwrap_or_else(|| panic!("blok {block} tidak ada"));
         let body = &KOTLIN_THEME[start..];
         // Blok ditutup oleh `)` di awal baris; `Color(0xFF...)` di dalamnya
         // juga memakai tanda kurung, jadi tidak boleh berhenti di `)` pertama.

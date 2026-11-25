@@ -29,11 +29,19 @@ use std::time::{Duration, Instant};
 pub const ROOTFS_URL: &str =
     "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-arm64.tar.gz";
 /// SHA-256 resmi dari `SHA256SUMS` di folder yang sama.
-pub const ROOTFS_SHA256: &str =
-    "a91d5a93010193712d346d761372b7c9db6dfcf093893161c64ca107f05914f2";
+pub const ROOTFS_SHA256: &str = "a91d5a93010193712d346d761372b7c9db6dfcf093893161c64ca107f05914f2";
 
 /// Paket yang dipasang otomatis setelah rootfs siap.
-pub const TOOLS: &[&str] = &["python3", "git", "curl", "wget", "nano", "unzip", "less", "ca-certificates"];
+pub const TOOLS: &[&str] = &[
+    "python3",
+    "git",
+    "curl",
+    "wget",
+    "nano",
+    "unzip",
+    "less",
+    "ca-certificates",
+];
 
 #[derive(Serialize, Clone, Debug)]
 pub struct DistroStatus {
@@ -57,7 +65,11 @@ fn rootfs_marker() -> Result<PathBuf, String> {
 pub fn status() -> Result<DistroStatus, String> {
     let installed = is_installed();
     let proot_available = ctx::proot_binary()?.is_some() && ctx::loader_binary()?.is_some();
-    let size = if installed { dir_size(&ctx::rootfs_dir()?) } else { 0 };
+    let size = if installed {
+        dir_size(&ctx::rootfs_dir()?)
+    } else {
+        0
+    };
     let message = if !proot_available {
         "Binary proot tidak ada di APK ini, jadi terminal tidak bisa dipakai. \
          Pastikan libproot.so + libproot-loader.so ada di jniLibs saat build."
@@ -80,9 +92,13 @@ fn dir_size(path: &Path) -> i64 {
     let mut total = 0i64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
-            let Ok(meta) = fs::symlink_metadata(e.path()) else { continue };
+            let Ok(meta) = fs::symlink_metadata(e.path()) else {
+                continue;
+            };
             if meta.is_dir() {
                 stack.push(e.path());
             } else if meta.is_file() {
@@ -160,7 +176,10 @@ fn download(ev: &dyn Events, cancel: &AtomicBool, dest: &Path) -> Result<(), Str
         .send()
         .map_err(|e| format!("Gagal mengunduh rootfs: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("Server rootfs mengembalikan HTTP {}", resp.status().as_u16()));
+        return Err(format!(
+            "Server rootfs mengembalikan HTTP {}",
+            resp.status().as_u16()
+        ));
     }
     let total = resp.content_length().unwrap_or(0);
     let part = dest.with_extension("part");
@@ -174,7 +193,9 @@ fn download(ev: &dyn Events, cancel: &AtomicBool, dest: &Path) -> Result<(), Str
             let _ = fs::remove_file(&part);
             return Err("Dibatalkan".into());
         }
-        let n = resp.read(&mut buf).map_err(|e| format!("Unduhan terputus: {e}"))?;
+        let n = resp
+            .read(&mut buf)
+            .map_err(|e| format!("Unduhan terputus: {e}"))?;
         if n == 0 {
             break;
         }
@@ -214,7 +235,10 @@ fn download(ev: &dyn Events, cancel: &AtomicBool, dest: &Path) -> Result<(), Str
 /// rename membuat rootfs hanya terlihat setelah utuh.
 fn extract_rootfs(archive: &Path) -> Result<(), String> {
     let rootfs = ctx::rootfs_dir()?;
-    let parent = rootfs.parent().ok_or("Path rootfs tidak valid")?.to_path_buf();
+    let parent = rootfs
+        .parent()
+        .ok_or("Path rootfs tidak valid")?
+        .to_path_buf();
     fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
     let staging = parent.join(".staging-rootfs");
     let _ = fs::remove_dir_all(&staging);
@@ -229,7 +253,11 @@ fn extract_rootfs(archive: &Path) -> Result<(), String> {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.to_path_buf();
         // Tolak entri yang mencoba keluar folder staging (tarball jahat/korup).
-        if path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             continue;
         }
         if entry.header().entry_type().is_hard_link() {
@@ -242,7 +270,9 @@ fn extract_rootfs(archive: &Path) -> Result<(), String> {
             };
             let target_rel = link.to_path_buf();
             if target_rel.is_absolute()
-                || target_rel.components().any(|c| matches!(c, std::path::Component::ParentDir))
+                || target_rel
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
             {
                 continue;
             }
@@ -255,10 +285,16 @@ fn extract_rootfs(archive: &Path) -> Result<(), String> {
             // gagal dengan "File exists".
             let _ = fs::remove_file(&dest);
             fs::copy(&target, &dest).map_err(|e| {
-                format!("failed to copy hard link {} → {}: {}", path.display(), target.display(), e)
+                format!(
+                    "failed to copy hard link {} → {}: {}",
+                    path.display(),
+                    target.display(),
+                    e
+                )
             })?;
             let mode = entry.header().mode().map_err(|e| e.to_string())? & 0o7777;
-            fs::set_permissions(&dest, fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+            fs::set_permissions(&dest, fs::Permissions::from_mode(mode))
+                .map_err(|e| e.to_string())?;
             count += 1;
             continue;
         }
@@ -312,7 +348,10 @@ fn install_tools(ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
     if out.contains("ARKA_TOOLS_OK") {
         Ok(())
     } else {
-        Err(format!("apt-get keluar dengan kode {code}: {}", tail(&out, 300)))
+        Err(format!(
+            "apt-get keluar dengan kode {code}: {}",
+            tail(&out, 300)
+        ))
     }
 }
 
@@ -337,21 +376,19 @@ fn refresh_lib(src: &Path, dest: &Path) -> Result<(), String> {
     match fs::remove_file(dest) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            return Err(format!(
-                "Gagal menghapus {} lama: {}",
-                dest.display(),
-                e
-            ))
-        }
+        Err(e) => return Err(format!("Gagal menghapus {} lama: {}", dest.display(), e)),
     }
     fs::copy(src, dest).map_err(|e| {
-        format!("Gagal menyiapkan {} dari {}: {}", dest.display(), src.display(), e)
+        format!(
+            "Gagal menyiapkan {} dari {}: {}",
+            dest.display(),
+            src.display(),
+            e
+        )
     })?;
     // Library tidak perlu executable, tapi izin 0644 membuatnya bisa dibaca
     // linker di semua perangkat.
-    fs::set_permissions(dest, fs::Permissions::from_mode(0o644))
-        .map_err(|e| e.to_string())?;
+    fs::set_permissions(dest, fs::Permissions::from_mode(0o644)).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -402,13 +439,23 @@ fn proot_env(tmp: &Path) -> Result<Vec<(String, String)>, String> {
     }
     let libs = ctx::proot_libs_dir()?;
     let native_dir = ctx::native_lib_dir()?;
-    let ld_path = format!("{}:{}", libs.to_string_lossy(), native_dir.to_string_lossy());
+    let ld_path = format!(
+        "{}:{}",
+        libs.to_string_lossy(),
+        native_dir.to_string_lossy()
+    );
     let mut env = vec![
         ("LD_LIBRARY_PATH".to_string(), ld_path),
-        ("PROOT_TMP_DIR".to_string(), tmp.to_string_lossy().to_string()),
+        (
+            "PROOT_TMP_DIR".to_string(),
+            tmp.to_string_lossy().to_string(),
+        ),
     ];
     if let Some(loader) = ctx::loader_binary()? {
-        env.push(("PROOT_LOADER".to_string(), loader.to_string_lossy().to_string()));
+        env.push((
+            "PROOT_LOADER".to_string(),
+            loader.to_string_lossy().to_string(),
+        ));
     }
     Ok(env)
 }
@@ -478,7 +525,9 @@ fn spawn_proot(command: &str, tmp: &Path) -> Result<std::process::Child, String>
             Ok(())
         });
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
     cmd.spawn().map_err(|e| {
         format!(
             "Gagal menjalankan proot: {e}. Pastikan libproot.so dan \
@@ -507,7 +556,9 @@ pub fn run_capture(
     if cancel.load(Ordering::Relaxed) {
         return Ok((-1, String::new()));
     }
-    let _tool_guard = TOOL_LOCK.lock().map_err(|e| format!("Lock tool rusak: {e}"))?;
+    let _tool_guard = TOOL_LOCK
+        .lock()
+        .map_err(|e| format!("Lock tool rusak: {e}"))?;
     if cancel.load(Ordering::Relaxed) {
         return Ok((-1, String::new()));
     }
@@ -516,99 +567,102 @@ pub fn run_capture(
     // menimpa file internal proot. Dibersihkan setelah child selesai.
     let tmp = proot_run_tmp_dir()?;
     let result = (|| -> Result<(i32, String), String> {
-    let mut child = spawn_proot(command, &tmp)?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+        let mut child = spawn_proot(command, &tmp)?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
 
-    // Baca kedua pipe di thread terpisah: kalau hanya satu yang dibaca, proses
-    // bisa deadlock ketika pipe yang lain penuh.
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-    let mut readers = Vec::new();
-    let pipes: Vec<Box<dyn Read + Send>> = [
-        stdout.map(|p| Box::new(p) as Box<dyn Read + Send>),
-        stderr.map(|p| Box::new(p) as Box<dyn Read + Send>),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    for pipe in pipes {
-        let tx = tx.clone();
-        readers.push(std::thread::spawn(move || {
-            let mut reader = BufReader::new(pipe);
-            let mut buf = [0u8; 4096];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if tx.send(String::from_utf8_lossy(&buf[..n]).to_string()).is_err() {
-                            break;
+        // Baca kedua pipe di thread terpisah: kalau hanya satu yang dibaca, proses
+        // bisa deadlock ketika pipe yang lain penuh.
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let mut readers = Vec::new();
+        let pipes: Vec<Box<dyn Read + Send>> = [
+            stdout.map(|p| Box::new(p) as Box<dyn Read + Send>),
+            stderr.map(|p| Box::new(p) as Box<dyn Read + Send>),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for pipe in pipes {
+            let tx = tx.clone();
+            readers.push(std::thread::spawn(move || {
+                let mut reader = BufReader::new(pipe);
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if tx
+                                .send(String::from_utf8_lossy(&buf[..n]).to_string())
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        }));
-    }
-    drop(tx);
+            }));
+        }
+        drop(tx);
 
-    // Bunuh SELURUH process group (bukan hanya proot): anak guest seperti
-    // bash/apt/dpkg mewarisi pipe stdout/stderr. Kalau hanya proot yang mati,
-    // anak tetap hidup → pipe tidak pernah tertutup → reader.join()
-    // menggantung → TOOL_LOCK tidak pernah dilepas → semua perintah berikutnya
-    // diam tanpa output (gejala "terminal ngebug").
-    fn kill_group(child: &mut std::process::Child) {
-        let pid = child.id() as i32;
-        unsafe {
-            libc::kill(-pid, libc::SIGKILL);
+        // Bunuh SELURUH process group (bukan hanya proot): anak guest seperti
+        // bash/apt/dpkg mewarisi pipe stdout/stderr. Kalau hanya proot yang mati,
+        // anak tetap hidup → pipe tidak pernah tertutup → reader.join()
+        // menggantung → TOOL_LOCK tidak pernah dilepas → semua perintah berikutnya
+        // diam tanpa output (gejala "terminal ngebug").
+        fn kill_group(child: &mut std::process::Child) {
+            let pid = child.id() as i32;
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+            let _ = child.kill();
         }
-        let _ = child.kill();
-    }
 
-    let mut collected = String::new();
-    let mut timed_out = false;
-    loop {
-        if deadline.map(|d| Instant::now() >= d).unwrap_or(false) {
-            kill_group(&mut child);
-            timed_out = true;
-            break;
-        }
-        match rx.recv_timeout(Duration::from_millis(120)) {
-            Ok(chunk) => {
-                collected.push_str(&chunk);
-                on_chunk(&chunk);
-                if cancel.load(Ordering::Relaxed) {
-                    kill_group(&mut child);
-                    break;
-                }
+        let mut collected = String::new();
+        let mut timed_out = false;
+        loop {
+            if deadline.map(|d| Instant::now() >= d).unwrap_or(false) {
+                kill_group(&mut child);
+                timed_out = true;
+                break;
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if cancel.load(Ordering::Relaxed) {
-                    kill_group(&mut child);
-                    break;
+            match rx.recv_timeout(Duration::from_millis(120)) {
+                Ok(chunk) => {
+                    collected.push_str(&chunk);
+                    on_chunk(&chunk);
+                    if cancel.load(Ordering::Relaxed) {
+                        kill_group(&mut child);
+                        break;
+                    }
                 }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        kill_group(&mut child);
+                        break;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
-    }
-    // Reap child dulu: setelah SIGKILL ke group, semua penulis pipe ikut
-    // mati sehingga reader cepat selesai. `wait()` menutup fd pipe milik
-    // child sehingga `join()` tidak menggantung.
-    let status = child.wait();
-    for r in readers {
-        let _ = r.join();
-    }
-    // Drain sisa output setelah pipe tertutup.
-    while let Ok(chunk) = rx.try_recv() {
-        collected.push_str(&chunk);
-        on_chunk(&chunk);
-    }
-    let status = status.map_err(|e| e.to_string())?;
-    if timed_out {
-        return Ok((-2, collected));
-    }
-    if cancel.load(Ordering::Relaxed) {
-        return Ok((-1, collected));
-    }
-    Ok((status.code().unwrap_or(-1), collected))
+        // Reap child dulu: setelah SIGKILL ke group, semua penulis pipe ikut
+        // mati sehingga reader cepat selesai. `wait()` menutup fd pipe milik
+        // child sehingga `join()` tidak menggantung.
+        let status = child.wait();
+        for r in readers {
+            let _ = r.join();
+        }
+        // Drain sisa output setelah pipe tertutup.
+        while let Ok(chunk) = rx.try_recv() {
+            collected.push_str(&chunk);
+            on_chunk(&chunk);
+        }
+        let status = status.map_err(|e| e.to_string())?;
+        if timed_out {
+            return Ok((-2, collected));
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Ok((-1, collected));
+        }
+        Ok((status.code().unwrap_or(-1), collected))
     })();
     // Jangan hapus saat child masih hidup: proot bisa membaca file tmp-nya
     // sampai proses benar-benar keluar.
@@ -641,7 +695,8 @@ pub fn check_executable() -> Result<(), String> {
     };
     let meta = fs::metadata(&proot).map_err(|e| e.to_string())?;
     if meta.permissions().mode() & 0o111 == 0 {
-        fs::set_permissions(&proot, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+        fs::set_permissions(&proot, fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }

@@ -110,7 +110,9 @@ fn decode_image(
         .map_err(|e| e.to_string())?
         .with_guessed_format()
         .map_err(|e| e.to_string())?;
-    let img = reader.decode().map_err(|e| format!("Gambar tidak bisa dibaca: {e}"))?;
+    let img = reader
+        .decode()
+        .map_err(|e| format!("Gambar tidak bisa dibaca: {e}"))?;
     let (width, height) = (img.width(), img.height());
     let downscaled = width > MAX_EDGE || height > MAX_EDGE;
     let img = if downscaled {

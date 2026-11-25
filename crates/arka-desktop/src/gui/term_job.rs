@@ -98,7 +98,11 @@ pub struct ExitLine {
 
 impl ExitLine {
     pub fn new(code: i32, canceled: bool, timed_out: bool) -> Self {
-        Self { code, canceled, timed_out }
+        Self {
+            code,
+            canceled,
+            timed_out,
+        }
     }
 
     /// `true` bila perintah dianggap berhasil (bukan batal, bukan timeout,
@@ -112,13 +116,19 @@ impl ExitLine {
             match lang {
                 Lang3::Id => format!("exit {} \u{00B7} dihentikan pengguna", self.code),
                 Lang3::En => format!("exit {} \u{00B7} stopped by user", self.code),
-                Lang3::Ja => format!("exit {} \u{00B7} \u{30e6}\u{30fc}\u{30b6}\u{30fc}\u{304c}\u{505c}\u{6b62}", self.code),
+                Lang3::Ja => format!(
+                    "exit {} \u{00B7} \u{30e6}\u{30fc}\u{30b6}\u{30fc}\u{304c}\u{505c}\u{6b62}",
+                    self.code
+                ),
             }
         } else if self.timed_out {
             match lang {
                 Lang3::Id => format!("exit {} \u{00B7} timeout", self.code),
                 Lang3::En => format!("exit {} \u{00B7} timed out", self.code),
-                Lang3::Ja => format!("exit {} \u{00B7} \u{30bf}\u{30a4}\u{30e0}\u{30a2}\u{30a6}\u{30c8}", self.code),
+                Lang3::Ja => format!(
+                    "exit {} \u{00B7} \u{30bf}\u{30a4}\u{30e0}\u{30a2}\u{30a6}\u{30c8}",
+                    self.code
+                ),
             }
         } else {
             format!("exit {}", self.code)
@@ -343,7 +353,10 @@ mod tests {
         fn ok(code: i32, output: &str) -> Self {
             Self {
                 chunks: vec![output.to_string()],
-                outcome: Ok(ExecOutcome { code, ..Default::default() }),
+                outcome: Ok(ExecOutcome {
+                    code,
+                    ..Default::default()
+                }),
                 info: Vec::new(),
                 wait_for_cancel: false,
             }
@@ -404,7 +417,10 @@ mod tests {
         let ctx = Context::default();
         let fake = Fake {
             chunks: vec!["a".into(), "b".into(), "c".into()],
-            outcome: Ok(ExecOutcome { code: 0, ..Default::default() }),
+            outcome: Ok(ExecOutcome {
+                code: 0,
+                ..Default::default()
+            }),
             info: Vec::new(),
             wait_for_cancel: false,
         };
@@ -444,7 +460,10 @@ mod tests {
         assert!(tunggu(&mut job, |j| j.running()));
         job.cancel();
 
-        assert!(tunggu(&mut job, |j| !j.running()), "Stop harus mengakhiri pekerjaan");
+        assert!(
+            tunggu(&mut job, |j| !j.running()),
+            "Stop harus mengakhiri pekerjaan"
+        );
         let exit = job.exit.unwrap();
         assert!(exit.canceled);
         assert_eq!(exit.code, -1);
@@ -463,7 +482,10 @@ mod tests {
         let mut job = start(TaskKind::Run, "dir".into(), fake, Context::default());
 
         assert!(tunggu(&mut job, |j| !j.running()));
-        assert_eq!(job.state, JobState::Failed("PowerShell tidak ditemukan".into()));
+        assert_eq!(
+            job.state,
+            JobState::Failed("PowerShell tidak ditemukan".into())
+        );
         assert_eq!(job.exit, None);
     }
 
@@ -472,14 +494,21 @@ mod tests {
         let ctx = Context::default();
         let fake = Fake {
             chunks: vec!["sebagian".into()],
-            outcome: Ok(ExecOutcome { code: -1, timed_out: true, ..Default::default() }),
+            outcome: Ok(ExecOutcome {
+                code: -1,
+                timed_out: true,
+                ..Default::default()
+            }),
             info: Vec::new(),
             wait_for_cancel: false,
         };
         let mut job = start(TaskKind::Run, "sleep".into(), fake, ctx);
 
         assert!(tunggu(&mut job, |j| !j.running()));
-        assert_eq!(job.output, "sebagian", "output yang sudah keluar tidak boleh hilang");
+        assert_eq!(
+            job.output, "sebagian",
+            "output yang sudah keluar tidak boleh hilang"
+        );
         let exit = job.exit.unwrap();
         assert!(exit.timed_out);
         assert!(!exit.ok());
@@ -582,7 +611,10 @@ mod tests {
                 job.output
             );
 
-            assert!(tunggu(&mut job, |j| !j.running()), "perintah tidak pernah selesai");
+            assert!(
+                tunggu(&mut job, |j| !j.running()),
+                "perintah tidak pernah selesai"
+            );
             for i in 1..=3 {
                 assert!(
                     job.output.contains(&format!("baris-{i}")),
@@ -642,7 +674,10 @@ mod tests {
                 t0.elapsed()
             );
             let exit = job.exit.expect("exit line harus terbentuk");
-            assert!(exit.canceled, "harus dilaporkan sebagai dihentikan pengguna");
+            assert!(
+                exit.canceled,
+                "harus dilaporkan sebagai dihentikan pengguna"
+            );
             assert!(!exit.ok());
             assert!(exit.text(Lang3::Id).contains("dihentikan pengguna"));
         }

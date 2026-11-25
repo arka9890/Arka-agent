@@ -13,7 +13,9 @@ mod events;
 mod jni_util;
 mod proot_manager;
 
-use arka_core::{agent, ai, db, file, memory, paths, provider, session, settings, shell, terminal, ui, Events};
+use arka_core::{
+    agent, ai, db, file, memory, paths, provider, session, settings, shell, terminal, ui, Events,
+};
 use events::JniEvents;
 use jni_util as ju;
 use serde_json::json;
@@ -133,8 +135,16 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_createSession<'local>(
     let provider_id = ju::arg_str(&mut env, &provider_id);
     let model = ju::arg_str(&mut env, &model);
     json_result(&mut env, || {
-        let p = if provider_id.trim().is_empty() { None } else { Some(provider_id.as_str()) };
-        let m = if model.trim().is_empty() { None } else { Some(model.as_str()) };
+        let p = if provider_id.trim().is_empty() {
+            None
+        } else {
+            Some(provider_id.as_str())
+        };
+        let m = if model.trim().is_empty() {
+            None
+        } else {
+            Some(model.as_str())
+        };
         let s = session::create(&title, p, m)?;
         serde_json::to_string(&s).map_err(|e| e.to_string())
     })
@@ -216,7 +226,9 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_setSessionModel<'local>(
     let session_id = ju::arg_str(&mut env, &session_id);
     let provider_id = ju::arg_str(&mut env, &provider_id);
     let model = ju::arg_str(&mut env, &model);
-    unit_result(&mut env, || session::set_model(&session_id, &provider_id, &model));
+    unit_result(&mut env, || {
+        session::set_model(&session_id, &provider_id, &model)
+    });
 }
 
 /// Ringkas riwayat sesi sekarang (manual, dari menu sesi di UI).
@@ -358,15 +370,18 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_providerStatsJson<'local>(
     _class: JClass<'local>,
 ) -> JString<'local> {
     json_result(&mut env, || {
-        let stats = provider::get_all_stats()
-            .map(|v| v.into_iter().map(|(id, s)| {
-                json!({
-                    "id": id,
-                    "total_tokens": s.total_tokens,
-                    "total_requests": s.total_requests,
-                    "last_used_at": s.last_used_at
+        let stats = provider::get_all_stats().map(|v| {
+            v.into_iter()
+                .map(|(id, s)| {
+                    json!({
+                        "id": id,
+                        "total_tokens": s.total_tokens,
+                        "total_requests": s.total_requests,
+                        "last_used_at": s.last_used_at
+                    })
                 })
-            }).collect::<Vec<_>>())?;
+                .collect::<Vec<_>>()
+        })?;
         serde_json::to_string(&stats).map_err(|e| e.to_string())
     })
 }
@@ -577,7 +592,10 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_installUbuntu<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_cancelInstall<'local>(_env: JNIEnv, _class: JClass) {
+pub extern "system" fn Java_com_arka_agent_core_Arka_cancelInstall<'local>(
+    _env: JNIEnv,
+    _class: JClass,
+) {
     install_cancel().store(true, Ordering::SeqCst);
 }
 
@@ -633,7 +651,10 @@ pub extern "system" fn Java_com_arka_agent_core_Arka_execCommand<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_arka_agent_core_Arka_cancelExec<'local>(_env: JNIEnv, _class: JClass) {
+pub extern "system" fn Java_com_arka_agent_core_Arka_cancelExec<'local>(
+    _env: JNIEnv,
+    _class: JClass,
+) {
     exec_cancel().store(true, Ordering::SeqCst);
 }
 

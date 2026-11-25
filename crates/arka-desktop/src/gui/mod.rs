@@ -15,6 +15,7 @@ pub mod history;
 pub mod i18n;
 pub mod jobs;
 pub mod markdown;
+pub mod prefs;
 pub mod screens;
 pub mod state;
 pub mod term_job;
@@ -29,6 +30,7 @@ use state::{AppState, Modal, Persisted};
 
 use arka_core::paths::AppPaths;
 
+use crate::tray::{Action as TrayAction, Tray};
 use engine::Msg;
 
 const SIDEBAR_W: f32 = 248.0;
@@ -36,6 +38,15 @@ const NOTICE_SECS: f64 = 4.0;
 
 pub struct ArkaGui {
     state: AppState,
+    /// Ikon tray Windows (tidak ada di Linux/CI, tapi tipenya tetap ada supaya
+    /// kode UI tidak perlu `cfg` di mana-mana).
+    tray: Option<Tray>,
+    /// Jendela sedang disembunyikan ke tray (bukan ditutup).
+    hidden: bool,
+    /// Minta keluar sungguhan walau `background_run` aktif (menu "Keluar").
+    force_quit: bool,
+    /// Waktu terakhir `--open` diperiksa (instance kedua menulis file di data).
+    pending_checked: f64,
     /// Teks notice yang terakhir ditampilkan, untuk mendeteksi notice baru.
     shown_notice: Option<String>,
     notice_until: f64,
@@ -52,13 +63,25 @@ impl ArkaGui {
             .and_then(|s| eframe::get_value::<Persisted>(s, eframe::APP_KEY))
             .unwrap_or_default();
 
-        Self::from_state(AppState::new(paths, persisted))
+        let mut gui = Self::from_state(AppState::new(paths, persisted));
+        gui.tray = match Tray::new(gui.state.prefs.background_run) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("peringatan: ikon tray tidak tersedia: {e}");
+                None
+            }
+        };
+        gui
     }
 
     /// Bangun tanpa `eframe` — dipakai test.
     pub fn from_state(state: AppState) -> Self {
         Self {
             state,
+            tray: None,
+            hidden: false,
+            force_quit: false,
+            pending_checked: 0.0,
             shown_notice: None,
             notice_until: 0.0,
             applied: None,
@@ -71,6 +94,14 @@ impl ArkaGui {
     /// **Tidak** dipanggil dari `draw`: test UI berjalan tanpa database dan
     /// harus tetap bisa menggambar. `main.rs` memanggilnya sekali saat start.
     pub fn bootstrap_data(&mut self) {
+        // Terapkan pilihan workspace & setelan sebelum sesi/provider dibaca:
+        // prompt agent dan `run_command` harus melihat folder yang sama dengan
+        // yang tertera di tab Setelan sejak frame pertama.
+        self.state.restore_display();
+        apply_prefs(&mut self.state);
+        if let Err(e) = self.state.apply_workspace() {
+            self.state.notice = Some(e);
+        }
         self.state.refresh_providers();
         // Statistik token & status kunci ikut dibaca supaya tab Provider tidak
         // kosong saat pertama dibuka.
@@ -98,6 +129,117 @@ impl ArkaGui {
     pub fn state_mut(&mut self) -> &mut AppState {
         &mut self.state
     }
+
+    /// Keadaan "jendela disembunyikan ke tray" (hanya untuk test).
+    #[cfg(test)]
+    pub fn hidden_for_test(&self) -> bool {
+        self.hidden
+    }
+
+    /// Padanan klik menu tray "Buka" (hanya untuk test).
+    #[cfg(test)]
+    pub fn show_window_for_test(&mut self, ctx: &egui::Context) {
+        self.show_window(ctx);
+    }
+}
+
+/// Terapkan setelan ke pembaca global sesudah `Prefs::save`.
+///
+/// `Prefs` menulis ke database; di sini kita menyelaraskan auto-scroll yang
+/// dibaca di luar UI. Centang menu tray disamakan di `poll_tray` tiap frame
+/// (setelan bisa berubah dari tab Setelan), dan notifikasi dibaca langsung
+/// dari `arka_core::settings` saat toast dikirim.
+pub fn apply_prefs(state: &mut AppState) {
+    state.chat.auto_scroll = arka_core::settings::auto_scroll();
+    let p = state.prefs.clone();
+    if let Err(e) = p.save() {
+        state.notice = Some(e);
+    }
+}
+
+impl ArkaGui {
+    /// Satu langkah aplikasi: tray, instance kedua, tombol X, lalu gambar.
+    ///
+    /// Dipisah dari `eframe::App::update` supaya unit test bisa menjalankan
+    /// jalur yang sama (termasuk `handle_close`) tanpa jendela sungguhan.
+    pub fn step(&mut self, ctx: &egui::Context) {
+        self.poll_tray(ctx);
+        self.poll_pending(ctx);
+        self.handle_close(ctx);
+        self.draw(ctx);
+    }
+
+    /// Menu tray & klik ikon. Tidak pernah memblok: `try_recv` sekali per frame.
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        let Some(tray) = &self.tray else { return };
+        tray.set_background(self.state.prefs.background_run);
+        let actions = tray.poll();
+        for action in actions {
+            match action {
+                TrayAction::Show => self.show_window(ctx),
+                TrayAction::ToggleBackground(on) => {
+                    self.state.prefs.background_run = on;
+                    let _ = self.state.prefs.save();
+                }
+                TrayAction::Quit => {
+                    self.force_quit = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
+    /// Tampilkan kembali jendela yang disembunyikan ke tray.
+    fn show_window(&mut self, ctx: &egui::Context) {
+        self.hidden = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+    }
+
+    /// `--open <file>` dari instance kedua: tulis path ke `pending-open.txt`,
+    /// instance pertama memeriksanya tiap 2 detik (bukan tiap frame) lalu
+    /// membuka pratinjau di tab File.
+    fn poll_pending(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if now - self.pending_checked < 2.0 {
+            return;
+        }
+        self.pending_checked = now;
+        let Some(path) = crate::single::take_pending(&self.state.paths.data_dir) else {
+            return;
+        };
+        let root = self.state.workspace();
+        let rel = path
+            .strip_prefix(&root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        match arka_core::file::stat_at(&root, &rel) {
+            Ok(info) => {
+                self.state.tab = state::Tab::File;
+                self.state.files_ui.preview =
+                    Some(crate::preview::PreviewState::load(&root, &info, ctx));
+                self.show_window(ctx);
+            }
+            Err(e) => self.state.notify(e),
+        }
+    }
+
+    /// Tombol X: sembunyikan ke tray bila "jalan di latar belakang" aktif.
+    fn handle_close(&mut self, ctx: &egui::Context) {
+        let closing = ctx.input(|i| i.viewport().close_requested());
+        if !closing {
+            return;
+        }
+        if self.force_quit || !self.state.prefs.background_run {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.hidden = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    }
 }
 
 impl eframe::App for ArkaGui {
@@ -107,7 +249,7 @@ impl eframe::App for ArkaGui {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.draw(ctx);
+        self.step(ctx);
     }
 }
 
@@ -198,11 +340,8 @@ impl ArkaGui {
         self.state.notify(format!(
             "{} {}",
             n,
-            self.state.tr(
-                "berkas dilampirkan",
-                "file(s) attached",
-                "件を添付しました"
-            )
+            self.state
+                .tr("berkas dilampirkan", "file(s) attached", "件を添付しました")
         ));
     }
 
@@ -307,6 +446,7 @@ impl ArkaGui {
                 });
             }
             Msg::Finished { session } => {
+                crate::keepawake::end();
                 // Muat ulang dari database: kebenaran ada di sana, bukan di
                 // buffer streaming.
                 if active.as_deref() == Some(session.as_str()) {
@@ -319,17 +459,24 @@ impl ArkaGui {
                 // Jendela tidak fokus → minta perhatian OS (kedip taskbar) dan
                 // tampilkan notice di dalam aplikasi.
                 let focused = ctx.input(|i| i.focused);
-                if !focused {
+                if !focused && self.state.prefs.notifications {
+                    let body = self.state.tr(
+                        "Sesi selesai menjawab.",
+                        "A session finished answering.",
+                        "セッションの応答が完了しました。",
+                    );
+                    let _ = crate::desk_notify::toast(
+                        "Arka Agent",
+                        &crate::desk_notify::ringkas(&body, 180),
+                    );
                     ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                         egui::UserAttentionType::Informational,
                     ));
-                    self.state.notify(
-                        self.state.tr(
-                            "Sesi selesai menjawab.",
-                            "A session finished answering.",
-                            "セッションの応答が完了しました。",
-                        ),
-                    );
+                    self.state.notify(self.state.tr(
+                        "Sesi selesai menjawab.",
+                        "A session finished answering.",
+                        "セッションの応答が完了しました。",
+                    ));
                 }
                 ctx.request_repaint();
             }
@@ -359,7 +506,11 @@ impl ArkaGui {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Arka Agent").size(theme::fs(ui, 18.0)).strong());
+                    ui.label(
+                        RichText::new("Arka Agent")
+                            .size(theme::fs(ui, 18.0))
+                            .strong(),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("\u{2039}").clicked() {
                             open = false;
@@ -369,7 +520,12 @@ impl ArkaGui {
 
                 ui.add_space(theme::SP_MD);
                 let label = self.state.tr("Sesi", "Sessions", "セッション");
-                ui.label(RichText::new(label).size(theme::fs(ui, 11.0)).color(colors.muted).strong());
+                ui.label(
+                    RichText::new(label)
+                        .size(theme::fs(ui, 11.0))
+                        .color(colors.muted)
+                        .strong(),
+                );
 
                 ui.add_space(theme::SP_XS);
                 if ui
@@ -408,7 +564,8 @@ impl ArkaGui {
                         let rows = self.state.sessions.clone();
                         let renaming = self.state.chat.rename.clone();
                         for row in rows {
-                            let active = self.state.active_session.as_deref() == Some(row.id.as_str());
+                            let active =
+                                self.state.active_session.as_deref() == Some(row.id.as_str());
                             let busy = self.state.chat.engine.is_running(&row.id);
                             let unread = self.state.chat.unread.contains(&row.id);
 
@@ -418,8 +575,13 @@ impl ArkaGui {
                                     let mut buf = text.clone();
                                     let resp = ui.add_sized(
                                         [ui.available_width(), 34.0 * theme::scale_of(ui.ctx())],
-                                        egui::TextEdit::singleline(&mut buf)
-                                            .hint_text(self.state.tr("Judul sesi", "Session title", "セッション名")),
+                                        egui::TextEdit::singleline(&mut buf).hint_text(
+                                            self.state.tr(
+                                                "Judul sesi",
+                                                "Session title",
+                                                "セッション名",
+                                            ),
+                                        ),
                                     );
                                     resp.request_focus();
                                     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -445,11 +607,19 @@ impl ArkaGui {
                             let resp = ui.add_sized(
                                 [ui.available_width(), 44.0 * theme::scale_of(ui.ctx())],
                                 egui::Button::new(
-                                    RichText::new(title)
-                                        .size(theme::fs(ui, 14.0))
-                                        .color(if active { colors.accent } else { colors.on_surface }),
+                                    RichText::new(title).size(theme::fs(ui, 14.0)).color(
+                                        if active {
+                                            colors.accent
+                                        } else {
+                                            colors.on_surface
+                                        },
+                                    ),
                                 )
-                                .fill(if active { colors.accent_soft } else { colors.surface_raised }),
+                                .fill(if active {
+                                    colors.accent_soft
+                                } else {
+                                    colors.surface_raised
+                                }),
                             );
                             if resp.clicked() {
                                 select = Some(row.id.clone());
@@ -514,14 +684,9 @@ impl ArkaGui {
 
     fn top_bar(&mut self, ctx: &egui::Context, colors: &theme::ClayColors) {
         egui::TopBottomPanel::top("topbar")
-            .frame(
-                egui::Frame::new()
-                    .fill(colors.background)
-                    .inner_margin(egui::Margin::symmetric(
-                        theme::SP_LG as i8,
-                        theme::SP_SM as i8,
-                    )),
-            )
+            .frame(egui::Frame::new().fill(colors.background).inner_margin(
+                egui::Margin::symmetric(theme::SP_LG as i8, theme::SP_SM as i8),
+            ))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if !self.state.sidebar_open && ui.small_button("\u{2261}").clicked() {
@@ -532,13 +697,15 @@ impl ArkaGui {
                         let active = self.state.tab == tab;
                         let text = format!("{} {}", tab.glyph(), tab.label(self.state.lang));
                         let btn = egui::Button::new(
-                            RichText::new(text).size(theme::fs(ui, 14.0)).color(if active {
-                                colors.accent
-                            } else {
-                                colors.muted
-                            }),
+                            RichText::new(text)
+                                .size(theme::fs(ui, 14.0))
+                                .color(if active { colors.accent } else { colors.muted }),
                         )
-                        .fill(if active { colors.accent_soft } else { colors.surface });
+                        .fill(if active {
+                            colors.accent_soft
+                        } else {
+                            colors.surface
+                        });
 
                         if ui.add(btn).clicked() {
                             self.state.tab = tab;
@@ -546,7 +713,8 @@ impl ArkaGui {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let system_dark = ctx.input(|i| i.raw.system_theme) == Some(egui::Theme::Dark);
+                        let system_dark =
+                            ctx.input(|i| i.raw.system_theme) == Some(egui::Theme::Dark);
                         let dark = self.state.theme.is_dark(system_dark);
                         let icon = if dark { "\u{2600}" } else { "\u{1F319}" };
                         if ui
@@ -554,7 +722,11 @@ impl ArkaGui {
                                 egui::Button::new(RichText::new(icon).size(theme::fs(ui, 15.0)))
                                     .fill(colors.surface),
                             )
-                            .on_hover_text(self.state.tr("Ganti tema", "Toggle theme", "テーマ切替"))
+                            .on_hover_text(self.state.tr(
+                                "Ganti tema",
+                                "Toggle theme",
+                                "テーマ切替",
+                            ))
                             .clicked()
                         {
                             self.state.theme = if dark {
@@ -576,14 +748,9 @@ impl ArkaGui {
         }
 
         egui::TopBottomPanel::bottom("notice")
-            .frame(
-                egui::Frame::new()
-                    .fill(colors.surface_raised)
-                    .inner_margin(egui::Margin::symmetric(
-                        theme::SP_LG as i8,
-                        theme::SP_SM as i8,
-                    )),
-            )
+            .frame(egui::Frame::new().fill(colors.surface_raised).inner_margin(
+                egui::Margin::symmetric(theme::SP_LG as i8, theme::SP_SM as i8),
+            ))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(text) = self.state.notice.clone() {
@@ -610,7 +777,11 @@ impl ArkaGui {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
-                        ui.label(RichText::new("Arka Agent").size(theme::fs(ui, 18.0)).strong());
+                        ui.label(
+                            RichText::new("Arka Agent")
+                                .size(theme::fs(ui, 18.0))
+                                .strong(),
+                        );
                         ui.label(
                             RichText::new(format!(
                                 "v{} \u{00B7} Windows \u{00B7} Rust",
@@ -637,101 +808,105 @@ impl ArkaGui {
                 let mut nav: Option<std::path::PathBuf> = None;
                 let mut attach: Option<std::path::PathBuf> = None;
 
-                egui::Window::new(self.state.tr("Lampirkan berkas", "Attach a file", "ファイルを添付"))
-                    .collapsible(false)
-                    .resizable(true)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.set_max_width(520.0 * theme::scale_of(ctx));
-                        ui.horizontal(|ui| {
-                            if ui.small_button("\u{2B06}").clicked() {
-                                if let Some(parent) = dir.parent() {
-                                    nav = Some(parent.to_path_buf());
-                                }
+                egui::Window::new(self.state.tr(
+                    "Lampirkan berkas",
+                    "Attach a file",
+                    "ファイルを添付",
+                ))
+                .collapsible(false)
+                .resizable(true)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.set_max_width(520.0 * theme::scale_of(ctx));
+                    ui.horizontal(|ui| {
+                        if ui.small_button("\u{2B06}").clicked() {
+                            if let Some(parent) = dir.parent() {
+                                nav = Some(parent.to_path_buf());
                             }
-                            ui.label(
-                                RichText::new(dir.display().to_string())
-                                    .size(theme::fs(ui, 11.5))
-                                    .monospace()
-                                    .color(colors.muted),
-                            );
-                        });
-                        ui.separator();
+                        }
+                        ui.label(
+                            RichText::new(dir.display().to_string())
+                                .size(theme::fs(ui, 11.5))
+                                .monospace()
+                                .color(colors.muted),
+                        );
+                    });
+                    ui.separator();
 
-                        egui::ScrollArea::vertical()
-                            .max_height(320.0 * theme::scale_of(ctx))
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| match fs_model::read_dir(&dir) {
-                                Ok(entries) => {
-                                    if entries.is_empty() {
-                                        ui.label(
-                                            RichText::new(self.state.tr(
-                                                "Folder kosong.",
-                                                "Empty folder.",
-                                                "空のフォルダーです。",
-                                            ))
-                                            .size(theme::fs(ui, 12.0))
-                                            .color(colors.muted),
-                                        );
-                                    }
-                                    for e in entries {
-                                        let label = if e.is_dir {
-                                            format!("\u{1F4C1} {}", e.name)
-                                        } else {
-                                            format!("\u{1F4C4} {}", e.name)
-                                        };
-                                        let resp = ui.add_sized(
-                                            [ui.available_width(), 30.0 * theme::scale_of(ctx)],
-                                            egui::Button::new(
-                                                RichText::new(label).size(theme::fs(ui, 13.0)),
-                                            )
-                                            .fill(colors.surface_raised),
-                                        );
-                                        if resp.clicked() {
-                                            if e.is_dir {
-                                                nav = Some(dir.join(&e.name));
-                                            } else {
-                                                attach = Some(dir.join(&e.name));
-                                            }
-                                        }
-                                        if !e.is_dir {
-                                            resp.on_hover_text(fs_model::human_size(e.size));
-                                        }
-                                    }
-                                }
-                                Err(err) => {
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0 * theme::scale_of(ctx))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| match fs_model::read_dir(&dir) {
+                            Ok(entries) => {
+                                if entries.is_empty() {
                                     ui.label(
-                                        RichText::new(err)
-                                            .size(theme::fs(ui, 12.0))
-                                            .color(colors.danger),
+                                        RichText::new(self.state.tr(
+                                            "Folder kosong.",
+                                            "Empty folder.",
+                                            "空のフォルダーです。",
+                                        ))
+                                        .size(theme::fs(ui, 12.0))
+                                        .color(colors.muted),
                                     );
                                 }
-                            });
-
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            if widgets::clay_button(
-                                ui,
-                                colors,
-                                &self.state.tr("Tutup", "Close", "閉じる"),
-                                true,
-                            )
-                            .clicked()
-                            {
-                                close = true;
+                                for e in entries {
+                                    let label = if e.is_dir {
+                                        format!("\u{1F4C1} {}", e.name)
+                                    } else {
+                                        format!("\u{1F4C4} {}", e.name)
+                                    };
+                                    let resp = ui.add_sized(
+                                        [ui.available_width(), 30.0 * theme::scale_of(ctx)],
+                                        egui::Button::new(
+                                            RichText::new(label).size(theme::fs(ui, 13.0)),
+                                        )
+                                        .fill(colors.surface_raised),
+                                    );
+                                    if resp.clicked() {
+                                        if e.is_dir {
+                                            nav = Some(dir.join(&e.name));
+                                        } else {
+                                            attach = Some(dir.join(&e.name));
+                                        }
+                                    }
+                                    if !e.is_dir {
+                                        resp.on_hover_text(fs_model::human_size(e.size));
+                                    }
+                                }
                             }
-                            if !self.state.chat.attachments.is_empty() {
+                            Err(err) => {
                                 ui.label(
-                                    RichText::new(format!(
-                                        "{} lampiran",
-                                        self.state.chat.attachments.len()
-                                    ))
-                                    .size(theme::fs(ui, 11.5))
-                                    .color(colors.muted),
+                                    RichText::new(err)
+                                        .size(theme::fs(ui, 12.0))
+                                        .color(colors.danger),
                                 );
                             }
                         });
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if widgets::clay_button(
+                            ui,
+                            colors,
+                            &self.state.tr("Tutup", "Close", "閉じる"),
+                            true,
+                        )
+                        .clicked()
+                        {
+                            close = true;
+                        }
+                        if !self.state.chat.attachments.is_empty() {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} lampiran",
+                                    self.state.chat.attachments.len()
+                                ))
+                                .size(theme::fs(ui, 11.5))
+                                .color(colors.muted),
+                            );
+                        }
                     });
+                });
 
                 if let Some(d) = nav {
                     self.state.chat.pick_dir = d;
@@ -752,51 +927,50 @@ impl ArkaGui {
                     .find(|s| s.id == id)
                     .map(|s| s.title.clone())
                     .unwrap_or_default();
-                egui::Window::new(self.state.tr("Hapus sesi", "Delete session", "セッション削除"))
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.label(
-                            RichText::new(&judul)
-                                .size(theme::fs(ui, 14.0))
-                                .strong(),
-                        );
-                        ui.add_space(theme::SP_XS);
-                        ui.label(
-                            RichText::new(self.state.tr(
-                                "Sesi beserta seluruh pesannya akan dihapus.",
-                                "The session and all its messages will be deleted.",
-                                "セッションと全メッセージが削除されます。",
-                            ))
-                            .size(theme::fs(ui, 13.0))
-                            .color(colors.muted),
-                        );
-                        ui.add_space(theme::SP_SM);
-                        ui.horizontal(|ui| {
-                            if widgets::clay_button(
-                                ui,
-                                colors,
-                                &self.state.tr("Hapus", "Delete", "削除"),
-                                true,
-                            )
-                            .clicked()
-                            {
-                                self.state.delete_session(&id);
-                                close = true;
-                            }
-                            if widgets::clay_button(
-                                ui,
-                                colors,
-                                &self.state.tr("Batal", "Cancel", "キャンセル"),
-                                true,
-                            )
-                            .clicked()
-                            {
-                                close = true;
-                            }
-                        });
+                egui::Window::new(
+                    self.state
+                        .tr("Hapus sesi", "Delete session", "セッション削除"),
+                )
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(RichText::new(&judul).size(theme::fs(ui, 14.0)).strong());
+                    ui.add_space(theme::SP_XS);
+                    ui.label(
+                        RichText::new(self.state.tr(
+                            "Sesi beserta seluruh pesannya akan dihapus.",
+                            "The session and all its messages will be deleted.",
+                            "セッションと全メッセージが削除されます。",
+                        ))
+                        .size(theme::fs(ui, 13.0))
+                        .color(colors.muted),
+                    );
+                    ui.add_space(theme::SP_SM);
+                    ui.horizontal(|ui| {
+                        if widgets::clay_button(
+                            ui,
+                            colors,
+                            &self.state.tr("Hapus", "Delete", "削除"),
+                            true,
+                        )
+                        .clicked()
+                        {
+                            self.state.delete_session(&id);
+                            close = true;
+                        }
+                        if widgets::clay_button(
+                            ui,
+                            colors,
+                            &self.state.tr("Batal", "Cancel", "キャンセル"),
+                            true,
+                        )
+                        .clicked()
+                        {
+                            close = true;
+                        }
                     });
+                });
             }
         }
 

@@ -43,9 +43,24 @@ fn is_false(b: &bool) -> bool {
 /// Provider yang dibuat saat database masih kosong, supaya tab Provider tidak
 /// kosong melompong di peluncuran pertama. API key sengaja kosong.
 const SEEDS: &[(&str, &str, &str, &str)] = &[
-    ("OpenAI", "openai", "https://api.openai.com/v1", "gpt-4o-mini"),
-    ("Mistral", "openai", "https://api.mistral.ai/v1", "mistral-small-latest"),
-    ("Anthropic", "anthropic", "https://api.anthropic.com", "claude-3-5-sonnet-latest"),
+    (
+        "OpenAI",
+        "openai",
+        "https://api.openai.com/v1",
+        "gpt-4o-mini",
+    ),
+    (
+        "Mistral",
+        "openai",
+        "https://api.mistral.ai/v1",
+        "mistral-small-latest",
+    ),
+    (
+        "Anthropic",
+        "anthropic",
+        "https://api.anthropic.com",
+        "claude-3-5-sonnet-latest",
+    ),
     (
         "Google",
         "openai",
@@ -105,8 +120,12 @@ pub fn list() -> Result<Vec<Provider>, String> {
                  FROM providers ORDER BY is_default DESC, created_at ASC",
             )
             .map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], row_to_provider).map_err(|e| e.to_string())?;
-        let mut list = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], row_to_provider)
+            .map_err(|e| e.to_string())?;
+        let mut list = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
         for p in &mut list {
             reveal_key(p);
         }
@@ -206,7 +225,11 @@ fn parse_models(raw: &str) -> Vec<String> {
 /// Provider default; kalau tidak ada yang ditandai, ambil yang pertama.
 pub fn default_provider() -> Result<Option<Provider>, String> {
     let all = list()?;
-    Ok(all.iter().find(|p| p.is_default).cloned().or_else(|| all.first().cloned()))
+    Ok(all
+        .iter()
+        .find(|p| p.is_default)
+        .cloned()
+        .or_else(|| all.first().cloned()))
 }
 
 /// Simpan (insert kalau `id` kosong, update kalau sudah ada).
@@ -225,12 +248,18 @@ pub fn save(mut p: Provider) -> Result<Provider, String> {
         p.id = uuid::Uuid::new_v4().to_string();
         p.created_at = db::now_ms();
     } else {
-        p.created_at = get(&p.id).map(|old| old.created_at).unwrap_or_else(|_| db::now_ms());
+        p.created_at = get(&p.id)
+            .map(|old| old.created_at)
+            .unwrap_or_else(|_| db::now_ms());
     }
     // Model utama selalu ikut masuk daftar supaya dropdown chat tidak pernah
     // kosong walaupun endpoint /models provider gagal/ tidak tersedia.
-    let mut models: Vec<String> = p.models.iter().map(|m| m.trim().to_string())
-        .filter(|m| !m.is_empty()).collect();
+    let mut models: Vec<String> = p
+        .models
+        .iter()
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
     if !p.model.trim().is_empty() && !models.contains(&p.model.trim().to_string()) {
         models.insert(0, p.model.trim().to_string());
     }
@@ -300,9 +329,12 @@ pub fn set_default(id: &str) -> Result<(), String> {
     db::with(|c| {
         c.execute("UPDATE providers SET is_default = 0", [])
             .map_err(|e| e.to_string())?;
-        c.execute("UPDATE providers SET is_default = 1 WHERE id = ?1", params![id])
-            .map_err(|e| e.to_string())
-            .map(|_| ())
+        c.execute(
+            "UPDATE providers SET is_default = 1 WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())
+        .map(|_| ())
     })
 }
 
@@ -316,7 +348,7 @@ pub fn delete(id: &str) -> Result<(), String> {
 
 // ------------------------------------------------------------ provider stats
 
-use crate::db::{with, now_ms};
+use crate::db::{now_ms, with};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ProviderStats {
@@ -332,7 +364,8 @@ pub fn record_usage(provider_id: &str, tokens: i64, requests: i64) -> Result<(),
             "INSERT OR IGNORE INTO provider_stats (provider_id, total_tokens, total_requests)
              VALUES (?1, 0, 0)",
             rusqlite::params![provider_id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         c.execute(
             "UPDATE provider_stats
@@ -341,7 +374,8 @@ pub fn record_usage(provider_id: &str, tokens: i64, requests: i64) -> Result<(),
                  last_used_at = ?3
              WHERE provider_id = ?4",
             rusqlite::params![tokens, requests, now_ms(), provider_id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     })
 }
@@ -372,18 +406,21 @@ pub fn get_all_stats() -> Result<Vec<(String, ProviderStats)>, String> {
              ORDER BY p.is_default DESC, p.created_at ASC",
         ).map_err(|e| e.to_string())?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                ProviderStats {
-                    total_tokens: row.get(1)?,
-                    total_requests: row.get(2)?,
-                    last_used_at: row.get::<_, Option<i64>>(3)?,
-                },
-            ))
-        }).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    ProviderStats {
+                        total_tokens: row.get(1)?,
+                        total_requests: row.get(2)?,
+                        last_used_at: row.get::<_, Option<i64>>(3)?,
+                    },
+                ))
+            })
+            .map_err(|e| e.to_string())?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -400,7 +437,10 @@ mod tests {
             Ok(format!("{DPAPI_PREFIX}{plain}")) // cukup untuk membuktikan jalur
         }
         fn unprotect(&self, stored: &str) -> Result<String, String> {
-            Ok(stored.strip_prefix(DPAPI_PREFIX).unwrap_or(stored).to_string())
+            Ok(stored
+                .strip_prefix(DPAPI_PREFIX)
+                .unwrap_or(stored)
+                .to_string())
         }
         fn owns(&self, stored: &str) -> bool {
             stored.starts_with(DPAPI_PREFIX)
@@ -421,7 +461,9 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         db::init(&dir.join("provider.db").to_string_lossy()).unwrap();
         db::with(|c| {
-            c.execute("DELETE FROM providers", []).map_err(|e| e.to_string()).map(|_| ())
+            c.execute("DELETE FROM providers", [])
+                .map_err(|e| e.to_string())
+                .map(|_| ())
         })
         .unwrap();
         guard
@@ -467,7 +509,10 @@ mod tests {
         let n = migrate_with(&PrefixStore).unwrap();
         assert_eq!(n, 1, "hanya satu baris plaintext yang diubah");
 
-        assert_eq!(stored_key("mig-1"), format!("{DPAPI_PREFIX}sk-plaintext-lama"));
+        assert_eq!(
+            stored_key("mig-1"),
+            format!("{DPAPI_PREFIX}sk-plaintext-lama")
+        );
         assert_eq!(
             stored_key("mig-2"),
             "dpapi:sudah-terlindungi",
@@ -555,7 +600,10 @@ mod tests {
         };
         p = save(p).unwrap();
         assert_eq!(p.models, vec!["gpt-x".to_string(), "a".to_string()]);
-        assert_eq!(p.base_url, "https://contoh/v1", "garis miring akhir dibuang");
+        assert_eq!(
+            p.base_url, "https://contoh/v1",
+            "garis miring akhir dibuang"
+        );
     }
 
     /// Statistik ikut tercatat & terbaca ulang.

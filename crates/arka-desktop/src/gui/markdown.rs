@@ -142,7 +142,11 @@ pub fn inline_job(text: &str, s: &InlineStyle) -> LayoutJob {
 
 /// Kotak kode sederhana (satu warna latar, monospace) — padanan `CodeBlock`
 /// di Kotlin. Highlight per bahasa belum ada; itu opsional di checklist M4.
-pub fn code_frame(ui: &mut eframe::egui::Ui, bg: Color32, add_contents: impl FnOnce(&mut eframe::egui::Ui)) {
+pub fn code_frame(
+    ui: &mut eframe::egui::Ui,
+    bg: Color32,
+    add_contents: impl FnOnce(&mut eframe::egui::Ui),
+) {
     eframe::egui::Frame::new()
         .fill(bg)
         .corner_radius(eframe::egui::CornerRadius::same(10))

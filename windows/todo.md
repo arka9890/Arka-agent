@@ -1,6 +1,6 @@
 # TODO — Arka Agent untuk Windows (100% Rust, shell native Windows)
 
-Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅** (terverifikasi di GitHub Actions; M4/M5 menunggu uji dengan API key sungguhan) — M7 (terminal + status shell) berikutnya.
+Status: **M0 ✅ · M1 ✅ · CI-1 ✅ · M2 ✅ · M3 ✅ · M4 ✅ · M5 ✅ · M6 ✅ · M7 ✅** (terverifikasi di GitHub Actions; M4/M5 menunggu uji dengan API key sungguhan, M6/M7 menunggu tangkapan layar Windows) — **M8 (setelan, notifikasi, tray) sedang dikerjakan**.
 Sumber: audit menyeluruh repo `Arka-agent` per commit `cb3a4b6`
 (`rust/src/*` 13 file / 4.418 baris, `android/.../*.kt` 24 file / 10.971 baris, `docs/PRD.md`, `docs/TODO.md`).
 
@@ -265,7 +265,7 @@ dan kegagalan build native menggagalkan job `apk` (tidak ada lagi artifact "suks
 - [x] `settings::workspace_default()` mengikuti platform — tidak lagi `/root/storage` di Windows
 - [x] `--selftest`: bukti di mesin Windows (UTF-8, exit code native, **Stop mematikan pohon proses**)
 - [x] CI `.github/workflows/desktop.yml`: `desktop-logic` (Linux) + `desktop-windows` (smoke + selftest)
-- [ ] `DpapiSecretStore` → **dipindah ke M5** (memang di sana; M2 mendaftarkan `NoopSecretStore`)
+- [x] `DpapiSecretStore` → **dipindah ke M5** (terimplementasi & diuji di M5; M2 mendaftarkan `NoopSecretStore`)
 **Selesai bila:** di Windows `run_command` mengembalikan `Get-ChildItem` dari workspace, output UTF-8 benar (emoji/日本語 utuh), dan tombol Stop benar-benar mematikan `python -c "import time; time.sleep(60)"` beserta anak prosesnya.
 
 **Bukti (run [45306904718](https://github.com/arka9890/Arka-agent/actions/runs/45306904718), runner `windows-latest`):**

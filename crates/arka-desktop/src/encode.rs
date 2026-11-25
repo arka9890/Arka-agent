@@ -65,7 +65,9 @@ mod tests {
     fn emoji_becomes_surrogate_pair_not_utf8_garbage() {
         // 🚀 = U+1F680 → 2 unit u16 di UTF-16LE → 4 byte, bukan 4 byte UTF-8.
         let encoded = encode("🚀");
-        let raw = base64::engine::general_purpose::STANDARD.decode(&encoded).unwrap();
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .unwrap();
         assert_eq!(raw.len(), 4);
         assert_eq!(u16::from_le_bytes([raw[0], raw[1]]), 0xD83D);
         assert_eq!(u16::from_le_bytes([raw[2], raw[3]]), 0xDE80);
@@ -74,7 +76,9 @@ mod tests {
     #[test]
     fn output_is_plain_base64_ascii() {
         let encoded = encode("echo 日本語 and 🚀");
-        assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)));
+        assert!(encoded
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)));
     }
 
     #[test]

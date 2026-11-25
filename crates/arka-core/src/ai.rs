@@ -106,7 +106,10 @@ fn describe_http_error(status: u16, body: &str) -> String {
     }
 }
 
-fn auth_headers(rb: reqwest::blocking::RequestBuilder, p: &Provider) -> reqwest::blocking::RequestBuilder {
+fn auth_headers(
+    rb: reqwest::blocking::RequestBuilder,
+    p: &Provider,
+) -> reqwest::blocking::RequestBuilder {
     if p.kind == "anthropic" {
         rb.header("x-api-key", p.api_key.trim())
             .header("anthropic-version", "2023-06-01")
@@ -114,7 +117,6 @@ fn auth_headers(rb: reqwest::blocking::RequestBuilder, p: &Provider) -> reqwest:
         rb.bearer_auth(p.api_key.trim())
     }
 }
-
 
 fn message_value(anthropic: bool, m: &ChatMsg) -> Value {
     let content = if let Some(blocks) = &m.blocks {
@@ -144,8 +146,12 @@ fn request_body(
     include_usage: bool,
     platform: Platform,
 ) -> Value {
-    let system = messages.iter().find(|m| m.role == "system").map(|m| m.content.clone());
-    let rest: Vec<Value> = messages.iter()
+    let system = messages
+        .iter()
+        .find(|m| m.role == "system")
+        .map(|m| m.content.clone());
+    let rest: Vec<Value> = messages
+        .iter()
         .filter(|m| m.role != "system")
         .map(|m| message_value(anthropic, m))
         .collect();
@@ -254,7 +260,14 @@ impl ChatStream {
             &[(false, true), (false, false)]
         };
         for &(with_tools, include_usage) in combos {
-            let body = request_body(anthropic, model, messages, with_tools, include_usage, platform);
+            let body = request_body(
+                anthropic,
+                model,
+                messages,
+                with_tools,
+                include_usage,
+                platform,
+            );
             let resp = auth_headers(client()?.post(&url).json(&body), provider)
                 .send()
                 .map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
@@ -308,14 +321,26 @@ impl ChatStream {
         if let Some(total) = json.pointer("/usage/total_tokens").and_then(|v| v.as_i64()) {
             add = add.max(total);
         }
-        let prompt = json.pointer("/usage/prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let completion = json.pointer("/usage/completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let prompt = json
+            .pointer("/usage/prompt_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let completion = json
+            .pointer("/usage/completion_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         if add == 0 && (prompt > 0 || completion > 0) {
             add = prompt + completion;
         }
         // Anthropic: message_start (input) + message_delta (output)
-        let a_in = json.pointer("/message/usage/input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
-        let a_out = json.pointer("/usage/output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let a_in = json
+            .pointer("/message/usage/input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let a_out = json
+            .pointer("/usage/output_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         if add == 0 && (a_in > 0 || a_out > 0) {
             add = a_in + a_out;
         }
@@ -346,7 +371,9 @@ impl ChatStream {
                 }
             }
             let trimmed = line.trim_end_matches(['\r', '\n']);
-            let Some(payload) = trimmed.strip_prefix("data:") else { continue };
+            let Some(payload) = trimmed.strip_prefix("data:") else {
+                continue;
+            };
             let payload = payload.trim();
             if payload == "[DONE]" {
                 self.finished = true;
@@ -355,8 +382,14 @@ impl ChatStream {
             if payload.is_empty() {
                 continue;
             }
-            let Ok(json) = serde_json::from_str::<Value>(payload) else { continue };
-            if let Some(err) = json.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            let Ok(json) = serde_json::from_str::<Value>(payload) else {
+                continue;
+            };
+            if let Some(err) = json
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+            {
                 self.finished = true;
                 return Some(Err(format!("Provider menolak permintaan: {err}")));
             }
@@ -365,7 +398,8 @@ impl ChatStream {
             let delta = if self.anthropic {
                 json.pointer("/delta/text").and_then(|t| t.as_str())
             } else {
-                json.pointer("/choices/0/delta/content").and_then(|t| t.as_str())
+                json.pointer("/choices/0/delta/content")
+                    .and_then(|t| t.as_str())
             };
             if let Some(text) = delta {
                 if !text.is_empty() {
@@ -396,11 +430,7 @@ pub fn is_context_error(message: &str) -> bool {
 
 /// Kirim percakapan dan kembalikan seluruh teks jawaban (tanpa streaming ke
 /// UI, tanpa tools). Dipakai untuk meringkas konteks lama.
-pub fn complete(
-    provider: &Provider,
-    model: &str,
-    messages: &[ChatMsg],
-) -> Result<String, String> {
+pub fn complete(provider: &Provider, model: &str, messages: &[ChatMsg]) -> Result<String, String> {
     let mut stream = ChatStream::open_without_tools(provider, model, messages)?;
     let mut out = String::new();
     while let Some(item) = stream.next() {
@@ -417,69 +447,86 @@ pub fn complete(
 
 /// Kumpulkan potongan tool call dari SSE OpenAI/Anthropic.
 fn collect_tool_calls(calls: &mut Vec<ToolCall>, anthropic: bool, json: &Value) {
-        if anthropic {
-            match json.get("type").and_then(|v| v.as_str()).unwrap_or("") {
-                "content_block_start" => {
-                    let Some(cb) = json.get("content_block") else { return };
-                    if cb.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
-                        return;
-                    }
-                    let id = cb.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let name = cb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    // Anthropic mengirim `input: {}` di start lalu partial_json
-                    // di delta. Jangan simpan `{}` itu atau argumennya rusak.
-                    let input = cb.get("input")
-                        .filter(|v| *v != &json!({}))
-                        .map(|v| v.to_string())
-                        .unwrap_or_default();
-                    calls.push(ToolCall { id, name, arguments: input });
+    if anthropic {
+        match json.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            "content_block_start" => {
+                let Some(cb) = json.get("content_block") else {
+                    return;
+                };
+                if cb.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                    return;
                 }
-                "content_block_delta" => {
-                    if json.pointer("/delta/type").and_then(|v| v.as_str())
-                        != Some("input_json_delta")
-                    {
-                        return;
-                    }
-                    if let (Some(part), Some(last)) = (
-                        json.pointer("/delta/partial_json").and_then(|v| v.as_str()),
-                        calls.last_mut(),
-                    ) {
-                        last.arguments.push_str(part);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        let Some(list) = json.pointer("/choices/0/delta/tool_calls").and_then(|v| v.as_array()) else {
-            return;
-        };
-        for c in list {
-            let index = c.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            while calls.len() <= index {
+                let id = cb
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = cb
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // Anthropic mengirim `input: {}` di start lalu partial_json
+                // di delta. Jangan simpan `{}` itu atau argumennya rusak.
+                let input = cb
+                    .get("input")
+                    .filter(|v| *v != &json!({}))
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
                 calls.push(ToolCall {
-                    id: String::new(),
-                    name: String::new(),
-                    arguments: String::new(),
+                    id,
+                    name,
+                    arguments: input,
                 });
             }
-            if let Some(id) = c.get("id").and_then(|v| v.as_str()) {
-                if !id.is_empty() {
-                    calls[index].id = id.to_string();
+            "content_block_delta" => {
+                if json.pointer("/delta/type").and_then(|v| v.as_str()) != Some("input_json_delta")
+                {
+                    return;
+                }
+                if let (Some(part), Some(last)) = (
+                    json.pointer("/delta/partial_json").and_then(|v| v.as_str()),
+                    calls.last_mut(),
+                ) {
+                    last.arguments.push_str(part);
                 }
             }
-            if let Some(func) = c.get("function") {
-                if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
-                    if !name.is_empty() {
-                        calls[index].name = name.to_string();
-                    }
-                }
-                if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
-                    calls[index].arguments.push_str(args);
-                }
+            _ => {}
+        }
+        return;
+    }
+
+    let Some(list) = json
+        .pointer("/choices/0/delta/tool_calls")
+        .and_then(|v| v.as_array())
+    else {
+        return;
+    };
+    for c in list {
+        let index = c.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        while calls.len() <= index {
+            calls.push(ToolCall {
+                id: String::new(),
+                name: String::new(),
+                arguments: String::new(),
+            });
+        }
+        if let Some(id) = c.get("id").and_then(|v| v.as_str()) {
+            if !id.is_empty() {
+                calls[index].id = id.to_string();
             }
         }
+        if let Some(func) = c.get("function") {
+            if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                if !name.is_empty() {
+                    calls[index].name = name.to_string();
+                }
+            }
+            if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                calls[index].arguments.push_str(args);
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -502,12 +549,24 @@ fn fetch_models(p: &Provider) -> Result<Vec<String>, String> {
     }
     let url = endpoint(p, "models");
     let rb = auth_headers(client()?.get(&url), p);
-    let resp = rb.send().map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
+    let resp = rb
+        .send()
+        .map_err(|e| format!("Gagal menghubungi provider: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("Endpoint model mengembalikan HTTP {}", resp.status().as_u16()));
+        return Err(format!(
+            "Endpoint model mengembalikan HTTP {}",
+            resp.status().as_u16()
+        ));
     }
-    let parsed: ModelsResp = resp.json().map_err(|e| format!("Balasan model tidak dikenali: {e}"))?;
-    Ok(parsed.data.into_iter().map(|m| m.id).filter(|s| !s.is_empty()).collect())
+    let parsed: ModelsResp = resp
+        .json()
+        .map_err(|e| format!("Balasan model tidak dikenali: {e}"))?;
+    Ok(parsed
+        .data
+        .into_iter()
+        .map(|m| m.id)
+        .filter(|s| !s.is_empty())
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -750,7 +809,9 @@ fn window_from_family(model: &str) -> Option<usize> {
 /// UI ngelag. Sekarang yang dipakai adalah daftar yang sudah tersimpan di DB
 /// (diisi sekali lewat `refresh_models` / tombol manual).
 pub fn list_models(p: &Provider) -> Result<Vec<String>, String> {
-    let mut ids: Vec<String> = p.models.iter()
+    let mut ids: Vec<String> = p
+        .models
+        .iter()
         .cloned()
         .filter(|s| !s.trim().is_empty())
         .collect();
@@ -864,24 +925,34 @@ mod tests {
         assert!(is_context_error(
             "Provider mengembalikan HTTP 400. {\"error\":\"context_length_exceeded\"}"
         ));
-        assert!(is_context_error("This model's maximum context length is 8192 tokens"));
+        assert!(is_context_error(
+            "This model's maximum context length is 8192 tokens"
+        ));
         assert!(!is_context_error("API key ditolak provider (HTTP 401)"));
     }
 
     #[test]
     fn openai_tool_call_fragments_are_merged() {
         let mut calls = Vec::new();
-        collect_tool_calls(&mut calls, false, &json!({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": 0, "id": "call_1", "type": "function",
-                "function": {"name": "run_command", "arguments": "{\"comm"}
-            }]}}]
-        }));
-        collect_tool_calls(&mut calls, false, &json!({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": 0, "function": {"arguments": "and\":\"uname -a\"}"}
-            }]}}]
-        }));
+        collect_tool_calls(
+            &mut calls,
+            false,
+            &json!({
+                "choices": [{"delta": {"tool_calls": [{
+                    "index": 0, "id": "call_1", "type": "function",
+                    "function": {"name": "run_command", "arguments": "{\"comm"}
+                }]}}]
+            }),
+        );
+        collect_tool_calls(
+            &mut calls,
+            false,
+            &json!({
+                "choices": [{"delta": {"tool_calls": [{
+                    "index": 0, "function": {"arguments": "and\":\"uname -a\"}"}
+                }]}}]
+            }),
+        );
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "run_command");
@@ -891,16 +962,24 @@ mod tests {
     #[test]
     fn anthropic_tool_call_fragments_are_merged() {
         let mut calls = Vec::new();
-        collect_tool_calls(&mut calls, true, &json!({
-            "type": "content_block_start",
-            "content_block": {"type": "tool_use", "id": "toolu_1",
-                              "name": "run_command", "input": {}}
-        }));
-        collect_tool_calls(&mut calls, true, &json!({
-            "type": "content_block_delta",
-            "delta": {"type": "input_json_delta",
-                      "partial_json": "{\"command\":\"cat /etc/os-release\"}"}
-        }));
+        collect_tool_calls(
+            &mut calls,
+            true,
+            &json!({
+                "type": "content_block_start",
+                "content_block": {"type": "tool_use", "id": "toolu_1",
+                                  "name": "run_command", "input": {}}
+            }),
+        );
+        collect_tool_calls(
+            &mut calls,
+            true,
+            &json!({
+                "type": "content_block_delta",
+                "delta": {"type": "input_json_delta",
+                          "partial_json": "{\"command\":\"cat /etc/os-release\"}"}
+            }),
+        );
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "toolu_1");
         assert_eq!(calls[0].arguments, r#"{"command":"cat /etc/os-release"}"#);

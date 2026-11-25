@@ -41,6 +41,14 @@ pub const DEFAULT_CHAT_TIMEOUT_SECS: u64 = 900;
 pub const CHAT_TIMEOUT_MIN: u64 = 60;
 pub const CHAT_TIMEOUT_MAX: u64 = 7200;
 
+/// Batas waktu satu **perintah PowerShell** (detik), baik lewat `run_command`
+/// maupun tab Terminal. M7 sengaja membiarkannya `None` (hanya Stop manual);
+/// M8 mengikatnya ke setelan supaya perintah yang menggantung berhenti sendiri
+/// dengan pesan "(timeout)" yang jelas, bukan menunggu pengguna menekan Stop.
+pub const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
+pub const TOOL_TIMEOUT_MIN: u64 = 10;
+pub const TOOL_TIMEOUT_MAX: u64 = 3600;
+
 /// Workspace bawaan: path platform aktif kalau sudah diketahui.
 ///
 /// Kalau `paths::init` belum dipanggil (mis. unit test), tebakan diambil dari
@@ -74,6 +82,10 @@ pub fn defaults() -> HashMap<&'static str, String> {
         ("font_size", "medium".to_string()),
         ("auto_scroll", "true".to_string()),
         ("notifications", "true".to_string()),
+        // Tutup jendela = sembunyikan ke tray, agent tetap bisa dipakai.
+        // Default mati: pengguna Windows mengharapkan tombol X benar-benar
+        // menutup aplikasi, dan aplikasi yang "tidak mau mati" itu menjengkelkan.
+        ("background_run", "false".to_string()),
         ("workspace_path", workspace_default()),
         ("streaming", "true".to_string()),
         ("max_tool_rounds", "40".to_string()),
@@ -86,6 +98,7 @@ pub fn defaults() -> HashMap<&'static str, String> {
         ("tool_output_chars", "4000".to_string()),
         ("chat_timeout_secs", "900".to_string()),
         ("context_auto", "true".to_string()),
+        ("tool_timeout_secs", "120".to_string()),
     ])
 }
 
@@ -104,9 +117,11 @@ pub fn set(key: &str, value: &str) -> Result<(), String> {
 /// Ambil satu nilai tersimpan (bukan default). `None` kalau belum ada.
 pub fn get(key: &str) -> Option<String> {
     db::with(|c| {
-        c.query_row("SELECT value FROM settings WHERE key = ?1", params![key], |r| {
-            r.get::<_, String>(0)
-        })
+        c.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |r| r.get::<_, String>(0),
+        )
         .map_err(|e| e.to_string())
     })
     .ok()
@@ -166,6 +181,14 @@ pub fn chat_timeout_secs() -> u64 {
         .unwrap_or(DEFAULT_CHAT_TIMEOUT_SECS)
 }
 
+/// Batas waktu satu perintah PowerShell, sudah dijepit (detik).
+pub fn tool_timeout_secs() -> u64 {
+    get("tool_timeout_secs")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|n| n.clamp(TOOL_TIMEOUT_MIN, TOOL_TIMEOUT_MAX))
+        .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
+}
+
 /// Batas karakter output tool per perintah, sudah dijepit.
 pub fn tool_output_chars() -> usize {
     get("tool_output_chars")
@@ -174,17 +197,51 @@ pub fn tool_output_chars() -> usize {
         .unwrap_or(DEFAULT_TOOL_OUTPUT_CHARS)
 }
 
+/// Pembaca boolean bersama.
+///
+/// Aturannya sama dengan `auto_summary` di atas: **hanya** string `"false"`
+/// yang berarti mati; nilai lain (termasuk kosong atau sampah) dianggap hidup
+/// sesuai `default`. Dengan begitu setelan lama yang tidak punya kunci ini
+/// tidak tiba-tiba mematikan fitur.
+fn bool_of(key: &str, default: bool) -> bool {
+    match get(key) {
+        Some(v) => v.trim() != "false",
+        None => default,
+    }
+}
+
+/// Gulir otomatis ke pesan terbaru saat streaming (default aktif).
+pub fn auto_scroll() -> bool {
+    bool_of("auto_scroll", true)
+}
+
+/// Notifikasi sistem saat balasan selesai dan jendela tidak fokus (default aktif).
+pub fn notifications() -> bool {
+    bool_of("notifications", true)
+}
+
+/// Jalan di latar belakang: tutup jendela → tray, agent tetap hidup.
+/// Default **mati** — lihat komentar di [`defaults`].
+pub fn background_run() -> bool {
+    bool_of("background_run", false)
+}
+
 /// Semua preferensi (default ditimpa nilai tersimpan) sebagai JSON.
 pub fn all_json() -> Result<String, String> {
     let stored = db::with(|c| {
-        let mut stmt = c.prepare("SELECT key, value FROM settings").map_err(|e| e.to_string())?;
+        let mut stmt = c
+            .prepare("SELECT key, value FROM settings")
+            .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<HashMap<String, String>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<HashMap<String, String>, _>>()
+            .map_err(|e| e.to_string())
     })?;
-    let mut merged: HashMap<String, String> =
-        defaults().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    let mut merged: HashMap<String, String> = defaults()
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
     merged.extend(stored);
     serde_json::to_string(&merged).map_err(|e| e.to_string())
 }
@@ -213,7 +270,10 @@ mod tests {
         let w = workspace_default();
         if cfg!(windows) {
             assert!(!w.contains("/root/storage"), "workspace Windows: {w}");
-            assert!(w.to_lowercase().contains("arkaagent"), "workspace Windows: {w}");
+            assert!(
+                w.to_lowercase().contains("arkaagent"),
+                "workspace Windows: {w}"
+            );
         } else {
             assert_eq!(w, DEFAULT_WORKSPACE);
         }
@@ -229,7 +289,20 @@ mod tests {
         assert_eq!(d.get("tool_output_chars").map(String::as_str), Some("4000"));
         assert_eq!(d.get("chat_timeout_secs").map(String::as_str), Some("900"));
         assert_eq!(d.get("context_auto").map(String::as_str), Some("true"));
+        assert_eq!(d.get("tool_timeout_secs").map(String::as_str), Some("120"));
         assert!(!d.get("workspace_path").unwrap().is_empty());
+    }
+
+    #[test]
+    fn background_run_default_is_off() {
+        // Tanpa DB: default mati, jadi aplikasi tidak "menolak ditutup".
+        assert!(!background_run());
+        assert!(auto_scroll());
+        assert!(notifications());
+        assert_eq!(
+            defaults().get("background_run").map(String::as_str),
+            Some("false")
+        );
     }
 
     #[test]
@@ -239,5 +312,6 @@ mod tests {
         assert_eq!(tool_output_chars(), DEFAULT_TOOL_OUTPUT_CHARS);
         assert_eq!(chat_timeout_secs(), DEFAULT_CHAT_TIMEOUT_SECS);
         assert!(context_auto());
+        assert_eq!(tool_timeout_secs(), DEFAULT_TOOL_TIMEOUT_SECS);
     }
 }

@@ -62,7 +62,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 
 // ── Kepala & breadcrumb ─────────────────────────────────────────────────────
 
-fn header(ui: &mut Ui, state: &mut AppState, colors: &ClayColors, root: &std::path::Path, dir: &str) {
+fn header(
+    ui: &mut Ui,
+    state: &mut AppState,
+    colors: &ClayColors,
+    root: &std::path::Path,
+    dir: &str,
+) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(state.tr("Workspace", "Workspace", "ワークスペース"))
@@ -141,9 +147,11 @@ fn crumbs(ui: &mut Ui, state: &mut AppState, colors: &ClayColors, dir: &str) {
                 c.label.clone()
             };
             let last = i + 1 == breadcrumb(dir).len();
-            let text = RichText::new(label)
-                .size(fs(ui, 13.0))
-                .color(if last { colors.on_surface } else { colors.accent });
+            let text = RichText::new(label).size(fs(ui, 13.0)).color(if last {
+                colors.on_surface
+            } else {
+                colors.accent
+            });
             // Segmen terakhir tidak perlu diklik (sudah di sana).
             if last {
                 ui.label(text.strong());
@@ -276,20 +284,22 @@ fn list(ui: &mut Ui, state: &mut AppState, colors: &ClayColors, root: &std::path
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .add(egui::Button::new(
-                                    RichText::new("\u{1F5D1}").size(fs(ui, 13.0)),
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("\u{1F5D1}").size(fs(ui, 13.0)),
+                                    )
+                                    .frame(false),
                                 )
-                                .frame(false))
                                 .on_hover_text(state.tr("Hapus", "Delete", "削除"))
                                 .clicked()
                             {
                                 ask_trash = Some(e.clone());
                             }
                             if ui
-                                .add(egui::Button::new(
-                                    RichText::new("\u{270F}").size(fs(ui, 13.0)),
+                                .add(
+                                    egui::Button::new(RichText::new("\u{270F}").size(fs(ui, 13.0)))
+                                        .frame(false),
                                 )
-                                .frame(false))
                                 .on_hover_text(state.tr("Ubah nama", "Rename", "名前変更"))
                                 .clicked()
                             {
@@ -407,7 +417,11 @@ pub fn import_now(state: &mut AppState, paths: &[PathBuf]) -> usize {
         (n, None) => state.notify(format!(
             "{} {} {}",
             n,
-            state.tr("berkas diimpor ke", "file(s) imported to", "件をインポート:"),
+            state.tr(
+                "berkas diimpor ke",
+                "file(s) imported to",
+                "件をインポート:"
+            ),
             if dir.is_empty() {
                 state.tr("akar workspace", "workspace root", "ワークスペースのルート")
             } else {
@@ -467,9 +481,15 @@ fn import_picker(ctx: &egui::Context, state: &mut AppState, colors: &ClayColors)
                         .unwrap_or_default();
                     entries.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
                     for (name, path, is_dir) in entries {
-                        let label = format!("{} {name}", icon(if is_dir { "dir" } else { "text" }, is_dir));
+                        let label = format!(
+                            "{} {name}",
+                            icon(if is_dir { "dir" } else { "text" }, is_dir)
+                        );
                         if ui
-                            .add(egui::Label::new(RichText::new(label).size(fs(ui, 13.0))).sense(egui::Sense::click()))
+                            .add(
+                                egui::Label::new(RichText::new(label).size(fs(ui, 13.0)))
+                                    .sense(egui::Sense::click()),
+                            )
                             .clicked()
                         {
                             if is_dir {
@@ -607,19 +627,19 @@ fn new_folder_dialog(
             ui.add_space(theme::SP_SM);
             ui.horizontal(|ui| {
                 let valid = !draft.trim().is_empty();
-                if widgets::clay_button(
-                    ui,
-                    colors,
-                    &state.tr("Buat", "Create", "作成"),
-                    valid,
-                )
-                .clicked()
+                if widgets::clay_button(ui, colors, &state.tr("Buat", "Create", "作成"), valid)
+                    .clicked()
                     && valid
                 {
                     create = true;
                 }
-                if widgets::clay_button(ui, colors, &state.tr("Batal", "Cancel", "キャンセル"), true)
-                    .clicked()
+                if widgets::clay_button(
+                    ui,
+                    colors,
+                    &state.tr("Batal", "Cancel", "キャンセル"),
+                    true,
+                )
+                .clicked()
                 {
                     open = false;
                 }
@@ -890,10 +910,26 @@ fn kind_label_en(kind: &str) -> String {
     label(kind, "Folder", "Text", "Image", "Video", "PDF", "Binary")
 }
 fn kind_label_ja(kind: &str) -> String {
-    label(kind, "フォルダー", "テキスト", "画像", "動画", "PDF", "バイナリ")
+    label(
+        kind,
+        "フォルダー",
+        "テキスト",
+        "画像",
+        "動画",
+        "PDF",
+        "バイナリ",
+    )
 }
 
-fn label(kind: &str, dir: &str, text: &str, image: &str, video: &str, pdf: &str, binary: &str) -> String {
+fn label(
+    kind: &str,
+    dir: &str,
+    text: &str,
+    image: &str,
+    video: &str,
+    pdf: &str,
+    binary: &str,
+) -> String {
     match kind {
         "dir" => dir,
         "text" => text,

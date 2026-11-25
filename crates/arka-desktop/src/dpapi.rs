@@ -210,10 +210,18 @@ mod tests {
     #[test]
     fn nilai_tersimpan_bukan_plaintext_dan_bolak_balik_utuh() {
         let s = store();
-        for key in ["sk-abc123", "  spasi di tepi  ", "🔑 emoji", "kunci-panjang-".repeat(20).as_str()] {
+        for key in [
+            "sk-abc123",
+            "  spasi di tepi  ",
+            "🔑 emoji",
+            "kunci-panjang-".repeat(20).as_str(),
+        ] {
             let stored = s.protect(key).unwrap();
             assert!(stored.starts_with(DPAPI_PREFIX), "prefix hilang: {stored}");
-            assert!(!stored.contains(key), "nilai asli masih terbaca di {stored}");
+            assert!(
+                !stored.contains(key),
+                "nilai asli masih terbaca di {stored}"
+            );
             // Bukan sekadar prefix: isinya base64 yang sah.
             let b64 = stored.strip_prefix(DPAPI_PREFIX).unwrap();
             assert!(B64.decode(b64).is_ok(), "bukan base64: {b64}");
@@ -225,13 +233,19 @@ mod tests {
     fn kunci_kosong_tetap_kosong_tanpa_prefix() {
         let s = store();
         assert_eq!(s.protect("").unwrap(), "");
-        assert!(s.protect("").unwrap().is_empty(), "kolom kosong harus tetap kosong");
+        assert!(
+            s.protect("").unwrap().is_empty(),
+            "kolom kosong harus tetap kosong"
+        );
     }
 
     #[test]
     fn plaintext_lama_dikembalikan_apa_adanya() {
         let s = store();
-        assert_eq!(s.unprotect("sk-lama-plaintext").unwrap(), "sk-lama-plaintext");
+        assert_eq!(
+            s.unprotect("sk-lama-plaintext").unwrap(),
+            "sk-lama-plaintext"
+        );
         assert!(!s.owns("sk-lama-plaintext"));
         assert!(s.owns(&s.protect("sk").unwrap()));
     }
@@ -244,7 +258,10 @@ mod tests {
         // Prefix sah, isi sah secara base64, tetapi protector menolak.
         let broken = DpapiSecretStore::new(BrokenProtector);
         let err = broken.unprotect("dpapi:AAAA").unwrap_err();
-        assert!(err.contains("tidak bisa dibuka"), "pesan tidak jelas: {err}");
+        assert!(
+            err.contains("tidak bisa dibuka"),
+            "pesan tidak jelas: {err}"
+        );
         let err = broken.protect("sk").unwrap_err();
         assert!(err.contains("gagal"), "pesan tidak jelas: {err}");
     }
@@ -267,7 +284,11 @@ mod tests {
             let stored = s.protect(key).unwrap();
             assert!(stored.starts_with(DPAPI_PREFIX), "prefix hilang: {stored}");
             assert!(!stored.contains(key), "nilai asli masih terbaca: {stored}");
-            assert_eq!(s.unprotect(&stored).unwrap(), key, "bolak-balik DPAPI gagal");
+            assert_eq!(
+                s.unprotect(&stored).unwrap(),
+                key,
+                "bolak-balik DPAPI gagal"
+            );
         }
         // Dua kali enkripsi menghasilkan ciphertext berbeda (salt acak DPAPI);
         // keduanya tetap bisa dibuka ke nilai yang sama.

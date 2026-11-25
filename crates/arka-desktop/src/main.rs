@@ -11,24 +11,42 @@
 //! arka-agent --prepare             buat workspace + penanda
 //! arka-agent --exec "<perintah>"   jalankan perintah PowerShell di workspace
 //! arka-agent --print-script "<p>"  naskah + base64, tanpa eksekusi (dry run)
+//! arka-agent --open "<file>"       pratinjau berkas di jendela yang sudah ada
 //! arka-agent --selftest            bukti perilaku (UTF-8, exit code, Stop)
 //! ```
 
+mod desk_notify;
 mod dpapi;
 mod encode;
 mod gui;
-mod pump;
+mod keepawake;
 mod platform;
 mod preview;
+mod pump;
 mod pwsh;
 mod script;
 mod selftest;
+mod single;
 mod sys;
+mod sysinfo;
+mod tray;
 
 use arka_core::events::Events;
 use arka_core::shell;
 use arka_core::{paths, secret};
 use std::sync::atomic::AtomicBool;
+
+/// Hash commit saat build, untuk tab Tentang & laporan bug.
+///
+/// Diambil dari `ARKA_GIT_COMMIT` yang disuntikkan `build.rs` (hash `git
+/// rev-parse`) atau CI. Build tanpa git menghasilkan string kosong, dan itu
+/// ditampilkan sebagai "tidak diketahui" — bukan angka palsu.
+pub fn build_commit() -> &'static str {
+    match option_env!("ARKA_GIT_COMMIT") {
+        Some(s) if !s.is_empty() => s,
+        _ => "tidak diketahui",
+    }
+}
 
 /// Events untuk CLI: progres & output ditulis apa adanya ke terminal.
 struct CliEvents;
@@ -60,6 +78,12 @@ impl Events for CliEvents {
 /// Daftarkan folder aplikasi. Tidak menyentuh PowerShell, jadi aman dipanggil
 /// di OS apa pun — dipakai juga saat mengembangkan UI di Linux (Xvfb).
 fn bootstrap_paths() -> Result<(), String> {
+    // Idempoten: `main` sekarang memanggilnya lebih awal untuk menulis
+    // `pending-open.txt`, sebelum `run_ui` mendaftarkan path yang sama.
+    // `paths::init` memakai OnceLock, jadi panggilan kedua harus diterima.
+    if paths::get().is_ok() {
+        return Ok(());
+    }
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map(std::path::PathBuf::from)
@@ -182,6 +206,7 @@ fn print_help() {
             "  --prepare            siapkan folder workspace",
             "  --exec \"<perintah>\"   jalankan perintah di workspace",
             "  --print-script \"<p>\" tampilkan naskah PowerShell + base64 (tanpa eksekusi)",
+            "  --open \"<file>\"       pratinjau berkas (diteruskan ke jendela yang sudah berjalan)",
             "  --selftest           uji perilaku: UTF-8, exit code, Stop mematikan pohon proses",
         ]
         .join("\n")
@@ -220,6 +245,12 @@ fn run(args: &[String]) -> i32 {
             0
         }
         "--print-script" => print_script(args.get(1)),
+        // Sudah dipisah `single::parse_args`; sampai ke sini berarti
+        // `--open` tanpa nilai (atau nilainya ikut jadi flag lain).
+        "--open" => {
+            eprintln!("--open butuh satu argumen path berkas");
+            2
+        }
         "--status" | "--diagnostic" | "--prepare" | "--exec" | "--selftest" => {
             if let Err(e) = bootstrap() {
                 eprintln!("{e}");
@@ -296,8 +327,55 @@ fn run(args: &[String]) -> i32 {
     }
 }
 
+/// Titipkan permintaan pratinjau ke folder data instance pertama.
+///
+/// `bootstrap_paths` aman dipanggil dua kali (lihat komentar di sana), jadi
+/// baik instance kedua maupun primary bisa memakai jalur yang sama.
+fn titipkan_berkas(path: &std::path::Path) -> Result<(), String> {
+    bootstrap_paths()?;
+    let dir = paths::data_dir()?;
+    single::write_pending(&dir, path)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let code = run(&args);
-    std::process::exit(code);
+    let launch = single::parse_args(&args);
+
+    // Mode CLI = masih ada argumen selain `--open`. Smoke test CI (--status,
+    // --exec, --selftest) sengaja tidak terikat single-instance supaya bisa
+    // berjalan berdampingan dengan UI tanpa membuka jendela kedua.
+    if !launch.rest.is_empty() {
+        if launch.open.is_some() {
+            eprintln!("peringatan: --open hanya berlaku saat membuka jendela UI");
+        }
+        std::process::exit(run(&launch.rest));
+    }
+
+    // Satu instance: proses kedua tidak boleh membuka jendela lagi.
+    if matches!(single::claim(), single::Instance::Secondary) {
+        if let Some(path) = &launch.open {
+            if let Err(e) = titipkan_berkas(path) {
+                eprintln!("tidak bisa meneruskan berkas: {e}");
+            }
+        }
+        println!("Arka Agent sudah berjalan.");
+        std::process::exit(0);
+    }
+
+    // Toast WinRT butuh AUMID terdaftar SEBELUM notifikasi pertama. Tanpa ini
+    // Windows menamai toast itu "Windows PowerShell", bukan "Arka Agent".
+    if let desk_notify::Registered::Failed(e) = desk_notify::register_app_id() {
+        eprintln!("peringatan: AppUserModelID gagal didaftarkan: {e}");
+    }
+
+    // `--open` pada instance pertama memakai jalur yang sama dengan instance
+    // kedua, supaya pratinjau tetap melewati guard path workspace yang ada di
+    // `ArkaGui::poll_pending` (bukan langsung memuat path sembarangan).
+    if let Some(path) = &launch.open {
+        if let Err(e) = titipkan_berkas(path) {
+            eprintln!("peringatan: --open tidak bisa disiapkan: {e}");
+        }
+    }
+
+    std::process::exit(run(&launch.rest));
 }

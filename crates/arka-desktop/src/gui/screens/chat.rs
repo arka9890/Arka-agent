@@ -92,7 +92,8 @@ fn header(ui: &mut Ui, state: &mut AppState, colors: &ClayColors, action: &mut A
                 &state.tr("menjawab…", "answering…", "応答中…"),
                 colors.accent,
             );
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(120));
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -154,7 +155,10 @@ fn model_picker(ui: &mut Ui, state: &mut AppState, colors: &ClayColors, action: 
                             continue;
                         }
                         if ui
-                            .selectable_label(state.chat.model == *m, RichText::new(m).size(fs(ui, 13.0)))
+                            .selectable_label(
+                                state.chat.model == *m,
+                                RichText::new(m).size(fs(ui, 13.0)),
+                            )
                             .clicked()
                         {
                             *action = Action::SetModel(m.clone());
@@ -214,7 +218,8 @@ fn messages(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
             if running(state) {
                 let text = state.chat.streaming.clone();
                 bubble::streaming(ui, colors, &text);
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(120));
             }
         });
 
@@ -310,7 +315,11 @@ fn input_bar(ui: &mut Ui, state: &mut AppState, colors: &ClayColors, action: &mu
         ui.horizontal(|ui| {
             let mut auto = state.chat.auto_scroll;
             if ui
-                .checkbox(&mut auto, RichText::new(state.tr("Ikuti bawah", "Auto-scroll", "自動スクロール")).size(fs(ui, 11.5)))
+                .checkbox(
+                    &mut auto,
+                    RichText::new(state.tr("Ikuti bawah", "Auto-scroll", "自動スクロール"))
+                        .size(fs(ui, 11.5)),
+                )
                 .changed()
             {
                 *action = Action::ToggleAutoScroll;
@@ -356,9 +365,21 @@ fn empty_state(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
         });
 
         let samples = [
-            state.tr("Cek versi Python", "Check Python version", "Python のバージョンを確認"),
-            state.tr("Daftar isi folder kerja", "List workspace files", "ワークスペースの一覧"),
-            state.tr("Lihat penggunaan disk", "Show disk usage", "ディスク使用量を表示"),
+            state.tr(
+                "Cek versi Python",
+                "Check Python version",
+                "Python のバージョンを確認",
+            ),
+            state.tr(
+                "Daftar isi folder kerja",
+                "List workspace files",
+                "ワークスペースの一覧",
+            ),
+            state.tr(
+                "Lihat penggunaan disk",
+                "Show disk usage",
+                "ディスク使用量を表示",
+            ),
         ];
         ui.horizontal_wrapped(|ui| {
             for s in samples {
@@ -424,7 +445,10 @@ pub fn send(state: &mut AppState, ctx: &egui::Context) {
         }
         if let Ok(content) = std::fs::read_to_string(&a.path) {
             let cuplikan: String = content.chars().take(20_000).collect();
-            file_ctx.push_str(&format!("\n\nIsi file `{}`:\n```\n{}\n```", a.name, cuplikan));
+            file_ctx.push_str(&format!(
+                "\n\nIsi file `{}`:\n```\n{}\n```",
+                a.name, cuplikan
+            ));
         }
     }
     if !file_ctx.is_empty() {

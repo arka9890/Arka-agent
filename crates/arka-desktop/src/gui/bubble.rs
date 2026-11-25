@@ -148,16 +148,13 @@ fn markdown_body(ui: &mut Ui, colors: &ClayColors, text: &str) {
                 }
                 markdown::code_frame(ui, bg, |ui| {
                     ui.set_max_width(ui.available_width());
-                    ui.label(
-                        RichText::new(&body)
-                            .size(fs(ui, 13.0))
-                            .monospace()
-                            .color(if ui.visuals().dark_mode {
-                                Color32::from_rgb(0xE6, 0xE6, 0xF0)
-                            } else {
-                                colors.on_surface
-                            }),
-                    );
+                    ui.label(RichText::new(&body).size(fs(ui, 13.0)).monospace().color(
+                        if ui.visuals().dark_mode {
+                            Color32::from_rgb(0xE6, 0xE6, 0xF0)
+                        } else {
+                            colors.on_surface
+                        },
+                    ));
                 });
                 ui.add_space(theme::SP_XS);
             }
@@ -173,7 +170,11 @@ fn footer(ui: &mut Ui, colors: &ClayColors, m: &MsgView, on_accent: bool) {
         colors.muted
     };
     ui.horizontal(|ui| {
-        ui.label(RichText::new(time_label(m.created_at)).size(fs(ui, 10.5)).color(dim));
+        ui.label(
+            RichText::new(time_label(m.created_at))
+                .size(fs(ui, 10.5))
+                .color(dim),
+        );
         for a in &m.attachments {
             ui.label(
                 RichText::new(format!("\u{1F4C4} {a}"))
@@ -260,13 +261,19 @@ pub fn typing(ui: &mut Ui, colors: &ClayColors) {
         for i in 0..3 {
             let on = phase % 3 == i;
             let r = if on { 3.4 } else { 2.2 } * theme::scale_of(ui.ctx());
-            let (rect, _) =
-                ui.allocate_exact_size(egui::Vec2::splat(8.0 * theme::scale_of(ui.ctx())), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(
+                egui::Vec2::splat(8.0 * theme::scale_of(ui.ctx())),
+                egui::Sense::hover(),
+            );
             let center = rect.center();
             ui.painter().circle_filled(
                 center,
                 r,
-                if on { colors.accent } else { colors.muted.gamma_multiply(0.5) },
+                if on {
+                    colors.accent
+                } else {
+                    colors.muted.gamma_multiply(0.5)
+                },
             );
         }
     });

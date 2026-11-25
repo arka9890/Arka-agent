@@ -333,7 +333,12 @@ mod tests {
     use super::*;
 
     fn rendered(platform: Platform) -> String {
-        system_prompt(platform, r"C:\Users\arka\ArkaAgent\workspace", r"C:\Users\arka\.claude\skills", r"C:\Users\arka\.config")
+        system_prompt(
+            platform,
+            r"C:\Users\arka\ArkaAgent\workspace",
+            r"C:\Users\arka\.claude\skills",
+            r"C:\Users\arka\.config",
+        )
     }
 
     #[test]

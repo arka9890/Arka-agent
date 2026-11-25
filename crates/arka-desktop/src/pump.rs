@@ -94,7 +94,10 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { max_chars: 40_000, timeout: None }
+        Self {
+            max_chars: 40_000,
+            timeout: None,
+        }
     }
 }
 
@@ -181,9 +184,13 @@ pub fn collect(
 
     loop {
         match rx.recv_timeout(TICK) {
-            Ok(chunk) => {
-                absorb(&chunk, &mut result.output, &mut result.truncated, limits.max_chars, on_chunk)
-            }
+            Ok(chunk) => absorb(
+                &chunk,
+                &mut result.output,
+                &mut result.truncated,
+                limits.max_chars,
+                on_chunk,
+            ),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -218,7 +225,13 @@ pub fn collect(
     // Sisa yang masuk di antara "disconnected" dan join.
     if !abandoned {
         while let Ok(chunk) = rx.try_recv() {
-            absorb(&chunk, &mut result.output, &mut result.truncated, limits.max_chars, on_chunk);
+            absorb(
+                &chunk,
+                &mut result.output,
+                &mut result.truncated,
+                limits.max_chars,
+                on_chunk,
+            );
         }
     }
     if result.truncated {
@@ -284,7 +297,13 @@ mod tests {
         ];
         let cancel = AtomicBool::new(false);
         let mut chunks = 0;
-        let out = collect(pipes, &cancel, Limits::default(), &mut |_| chunks += 1, &mut || {});
+        let out = collect(
+            pipes,
+            &cancel,
+            Limits::default(),
+            &mut |_| chunks += 1,
+            &mut || {},
+        );
         let _ = child.wait();
         assert!(out.output.contains("out"));
         assert!(out.output.contains("err"));
@@ -309,7 +328,10 @@ mod tests {
         let res = collect(
             vec![Box::new(out_pipe), Box::new(err_pipe)],
             &cancel,
-            Limits { max_chars: 10_000, timeout: None },
+            Limits {
+                max_chars: 10_000,
+                timeout: None,
+            },
             &mut |_| {},
             &mut || {
                 kills += 1;
@@ -321,7 +343,10 @@ mod tests {
         assert_eq!(kills, 1, "kill hanya sekali");
         assert!(res.output.contains("mulai"));
         assert!(!res.output.contains("selesai"));
-        assert!(started.elapsed() < Duration::from_secs(5), "tidak boleh menunggu sleep 10");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "tidak boleh menunggu sleep 10"
+        );
     }
 
     #[cfg(unix)]
@@ -337,7 +362,10 @@ mod tests {
         let res = collect(
             pipes,
             &cancel,
-            Limits { max_chars: 1000, timeout: Some(Duration::from_millis(150)) },
+            Limits {
+                max_chars: 1000,
+                timeout: Some(Duration::from_millis(150)),
+            },
             &mut |_| {},
             &mut || {
                 let _ = child.kill();
@@ -358,7 +386,10 @@ mod tests {
         let res = collect(
             pipes,
             &cancel,
-            Limits { max_chars: 4, timeout: None },
+            Limits {
+                max_chars: 4,
+                timeout: None,
+            },
             &mut |_| {},
             &mut || {},
         );

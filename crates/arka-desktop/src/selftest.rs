@@ -37,7 +37,11 @@ pub fn run(sh: &dyn Shell) -> i32 {
             passed: code == 0 && out.contains("halo dari PowerShell"),
             detail: format!("exit {code}: {}", out.trim()),
         }),
-        Err(e) => checks.push(Check { name: "perintah dasar", passed: false, detail: e }),
+        Err(e) => checks.push(Check {
+            name: "perintah dasar",
+            passed: false,
+            detail: e,
+        }),
     }
 
     // 2. UTF-8 utuh (emoji 4 byte + karakter non-Latin).
@@ -50,7 +54,11 @@ pub fn run(sh: &dyn Shell) -> i32 {
                 detail: format!("exit {code}: {}", out.trim()),
             });
         }
-        Err(e) => checks.push(Check { name: "UTF-8 utuh", passed: false, detail: e }),
+        Err(e) => checks.push(Check {
+            name: "UTF-8 utuh",
+            passed: false,
+            detail: e,
+        }),
     }
 
     // 3. Exit code program native tidak hilang (kriteria `git` gagal 128).
@@ -60,7 +68,11 @@ pub fn run(sh: &dyn Shell) -> i32 {
             passed: code == 42,
             detail: format!("exit {code}: {}", out.trim()),
         }),
-        Err(e) => checks.push(Check { name: "exit code native diteruskan", passed: false, detail: e }),
+        Err(e) => checks.push(Check {
+            name: "exit code native diteruskan",
+            passed: false,
+            detail: e,
+        }),
     }
 
     // 4. Stop mematikan pohon proses (anak + cucu).
@@ -107,7 +119,13 @@ Start-Sleep 120"#;
 
     let outcome = match outcome {
         Ok(o) => o,
-        Err(e) => return Check { name: "Stop mematikan pohon proses", passed: false, detail: e },
+        Err(e) => {
+            return Check {
+                name: "Stop mematikan pohon proses",
+                passed: false,
+                detail: e,
+            }
+        }
     };
     if !outcome.canceled {
         return Check {
@@ -123,15 +141,19 @@ Start-Sleep 120"#;
             detail: format!("terlalu lama: {elapsed:?}"),
         };
     }
-    let child_pid = outcome
-        .output
-        .lines()
-        .find_map(|l| l.trim().strip_prefix("CUCU=").and_then(|p| p.trim().parse::<u32>().ok()));
+    let child_pid = outcome.output.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("CUCU=")
+            .and_then(|p| p.trim().parse::<u32>().ok())
+    });
     let Some(pid) = child_pid else {
         return Check {
             name: "Stop mematikan pohon proses",
             passed: false,
-            detail: format!("pid cucu tidak terbaca dari output: {}", outcome.output.trim()),
+            detail: format!(
+                "pid cucu tidak terbaca dari output: {}",
+                outcome.output.trim()
+            ),
         };
     };
 

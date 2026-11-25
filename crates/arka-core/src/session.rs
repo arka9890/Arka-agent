@@ -58,7 +58,8 @@ pub fn list() -> Result<Vec<Session>, String> {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -84,11 +85,19 @@ pub fn get(id: &str) -> Result<Session, String> {
     })
 }
 
-pub fn create(title: &str, provider_id: Option<&str>, model: Option<&str>) -> Result<Session, String> {
+pub fn create(
+    title: &str,
+    provider_id: Option<&str>,
+    model: Option<&str>,
+) -> Result<Session, String> {
     let now = db::now_ms();
     let s = Session {
         id: uuid::Uuid::new_v4().to_string(),
-        title: if title.trim().is_empty() { "Sesi baru".to_string() } else { title.trim().to_string() },
+        title: if title.trim().is_empty() {
+            "Sesi baru".to_string()
+        } else {
+            title.trim().to_string()
+        },
         provider_id: provider_id.map(|v| v.to_string()),
         model: model.map(|v| v.to_string()),
         created_at: now,
@@ -99,7 +108,14 @@ pub fn create(title: &str, provider_id: Option<&str>, model: Option<&str>) -> Re
         c.execute(
             "INSERT INTO sessions (id, title, provider_id, model, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![s.id, s.title, s.provider_id, s.model, s.created_at, s.updated_at],
+            params![
+                s.id,
+                s.title,
+                s.provider_id,
+                s.model,
+                s.created_at,
+                s.updated_at
+            ],
         )
         .map_err(|e| e.to_string())
     })?;
@@ -113,7 +129,13 @@ pub fn rename(id: &str, title: &str) -> Result<(), String> {
             params![id, title.trim(), db::now_ms()],
         )
         .map_err(|e| e.to_string())
-        .and_then(|n| if n == 0 { Err("Sesi tidak ditemukan".into()) } else { Ok(()) })
+        .and_then(|n| {
+            if n == 0 {
+                Err("Sesi tidak ditemukan".into())
+            } else {
+                Ok(())
+            }
+        })
     })
 }
 
@@ -148,7 +170,8 @@ pub fn messages(session_id: &str) -> Result<Vec<Message>, String> {
                 })
             })
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -163,14 +186,25 @@ pub fn add_message(
         session_id: session_id.to_string(),
         role: role.to_string(),
         content: content.to_string(),
-        attachments: if attachments.is_empty() { "[]".into() } else { attachments.to_string() },
+        attachments: if attachments.is_empty() {
+            "[]".into()
+        } else {
+            attachments.to_string()
+        },
         created_at: db::now_ms(),
     };
     db::with(|c| {
         c.execute(
             "INSERT INTO messages (id, session_id, role, content, attachments, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![m.id, m.session_id, m.role, m.content, m.attachments, m.created_at],
+            params![
+                m.id,
+                m.session_id,
+                m.role,
+                m.content,
+                m.attachments,
+                m.created_at
+            ],
         )
         .map_err(|e| e.to_string())?;
         c.execute(
@@ -184,7 +218,14 @@ pub fn add_message(
 
 /// Ubah judul sesi otomatis dari pesan user pertama (dipotong 60 karakter).
 pub fn autotitle(session_id: &str, text: &str) -> Result<(), String> {
-    let title: String = text.trim().lines().next().unwrap_or("").chars().take(60).collect();
+    let title: String = text
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(60)
+        .collect();
     if title.is_empty() {
         return Ok(());
     }
@@ -205,13 +246,27 @@ pub fn set_model(session_id: &str, provider_id: &str, model: &str) -> Result<(),
             "UPDATE sessions SET provider_id = ?2, model = ?3, updated_at = ?4 WHERE id = ?1",
             params![
                 session_id,
-                if provider_id.trim().is_empty() { None } else { Some(provider_id) },
-                if model.trim().is_empty() { None } else { Some(model) },
+                if provider_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(provider_id)
+                },
+                if model.trim().is_empty() {
+                    None
+                } else {
+                    Some(model)
+                },
                 db::now_ms()
             ],
         )
         .map_err(|e| e.to_string())
-        .and_then(|n| if n == 0 { Err("Sesi tidak ditemukan".into()) } else { Ok(()) })
+        .and_then(|n| {
+            if n == 0 {
+                Err("Sesi tidak ditemukan".into())
+            } else {
+                Ok(())
+            }
+        })
     })
 }
 
@@ -242,4 +297,3 @@ pub fn set_memory(session_id: &str, summary: &str, upto: i64) -> Result<(), Stri
         .map(|_| ())
     })
 }
-

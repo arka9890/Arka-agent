@@ -44,7 +44,7 @@ pub fn estimate_tokens(text: &str) -> usize {
             || (0xAC00..=0xD7AF).contains(&cp)             // Hangul
             || (0xF900..=0xFAFF).contains(&cp)
             || (0xFF00..=0xFFEF).contains(&cp)
-            || (0x3000..=0x303F).contains(&cp);            // tanda baca CJK
+            || (0x3000..=0x303F).contains(&cp); // tanda baca CJK
         if is_wide {
             wide += 1;
         } else {
@@ -122,7 +122,11 @@ fn summary_prompt(previous: &str, transcript: &str) -> String {
          Percakapan baru yang perlu digabung ke ringkasan:\n{}\n\n\
          Tulis satu ringkasan gabungan yang ringkas. Jangan kehilangan detail \
          teknis yang masih relevan untuk melanjutkan pekerjaan.",
-        if previous.trim().is_empty() { "(belum ada)" } else { previous.trim() },
+        if previous.trim().is_empty() {
+            "(belum ada)"
+        } else {
+            previous.trim()
+        },
         transcript,
     )
 }
@@ -328,8 +332,9 @@ pub fn fit_tool_outputs(msgs: &mut [ChatMsg], budget: usize) {
         if msgs[i].role == "tool" {
             let n = msgs[i].content.chars().count();
             if n > 240 {
-                msgs[i].content =
-                    format!("(output perintah lama dipotong untuk menghemat konteks: {n} karakter)");
+                msgs[i].content = format!(
+                    "(output perintah lama dipotong untuk menghemat konteks: {n} karakter)"
+                );
             }
         } else if has_tool_result(&msgs[i]) {
             if let Some(blocks) = &mut msgs[i].blocks {
@@ -417,7 +422,9 @@ mod tests {
             tool("c"),
         ];
         fit_tool_outputs(&mut msgs, 2_000);
-        assert!(msgs[2].content.starts_with("(output perintah lama dipotong"));
+        assert!(msgs[2]
+            .content
+            .starts_with("(output perintah lama dipotong"));
         // Dua output terakhir tetap utuh supaya model bisa menganalisisnya.
         assert_eq!(msgs[3].content.len(), 20_000);
         assert_eq!(msgs[4].content.len(), 20_000);

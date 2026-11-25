@@ -49,7 +49,13 @@ impl Events for JniEvents<'_> {
     }
 
     fn tool(&self, label: &str, display: &str) {
-        ju::emit_str_str(&mut self.env.borrow_mut(), &self.cb, "onTool", label, display);
+        ju::emit_str_str(
+            &mut self.env.borrow_mut(),
+            &self.cb,
+            "onTool",
+            label,
+            display,
+        );
     }
 
     fn approval(&self, id: &str, action: &str, target: &str, detail: &str) {
@@ -76,7 +82,13 @@ impl Events for JniEvents<'_> {
     }
 
     fn progress(&self, percent: i32, label: &str) {
-        ju::emit_int_str(&mut self.env.borrow_mut(), &self.cb, "onProgress", percent, label);
+        ju::emit_int_str(
+            &mut self.env.borrow_mut(),
+            &self.cb,
+            "onProgress",
+            percent,
+            label,
+        );
     }
 
     fn output(&self, text: &str) {

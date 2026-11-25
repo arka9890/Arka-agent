@@ -210,10 +210,14 @@ fn list_ui(ui: &mut Ui, state: &AppState, colors: &ClayColors, action: &mut Acti
     if state.provider.rows.is_empty() {
         widgets::clay_card(ui, colors, None, |ui| {
             ui.label(
-                RichText::new(state.tr("Belum ada provider", "No providers yet", "プロバイダーがありません"))
-                    .size(fs(ui, 16.0))
-                    .strong()
-                    .color(colors.on_surface),
+                RichText::new(state.tr(
+                    "Belum ada provider",
+                    "No providers yet",
+                    "プロバイダーがありません",
+                ))
+                .size(fs(ui, 16.0))
+                .strong()
+                .color(colors.on_surface),
             );
             ui.add_space(theme::SP_XS);
             ui.label(
@@ -242,7 +246,11 @@ fn list_ui(ui: &mut Ui, state: &AppState, colors: &ClayColors, action: &mut Acti
                                     ui,
                                     colors,
                                     &row.name,
-                                    if row.is_default { colors.success } else { colors.accent },
+                                    if row.is_default {
+                                        colors.success
+                                    } else {
+                                        colors.accent
+                                    },
                                 )
                                 .clicked()
                                 {
@@ -321,7 +329,11 @@ fn list_ui(ui: &mut Ui, state: &AppState, colors: &ClayColors, action: &mut Acti
                                 widgets::clay_pill(
                                     ui,
                                     colors,
-                                    &state.tr("kunci tak terbaca", "key unreadable", "キー読み取り不可"),
+                                    &state.tr(
+                                        "kunci tak terbaca",
+                                        "key unreadable",
+                                        "キー読み取り不可",
+                                    ),
                                     colors.danger,
                                 );
                             } else if row.has_key {
@@ -372,7 +384,14 @@ fn form_ui(
         );
         ui.add_space(theme::SP_SM);
 
-        field(ui, colors, state.tr("Nama", "Name", "名前").as_str(), &mut form.name, false, None);
+        field(
+            ui,
+            colors,
+            state.tr("Nama", "Name", "名前").as_str(),
+            &mut form.name,
+            false,
+            None,
+        );
         ui.add_space(theme::SP_XS);
 
         ui.horizontal(|ui| {
@@ -436,13 +455,26 @@ fn form_ui(
         }
         ui.add_space(theme::SP_XS);
 
-        field(ui, colors, state.tr("Model utama", "Main model", "メインモデル").as_str(), &mut form.model, false, None);
+        field(
+            ui,
+            colors,
+            state
+                .tr("Model utama", "Main model", "メインモデル")
+                .as_str(),
+            &mut form.model,
+            false,
+            None,
+        );
         ui.add_space(theme::SP_XS);
 
         ui.horizontal(|ui| {
             let on = form.is_default;
             let teks = if on {
-                state.tr("default \u{2713}", "default \u{2713}", "デフォルト \u{2713}")
+                state.tr(
+                    "default \u{2713}",
+                    "default \u{2713}",
+                    "デフォルト \u{2713}",
+                )
             } else {
                 state.tr("jadikan default", "set as default", "デフォルトにする")
             };
@@ -472,7 +504,11 @@ fn form_ui(
                 && widgets::clay_pill_button(
                     ui,
                     colors,
-                    &state.tr("Cek model dari server", "Refresh model list", "モデル一覧を再取得"),
+                    &state.tr(
+                        "Cek model dari server",
+                        "Refresh model list",
+                        "モデル一覧を再取得",
+                    ),
                     colors.muted,
                 )
                 .clicked()
@@ -488,7 +524,11 @@ fn form_ui(
         widgets::section(
             ui,
             colors,
-            &state.tr("Model tersedia (boleh pilih lebih dari satu)", "Available models (multiple choice)", "利用可能なモデル（複数選択可）"),
+            &state.tr(
+                "Model tersedia (boleh pilih lebih dari satu)",
+                "Available models (multiple choice)",
+                "利用可能なモデル（複数選択可）",
+            ),
         );
 
         let models = form.all_models();
@@ -537,7 +577,13 @@ fn form_ui(
             field(
                 ui,
                 colors,
-                state.tr("Tambah model manual", "Add a model manually", "モデルを手動で追加").as_str(),
+                state
+                    .tr(
+                        "Tambah model manual",
+                        "Add a model manually",
+                        "モデルを手動で追加",
+                    )
+                    .as_str(),
                 &mut form.manual_model,
                 false,
                 None,

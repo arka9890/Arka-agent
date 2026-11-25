@@ -33,9 +33,16 @@ use std::time::Duration;
 /// Satu eksekusi pada satu waktu (pola sama dengan `TOOL_LOCK` di Android).
 static EXEC_LOCK: Mutex<()> = Mutex::new(());
 
-/// Batas waktu bawaan untuk perintah lewat `run_command`.
-/// `None` = tanpa batas; agent tetap bisa dihentikan lewat tombol Stop.
-pub const DEFAULT_TIMEOUT: Option<Duration> = None;
+/// Batas waktu untuk perintah lewat `run_command`.
+///
+/// M7 membiarkannya `None` (hanya bisa dihentikan lewat Stop). M8 membacanya
+/// dari tabel `settings` (`tool_timeout_secs`, bawaan 120 detik) supaya
+/// perintah yang menggantung berhenti sendiri dengan pesan "(timeout)".
+/// Dipanggil **setiap eksekusi**, jadi perubahan di tab Setelan langsung
+/// berlaku tanpa restart.
+pub fn default_timeout() -> Option<Duration> {
+    Some(Duration::from_secs(arka_core::settings::tool_timeout_secs()))
+}
 
 /// Batas karakter output yang disimpan per eksekusi. Agent memotong lagi ke
 /// `tool_output_chars` (bawaan 4.000) sebelum dikirim ke model; angka ini
@@ -63,7 +70,11 @@ pub struct Detected {
 
 impl Detected {
     pub fn describe(&self) -> String {
-        let kind = if self.is_pwsh7 { "PowerShell 7" } else { "Windows PowerShell 5.1" };
+        let kind = if self.is_pwsh7 {
+            "PowerShell 7"
+        } else {
+            "Windows PowerShell 5.1"
+        };
         if self.version.is_empty() {
             format!("{kind} ({})", self.program.display())
         } else {
@@ -77,6 +88,11 @@ pub struct PwshShell {
     detected: Detected,
     workspace: PathBuf,
     limits: Limits,
+    /// `true` untuk instance yang didaftarkan ke `shell::init` di `main`:
+    /// workspace & batas waktu **dibaca ulang setiap eksekusi** dari
+    /// `paths`/`settings`, supaya perubahan di tab Setelan langsung berlaku
+    /// tanpa restart. `with()` (tes/CLI) memakai nilai yang diberikan apa adanya.
+    dynamic: bool,
 }
 
 impl PwshShell {
@@ -86,7 +102,11 @@ impl PwshShell {
         Ok(Self {
             detected: detect()?,
             workspace,
-            limits: Limits { max_chars: RAW_OUTPUT_CAP, timeout: DEFAULT_TIMEOUT },
+            limits: Limits {
+                max_chars: RAW_OUTPUT_CAP,
+                timeout: default_timeout(),
+            },
+            dynamic: true,
         })
     }
 
@@ -101,7 +121,21 @@ impl PwshShell {
             },
             workspace,
             limits,
+            dynamic: false,
         }
+    }
+
+    /// Workspace & batas waktu yang berlaku **saat ini**.
+    fn live(&self) -> (PathBuf, Limits) {
+        if !self.dynamic {
+            return (self.workspace.clone(), self.limits);
+        }
+        let ws = arka_core::paths::workspace().unwrap_or_else(|_| self.workspace.clone());
+        let limits = Limits {
+            max_chars: self.limits.max_chars,
+            timeout: default_timeout(),
+        };
+        (ws, limits)
     }
 
     fn run(
@@ -111,10 +145,12 @@ impl PwshShell {
         on_chunk: &mut dyn FnMut(&str),
     ) -> Result<(String, Option<i32>, pump::Collected, bool), String> {
         let encoded = encode::encode(script_text);
-        let mut proc: sys::Proc = sys::spawn(&self.detected.program, &args(&encoded), &self.workspace)?;
+        let (ws, limits) = self.live();
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        let mut proc: sys::Proc = sys::spawn(&self.detected.program, &args(&encoded), &ws)?;
         let attached = proc.attached;
         let pipes = proc.take_pipes();
-        let collected = pump::collect(pipes, cancel, self.limits, on_chunk, &mut || proc.kill());
+        let collected = pump::collect(pipes, cancel, limits, on_chunk, &mut || proc.kill());
         let status = proc.wait()?;
         Ok((collected.output.clone(), status.code(), collected, attached))
     }
@@ -141,8 +177,8 @@ impl PwshShell {
 'Arch=' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 'Policy=' + (Get-ExecutionPolicy -Scope CurrentUser).ToString()
 'Home=' + $HOME"
-            .trim_end()
-            .trim_start(),
+                .trim_end()
+                .trim_start(),
         )?;
         Ok(raw
             .lines()
@@ -164,13 +200,22 @@ pub fn detect() -> Result<Detected, String> {
     let mut last: Option<String> = None;
     for (name, seven) in [("pwsh.exe", true), ("powershell.exe", false)] {
         let program = PathBuf::from(name);
-        let probe = PwshShell::with(program.clone(), std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), Limits::default());
+        let probe = PwshShell::with(
+            program.clone(),
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            Limits::default(),
+        );
         match probe.capture("$PSVersionTable.PSVersion.ToString(); $PSVersionTable.PSEdition") {
             Ok(out) => {
                 let mut lines = out.lines().map(str::trim).filter(|l| !l.is_empty());
                 let version = lines.next().unwrap_or("").to_string();
                 let edition = lines.next().unwrap_or("").to_string();
-                return Ok(Detected { program, version, edition, is_pwsh7: seven });
+                return Ok(Detected {
+                    program,
+                    version,
+                    edition,
+                    is_pwsh7: seven,
+                });
             }
             Err(e) => last = Some(e),
         }
@@ -187,9 +232,13 @@ pub fn dir_size(path: &Path) -> i64 {
     let mut total = 0i64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
-            let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+            let Ok(meta) = std::fs::symlink_metadata(e.path()) else {
+                continue;
+            };
             if meta.is_dir() {
                 stack.push(e.path());
             } else if meta.is_file() {
@@ -205,7 +254,9 @@ pub fn dir_files(path: &Path) -> usize {
     let mut n = 0usize;
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             match e.file_type() {
                 Ok(t) if t.is_dir() => stack.push(e.path()),
@@ -226,7 +277,8 @@ impl Shell for PwshShell {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default()
         };
-        let size = dir_size(&self.workspace);
+        let (ws, _) = self.live();
+        let size = dir_size(&ws);
         Ok(json!({
             "shell": "powershell",
             "program": self.detected.program.to_string_lossy(),
@@ -236,9 +288,9 @@ impl Shell for PwshShell {
             "os": pick("OS"),
             "arch": pick("Arch"),
             "execution_policy": pick("Policy"),
-            "workspace": self.workspace.to_string_lossy(),
-            "workspace_exists": self.workspace.is_dir(),
-            "workspace_files": dir_files(&self.workspace),
+            "workspace": ws.to_string_lossy(),
+            "workspace_exists": ws.is_dir(),
+            "workspace_files": dir_files(&ws),
             "workspace_size_bytes": size,
             "max_chars": self.limits.max_chars,
             "timeout_secs": self.limits.timeout.map(|d| d.as_secs()),
@@ -248,10 +300,11 @@ impl Shell for PwshShell {
 
     fn prepare(&self, ev: &dyn Events, cancel: &AtomicBool) -> Result<(), String> {
         ev.progress(5, "Menyiapkan workspace…");
-        std::fs::create_dir_all(&self.workspace)
-            .map_err(|e| format!("gagal membuat workspace {}: {e}", self.workspace.display()))?;
+        let (ws, _) = self.live();
+        std::fs::create_dir_all(&ws)
+            .map_err(|e| format!("gagal membuat workspace {}: {e}", ws.display()))?;
         ev.progress(40, "Menulis penanda workspace…");
-        let marker = self.workspace.join(".arka");
+        let marker = ws.join(".arka");
         std::fs::create_dir_all(&marker).map_err(|e| e.to_string())?;
         let readme = marker.join("README.txt");
         if !readme.is_file() {
@@ -259,7 +312,7 @@ impl Shell for PwshShell {
                 "Folder ini adalah workspace Arka Agent.\r\n\
                  Agent menjalankan perintah PowerShell di sini, jadi semua file yang dibuatnya ada di sini.\r\n\
                  Workspace: {}\r\n",
-                self.workspace.display()
+                ws.display()
             );
             std::fs::write(&readme, text).map_err(|e| e.to_string())?;
         }
@@ -278,7 +331,11 @@ impl Shell for PwshShell {
             .lines()
             .filter_map(|l| {
                 let (k, v) = l.trim().split_once('=')?;
-                if v.trim().is_empty() { None } else { Some(k.to_string()) }
+                if v.trim().is_empty() {
+                    None
+                } else {
+                    Some(k.to_string())
+                }
             })
             .collect();
         ev.progress(
@@ -286,7 +343,11 @@ impl Shell for PwshShell {
             &format!(
                 "Siap. {} tools terdeteksi{}.",
                 accessible.len(),
-                if accessible.is_empty() { String::new() } else { format!(": {}", accessible.join(", ")) }
+                if accessible.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", accessible.join(", "))
+                }
             ),
         );
         Ok(())
@@ -305,9 +366,15 @@ impl Shell for PwshShell {
         if command.contains('\0') {
             return Err("Perintah memuat byte NUL".into());
         }
-        let _guard = EXEC_LOCK.lock().map_err(|e| format!("Lock eksekusi rusak: {e}"))?;
+        let _guard = EXEC_LOCK
+            .lock()
+            .map_err(|e| format!("Lock eksekusi rusak: {e}"))?;
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Ok(ExecOutcome { code: -1, canceled: true, ..Default::default() });
+            return Ok(ExecOutcome {
+                code: -1,
+                canceled: true,
+                ..Default::default()
+            });
         }
 
         let full = script::build(command);
@@ -325,7 +392,12 @@ impl Shell for PwshShell {
             (script::normalize_code(process_code), false, false)
         };
 
-        Ok(ExecOutcome { code, output: clean, timed_out, canceled })
+        Ok(ExecOutcome {
+            code,
+            output: clean,
+            timed_out,
+            canceled,
+        })
     }
 
     fn diagnostic(&self) -> Result<String, String> {
@@ -354,7 +426,10 @@ mod tests {
     #[test]
     fn args_contain_exactly_one_encoded_command_and_no_command_flag() {
         let a = args("QUJD");
-        assert_eq!(a.iter().filter(|s| s.as_str() == "-EncodedCommand").count(), 1);
+        assert_eq!(
+            a.iter().filter(|s| s.as_str() == "-EncodedCommand").count(),
+            1
+        );
         assert!(!a.iter().any(|s| s == "-Command" || s == "-c"));
         assert_eq!(a[0], "-NoProfile");
         assert_eq!(a[1], "-NonInteractive");
@@ -384,15 +459,26 @@ mod tests {
 
     #[test]
     fn exec_rejects_empty_and_nul_before_spawning() {
-        let shell = PwshShell::with(PathBuf::from("pwsh.exe"), PathBuf::from("."), Limits::default());
+        let shell = PwshShell::with(
+            PathBuf::from("pwsh.exe"),
+            PathBuf::from("."),
+            Limits::default(),
+        );
         let cancel = AtomicBool::new(false);
-        assert_eq!(shell.exec("   ", &cancel, &mut |_| {}).unwrap_err(), "Perintah kosong");
+        assert_eq!(
+            shell.exec("   ", &cancel, &mut |_| {}).unwrap_err(),
+            "Perintah kosong"
+        );
         assert!(shell.exec("echo a\0b", &cancel, &mut |_| {}).is_err());
     }
 
     #[test]
     fn exec_returns_early_when_already_canceled() {
-        let shell = PwshShell::with(PathBuf::from("pwsh.exe"), PathBuf::from("."), Limits::default());
+        let shell = PwshShell::with(
+            PathBuf::from("pwsh.exe"),
+            PathBuf::from("."),
+            Limits::default(),
+        );
         let cancel = AtomicBool::new(true);
         let out = shell.exec("echo hi", &cancel, &mut |_| {}).unwrap();
         assert!(out.canceled);

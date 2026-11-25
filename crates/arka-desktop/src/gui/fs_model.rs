@@ -126,7 +126,10 @@ pub fn breadcrumb(rel: &str) -> Vec<Crumb> {
         rel: String::new(),
     }];
     let mut acc = String::new();
-    for seg in rel.split(['/', '\\']).filter(|s| !s.is_empty() && *s != ".") {
+    for seg in rel
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty() && *s != ".")
+    {
         acc = if acc.is_empty() {
             seg.to_string()
         } else {
@@ -230,7 +233,11 @@ mod tests {
         let rels: Vec<&str> = c.iter().map(|x| x.rel.as_str()).collect();
         assert_eq!(rels, ["", "proyek", "proyek/src", "proyek/src/main.rs"]);
         assert_eq!(breadcrumb("").len(), 1);
-        assert_eq!(breadcrumb("/a//b/").len(), 3, "garis miring ganda diabaikan");
+        assert_eq!(
+            breadcrumb("/a//b/").len(),
+            3,
+            "garis miring ganda diabaikan"
+        );
         // Path gaya Windows tetap dipecah benar.
         assert_eq!(breadcrumb(r"a\b").len(), 3);
     }

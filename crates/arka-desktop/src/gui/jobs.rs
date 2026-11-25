@@ -29,10 +29,14 @@ impl JobKind {
         match (self, lang) {
             (JobKind::Test, Lang3::Id) => "Menguji koneksi\u{2026}",
             (JobKind::Test, Lang3::En) => "Testing connection\u{2026}",
-            (JobKind::Test, Lang3::Ja) => "\u{63a5}\u{7d9a}\u{3092}\u{78ba}\u{8a8d}\u{4e2d}\u{2026}",
+            (JobKind::Test, Lang3::Ja) => {
+                "\u{63a5}\u{7d9a}\u{3092}\u{78ba}\u{8a8d}\u{4e2d}\u{2026}"
+            }
             (JobKind::Models, Lang3::Id) => "Mengambil daftar model\u{2026}",
             (JobKind::Models, Lang3::En) => "Fetching model list\u{2026}",
-            (JobKind::Models, Lang3::Ja) => "\u{30e2}\u{30c7}\u{30eb}\u{4e00}\u{89a7}\u{3092}\u{53d6}\u{5f97}\u{4e2d}\u{2026}",
+            (JobKind::Models, Lang3::Ja) => {
+                "\u{30e2}\u{30c7}\u{30eb}\u{4e00}\u{89a7}\u{3092}\u{53d6}\u{5f97}\u{4e2d}\u{2026}"
+            }
         }
     }
 }
@@ -115,7 +119,10 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    fn job_selesai(kind: JobKind, f: impl FnOnce() -> Result<JobDone, String> + Send + 'static) -> NetJob {
+    fn job_selesai(
+        kind: JobKind,
+        f: impl FnOnce() -> Result<JobDone, String> + Send + 'static,
+    ) -> NetJob {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = tx.send(f());
@@ -137,7 +144,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(got, Some(Ok(JobDone::Message("ok".into()))));
-        assert!(j.poll().is_none(), "hasil yang sama tidak boleh dikirim dua kali");
+        assert!(
+            j.poll().is_none(),
+            "hasil yang sama tidak boleh dikirim dua kali"
+        );
         assert!(!j.running());
     }
 

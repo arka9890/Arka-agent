@@ -46,9 +46,21 @@ pub fn init(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Apakah database sudah terbuka.
+///
+/// UI memakai ini untuk membedakan dua hal yang tampak sama: "belum siap"
+/// (unit test UI berjalan tanpa database, jadi **tidak** ada yang perlu
+/// dilaporkan) dan "gagal menyimpan" (database ada, penyimpanan gagal — itu
+/// harus terlihat oleh pengguna).
+pub fn available() -> bool {
+    DB.get().is_some()
+}
+
 /// Jalankan [f] dengan koneksi. Error kalau [init] belum dipanggil.
 pub fn with<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-    let cell = DB.get().ok_or_else(|| "Database belum diinisialisasi".to_string())?;
+    let cell = DB
+        .get()
+        .ok_or_else(|| "Database belum diinisialisasi".to_string())?;
     let conn = cell.lock().map_err(|e| e.to_string())?;
     f(&conn)
 }

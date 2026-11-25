@@ -45,9 +45,8 @@ fn skill_dir(name: &str) -> Result<PathBuf, String> {
 
 fn unquote(s: &str) -> String {
     let s = s.trim();
-    if s.len() >= 2 &&
-        ((s.starts_with('"') && s.ends_with('"')) ||
-         (s.starts_with('\'') && s.ends_with('\'')))
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
     {
         s[1..s.len() - 1].to_string()
     } else {
@@ -92,8 +91,10 @@ fn parse(raw: &str) -> Result<(String, String, String), String> {
             if value == ">" || value == ">-" || value == "|" || value == "|-" {
                 let mut block: Vec<String> = Vec::new();
                 i += 1;
-                while i < front.len() &&
-                    (front[i].starts_with(' ') || front[i].starts_with('\t') || front[i].trim().is_empty())
+                while i < front.len()
+                    && (front[i].starts_with(' ')
+                        || front[i].starts_with('\t')
+                        || front[i].trim().is_empty())
                 {
                     block.push(front[i].trim().to_string());
                     i += 1;
@@ -107,7 +108,11 @@ fn parse(raw: &str) -> Result<(String, String, String), String> {
         i += 1;
     }
     let name = map.remove("name").unwrap_or_default().trim().to_string();
-    let description = map.remove("description").unwrap_or_default().trim().to_string();
+    let description = map
+        .remove("description")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let body = body.trim().to_string();
     if body.is_empty() {
         return Err("Isi skill kosong. Tulis instruksi setelah frontmatter.".into());
@@ -122,29 +127,51 @@ fn sanitize_id(name: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     let id = id.trim_matches('-').to_string();
-    if id.is_empty() { "skill".to_string() } else { id }
+    if id.is_empty() {
+        "skill".to_string()
+    } else {
+        id
+    }
 }
 
 fn read_config(name: &str) -> HashMap<String, String> {
-    let Ok(path) = config_path(name) else { return HashMap::new() };
-    let Ok(text) = fs::read_to_string(path) else { return HashMap::new() };
+    let Ok(path) = config_path(name) else {
+        return HashMap::new();
+    };
+    let Ok(text) = fs::read_to_string(path) else {
+        return HashMap::new();
+    };
     let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else {
         return HashMap::new();
     };
     map.into_iter()
-        .filter_map(|(k, v)| Some((k, match v { Value::String(s) => s, other => other.to_string() })))
+        .filter_map(|(k, v)| {
+            Some((
+                k,
+                match v {
+                    Value::String(s) => s,
+                    other => other.to_string(),
+                },
+            ))
+        })
         .collect()
 }
 
 /// Daftar skill dari filesystem proot. File rusak dilewati, bukan menggagalkan
 /// seluruh daftar.
 pub fn list() -> Vec<Skill> {
-    let Ok(root) = skills_root() else { return Vec::new() };
-    let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
+    let Ok(root) = skills_root() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
     let mut out: Vec<Skill> = Vec::new();
     for entry in entries.flatten() {
         let file = entry.path().join("SKILL.md");
-        let Ok(raw) = fs::read_to_string(&file) else { continue };
+        let Ok(raw) = fs::read_to_string(&file) else {
+            continue;
+        };
         let folder = entry.file_name().to_string_lossy().to_string();
         let (name, description, content) = match parse(&raw) {
             Ok(v) => v,
@@ -182,7 +209,11 @@ pub fn system_prompt_section() -> String {
         let block = format!(
             "\n### {}\nDeskripsi: {}\n\n{}\n",
             s.name,
-            if s.description.is_empty() { "-" } else { &s.description },
+            if s.description.is_empty() {
+                "-"
+            } else {
+                &s.description
+            },
             s.content
         );
         if used + block.len() > MAX_PROMPT_CHARS {
@@ -215,8 +246,7 @@ fn write_skill(name: &str, raw: &str) -> Result<String, String> {
     };
     let dir = skill_dir(&final_name)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Gagal membuat folder skill: {e}"))?;
-    fs::write(dir.join("SKILL.md"), raw)
-        .map_err(|e| format!("Gagal menulis SKILL.md: {e}"))?;
+    fs::write(dir.join("SKILL.md"), raw).map_err(|e| format!("Gagal menulis SKILL.md: {e}"))?;
     Ok(format!("{} ({})", final_name, description))
 }
 
@@ -235,64 +265,76 @@ pub fn install_from_url(url: &str) -> Result<String, String> {
     // I3: deteksi rate limit GitHub (403/429) dengan pesan yang jelas.
     // Tanpa token, API GitHub membatasi ~60 request/jam per IP.
     let fetch_json = |u: &str| -> Result<Value, String> {
-        let resp = client.get(u).send().map_err(|e| format!("Gagal menghubungi GitHub: {e}"))?;
+        let resp = client
+            .get(u)
+            .send()
+            .map_err(|e| format!("Gagal menghubungi GitHub: {e}"))?;
         let status = resp.status();
-        if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if status == reqwest::StatusCode::FORBIDDEN
+            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        {
             return Err(
                 "Rate limit GitHub API tercapai (403/429). Coba lagi dalam beberapa menit,                  atau set token GitHub (env GITHUB_TOKEN) untuk batas lebih tinggi."
                     .into(),
             );
         }
-        let resp = resp.error_for_status().map_err(|e| format!("Gagal menghubungi GitHub: {e}"))?;
-        resp.json::<Value>().map_err(|e| format!("Gagal membaca respons GitHub: {e}"))
+        let resp = resp
+            .error_for_status()
+            .map_err(|e| format!("Gagal menghubungi GitHub: {e}"))?;
+        resp.json::<Value>()
+            .map_err(|e| format!("Gagal membaca respons GitHub: {e}"))
     };
 
-    let (repo, files): (Option<(String, String, String)>, Vec<String>) =
-        if let Some(rest) = url.strip_prefix("https://github.com/") {
-            let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
-            if parts.len() < 2 {
-                return Err("URL GitHub tidak valid.".into());
-            }
-            let (owner, name) = (parts[0], parts[1]);
-            let meta = fetch_json(&format!("https://api.github.com/repos/{owner}/{name}"))?;
-            let branch = meta["default_branch"].as_str().unwrap_or("main").to_string();
-            let tree = fetch_json(&format!(
-                "https://api.github.com/repos/{owner}/{name}/git/trees/{branch}?recursive=1"
-            ))?;
-            let mut found: Vec<String> = Vec::new();
-            if let Some(entries) = tree["tree"].as_array() {
-                for entry in entries {
-                    let path = entry["path"].as_str().unwrap_or("");
-                    if path.to_ascii_lowercase().ends_with("skill.md") {
-                        found.push(path.to_string());
-                    }
+    let (repo, files): (Option<(String, String, String)>, Vec<String>) = if let Some(rest) =
+        url.strip_prefix("https://github.com/")
+    {
+        let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.len() < 2 {
+            return Err("URL GitHub tidak valid.".into());
+        }
+        let (owner, name) = (parts[0], parts[1]);
+        let meta = fetch_json(&format!("https://api.github.com/repos/{owner}/{name}"))?;
+        let branch = meta["default_branch"]
+            .as_str()
+            .unwrap_or("main")
+            .to_string();
+        let tree = fetch_json(&format!(
+            "https://api.github.com/repos/{owner}/{name}/git/trees/{branch}?recursive=1"
+        ))?;
+        let mut found: Vec<String> = Vec::new();
+        if let Some(entries) = tree["tree"].as_array() {
+            for entry in entries {
+                let path = entry["path"].as_str().unwrap_or("");
+                if path.to_ascii_lowercase().ends_with("skill.md") {
+                    found.push(path.to_string());
                 }
             }
-            if found.is_empty() {
-                return Err("Repo tidak berisi SKILL.md.".into());
-            }
-            // I2: jangan memotong diam-diam. Proses SEMUA SKILL.md, atau beri
-            // peringatan eksplisit bila melebihi batas. Di sini kita proses semua
-            // agar tidak ada skill yang terlewat tanpa sepengetahuan pengguna.
-            const MAX_SKILLS: usize = 50;
-            if found.len() > MAX_SKILLS {
-                return Err(format!(
+        }
+        if found.is_empty() {
+            return Err("Repo tidak berisi SKILL.md.".into());
+        }
+        // I2: jangan memotong diam-diam. Proses SEMUA SKILL.md, atau beri
+        // peringatan eksplisit bila melebihi batas. Di sini kita proses semua
+        // agar tidak ada skill yang terlewat tanpa sepengetahuan pengguna.
+        const MAX_SKILLS: usize = 50;
+        if found.len() > MAX_SKILLS {
+            return Err(format!(
                     "Repo berisi {} SKILL.md (lebih dari batas {}). Persempit                      sumber atau gunakan path file .md langsung.",
                     found.len(),
                     MAX_SKILLS
                 ));
-            }
-            (Some((owner.to_string(), name.to_string(), branch)), found)
-        } else {
-            (None, vec![url.to_string()])
-        };
+        }
+        (Some((owner.to_string(), name.to_string(), branch)), found)
+    } else {
+        (None, vec![url.to_string()])
+    };
 
     let mut installed = Vec::new();
     for path in files {
         let raw_url = match &repo {
-            Some((owner, name, branch)) => format!(
-                "https://raw.githubusercontent.com/{owner}/{name}/{branch}/{path}"
-            ),
+            Some((owner, name, branch)) => {
+                format!("https://raw.githubusercontent.com/{owner}/{name}/{branch}/{path}")
+            }
             None => path.clone(),
         };
         let raw = client
@@ -352,8 +394,11 @@ pub fn set_config(name: &str, key: &str, value: &str) -> Result<String, String> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Gagal membuat folder config: {e}"))?;
     }
-    fs::write(&path, serde_json::to_string_pretty(&json!(obj)).unwrap_or_default())
-        .map_err(|e| format!("Gagal menulis config: {e}"))?;
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!(obj)).unwrap_or_default(),
+    )
+    .map_err(|e| format!("Gagal menulis config: {e}"))?;
     Ok(format!("{key} = {value}"))
 }
 

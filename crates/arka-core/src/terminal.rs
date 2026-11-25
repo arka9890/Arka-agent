@@ -14,7 +14,8 @@ pub fn list() -> Result<Vec<String>, String> {
         let rows = stmt
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -26,7 +27,11 @@ pub fn push(command: &str) -> Result<Vec<String>, String> {
     }
     db::with(|c| {
         let last: Option<String> = c
-            .query_row("SELECT command FROM terminal_history ORDER BY id DESC LIMIT 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT command FROM terminal_history ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .ok();
         if last.as_deref() == Some(cmd) {
             return Ok(());

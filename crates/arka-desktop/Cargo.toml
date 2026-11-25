@@ -42,6 +42,8 @@ features = [
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    # Menu tray & SW_SHOWNORMAL (platform.rs).
+    "Win32_UI_WindowsAndMessaging",
     # Job Object: TerminateJobObject mematikan seluruh pohon proses.
     "Win32_System_JobObjects",
     # Dibutuhkan JOBOBJECT_EXTENDED_LIMIT_INFORMATION (memuat IO_COUNTERS).
@@ -56,7 +58,32 @@ windows-sys = { version = "0.61", features = [
     # ShellExecuteW ("buka dengan aplikasi lain") untuk berkas yang tidak bisa
     # dipratinjau di dalam aplikasi (M6).
     "Win32_UI_Shell",
+    # M8: GetDiskFreeSpaceExW (ruang disk di tab Setelan).
+    "Win32_Storage_FileSystem",
+    # M8: pendaftaran AppUserModelID untuk toast (HKCU).
+    "Win32_System_Registry",
+    # M8: cegah sleep selama streaming (SetThreadExecutionState).
+    "Win32_System_Power",
 ] }
+
+# M8: toast Windows + tray icon. Keduanya HANYA di-resolve untuk target
+# Windows; di Linux/CI tidak ada GTK/zbus yang ikut terkompilasi. `notify-rust`
+# dimatikan fitur bawaannya agar tidak menarik zbus/dbus (khusus Unix) sama
+# sekali, dan `tray-icon` tanpa `libxdo` (khusus Linux).
+[target.'cfg(windows)'.dependencies.notify-rust]
+version = "4.19"
+default-features = false
+
+[target.'cfg(windows)'.dependencies.tray-icon]
+version = "0.21"
+default-features = false
+
+# Menu tray (muda) dipakai lewat re-export tray-icon, tapi id per item
+# dibandingkan langsung → perlu dependency eksplisit.
+[target.'cfg(windows)'.dependencies.muda]
+version = "0.17"
+default-features = false
+features = ["common-controls-v6"]
 
 # Dialog berkas OS (Impor / Simpan sebagai). Hanya dikompilasi di Windows —
 # di Linux rfd akan mencari GTK/portal yang tidak ada, padahal UI dikembangkan

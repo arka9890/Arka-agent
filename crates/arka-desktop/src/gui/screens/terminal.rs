@@ -90,10 +90,9 @@ fn header(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 state.tr("Tidak ditemukan", "Not found", "見つかりません"),
                 colors.danger,
             ),
-            ShellProbe::Unknown | ShellProbe::Probing => (
-                state.tr("Memeriksa…", "Checking…", "確認中…"),
-                colors.muted,
-            ),
+            ShellProbe::Unknown | ShellProbe::Probing => {
+                (state.tr("Memeriksa…", "Checking…", "確認中…"), colors.muted)
+            }
         };
         widgets::clay_pill(ui, colors, &label, color);
 
@@ -141,11 +140,7 @@ fn status_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                 });
             }
             ShellProbe::Missing(e) => {
-                ui.label(
-                    RichText::new(e)
-                        .size(fs(ui, 12.5))
-                        .color(colors.danger),
-                );
+                ui.label(RichText::new(e).size(fs(ui, 12.5)).color(colors.danger));
                 ui.add_space(theme::SP_XS);
                 ui.label(
                     RichText::new(state.tr(
@@ -169,11 +164,31 @@ fn status_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 
         ui.add_space(theme::SP_SM);
         let get = |k: &str| info.get(k).unwrap_or("—").to_string();
-        widgets::kv(ui, colors, &state.tr("Versi", "Version", "バージョン"), &get("PSVersion"));
-        widgets::kv(ui, colors, &state.tr("Edisi", "Edition", "エディション"), &get("PSEdition"));
+        widgets::kv(
+            ui,
+            colors,
+            &state.tr("Versi", "Version", "バージョン"),
+            &get("PSVersion"),
+        );
+        widgets::kv(
+            ui,
+            colors,
+            &state.tr("Edisi", "Edition", "エディション"),
+            &get("PSEdition"),
+        );
         widgets::kv(ui, colors, &state.tr("Sistem", "OS", "OS"), &get("OS"));
-        widgets::kv(ui, colors, &state.tr("Arsitektur", "Architecture", "アーキテクチャ"), &get("Arch"));
-        widgets::kv(ui, colors, &state.tr("ExecutionPolicy", "ExecutionPolicy", "ExecutionPolicy"), &get("Policy"));
+        widgets::kv(
+            ui,
+            colors,
+            &state.tr("Arsitektur", "Architecture", "アーキテクチャ"),
+            &get("Arch"),
+        );
+        widgets::kv(
+            ui,
+            colors,
+            &state.tr("ExecutionPolicy", "ExecutionPolicy", "ExecutionPolicy"),
+            &get("Policy"),
+        );
         widgets::kv(
             ui,
             colors,
@@ -191,7 +206,12 @@ fn status_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
             ),
             None => dash.clone(),
         };
-        widgets::kv(ui, colors, &state.tr("Folder kerja", "Workspace", "ワークスペース"), &ws.display().to_string());
+        widgets::kv(
+            ui,
+            colors,
+            &state.tr("Folder kerja", "Workspace", "ワークスペース"),
+            &ws.display().to_string(),
+        );
         widgets::kv(ui, colors, &state.tr("Isi", "Contents", "内容"), &size);
 
         ui.add_space(theme::SP_SM);
@@ -199,7 +219,11 @@ fn status_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
             if widgets::clay_pill_button(
                 ui,
                 colors,
-                &state.tr("Buka di Explorer", "Open in Explorer", "エクスプローラーで開く"),
+                &state.tr(
+                    "Buka di Explorer",
+                    "Open in Explorer",
+                    "エクスプローラーで開く",
+                ),
                 colors.accent,
             )
             .clicked()
@@ -212,7 +236,9 @@ fn status_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
             } else {
                 state.tr("Tes shell", "Test shell", "シェルをテスト")
             };
-            if widgets::clay_pill_button(ui, colors, &label, colors.surface_raised).clicked() && !busy {
+            if widgets::clay_pill_button(ui, colors, &label, colors.surface_raised).clicked()
+                && !busy
+            {
                 let ctx = ui.ctx().clone();
                 state.run_terminal_diagnostic(&ctx);
             }
@@ -227,12 +253,25 @@ fn status_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 }
 
 fn diagnostic_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
-    let Some(text) = state.term.diagnostic.clone() else { return };
+    let Some(text) = state.term.diagnostic.clone() else {
+        return;
+    };
     ui.add_space(theme::SP_MD);
     ui.horizontal(|ui| {
-        widgets::section(ui, colors, &state.tr("Hasil tes shell", "Shell test result", "シェルテスト結果"));
+        widgets::section(
+            ui,
+            colors,
+            &state.tr("Hasil tes shell", "Shell test result", "シェルテスト結果"),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::clay_pill_button(ui, colors, &state.tr("Tutup", "Close", "閉じる"), colors.accent).clicked() {
+            if widgets::clay_pill_button(
+                ui,
+                colors,
+                &state.tr("Tutup", "Close", "閉じる"),
+                colors.accent,
+            )
+            .clicked()
+            {
                 state.term.diagnostic = None;
             }
         });
@@ -242,13 +281,22 @@ fn diagnostic_card(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
             .max_height(180.0 * theme::scale_of(ui.ctx()))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(RichText::new(&text).size(fs(ui, 12.0)).monospace().color(colors.on_surface));
+                ui.label(
+                    RichText::new(&text)
+                        .size(fs(ui, 12.0))
+                        .monospace()
+                        .color(colors.on_surface),
+                );
             });
     });
 }
 
 fn hints(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
-    widgets::section(ui, colors, &state.tr("Contoh perintah", "Command examples", "コマンド例"));
+    widgets::section(
+        ui,
+        colors,
+        &state.tr("Contoh perintah", "Command examples", "コマンド例"),
+    );
     let mut pick: Option<&str> = None;
     widgets::clay_card(ui, colors, Some(colors.surface_raised), |ui| {
         for h in HINTS {
@@ -266,7 +314,11 @@ fn hints(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 }
 
 fn command_box(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
-    widgets::section(ui, colors, &state.tr("Kotak perintah", "Command box", "コマンド入力"));
+    widgets::section(
+        ui,
+        colors,
+        &state.tr("Kotak perintah", "Command box", "コマンド入力"),
+    );
 
     // Riwayat: dropdown 15 terbaru. ↑/↓ tetap jalan walau dropdown tertutup.
     ui.horizontal(|ui| {
@@ -305,14 +357,23 @@ fn command_box(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     });
 
     if state.term.show_history {
-        let items: Vec<String> = state.term.history.items_newest_first().into_iter().take(15).collect();
+        let items: Vec<String> = state
+            .term
+            .history
+            .items_newest_first()
+            .into_iter()
+            .take(15)
+            .collect();
         let mut pick: Option<String> = None;
         widgets::clay_card(ui, colors, Some(colors.background), |ui| {
             for it in &items {
                 if ui
                     .add(
                         egui::Label::new(
-                            RichText::new(it).size(fs(ui, 12.0)).monospace().color(colors.on_surface),
+                            RichText::new(it)
+                                .size(fs(ui, 12.0))
+                                .monospace()
+                                .color(colors.on_surface),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -336,7 +397,11 @@ fn command_box(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     let mut stop = false;
     ui.horizontal(|ui| {
         // Monospace: perintah PowerShell sering berisi path & kurung kurawal.
-        let hint = state.tr("Ketik perintah PowerShell…", "Type a PowerShell command…", "PowerShell コマンドを入力…");
+        let hint = state.tr(
+            "Ketik perintah PowerShell…",
+            "Type a PowerShell command…",
+            "PowerShell コマンドを入力…",
+        );
         let resp = ui.add(
             egui::TextEdit::singleline(&mut state.term.input)
                 .hint_text(hint)
@@ -380,7 +445,14 @@ fn command_box(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     ui.add_space(theme::SP_SM);
     ui.horizontal(|ui| {
         if busy {
-            if widgets::clay_pill_button(ui, colors, &state.tr("Stop", "Stop", "停止"), colors.danger).clicked() {
+            if widgets::clay_pill_button(
+                ui,
+                colors,
+                &state.tr("Stop", "Stop", "停止"),
+                colors.danger,
+            )
+            .clicked()
+            {
                 stop = true;
             }
             ui.label(
@@ -388,7 +460,14 @@ fn command_box(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                     .size(fs(ui, 12.0))
                     .color(colors.muted),
             );
-        } else if widgets::clay_pill_button(ui, colors, &state.tr("Jalankan", "Run", "実行"), colors.accent).clicked() {
+        } else if widgets::clay_pill_button(
+            ui,
+            colors,
+            &state.tr("Jalankan", "Run", "実行"),
+            colors.accent,
+        )
+        .clicked()
+        {
             run = true;
         }
 
@@ -423,7 +502,12 @@ fn command_box(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 
 /// Potong teks jadi satu baris pendek untuk label tombol.
 fn tail(text: &str, max: usize) -> String {
-    let line = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let line = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
     if line.chars().count() <= max {
         return line.to_string();
     }
@@ -460,8 +544,7 @@ fn output_panel(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     let scale = theme::scale_of(ui.ctx());
 
     let echo = state.term.job.as_ref().and_then(|j| {
-        (j.kind == crate::gui::term_job::TaskKind::Run && !j.cmd.is_empty())
-            .then(|| j.cmd.clone())
+        (j.kind == crate::gui::term_job::TaskKind::Run && !j.cmd.is_empty()).then(|| j.cmd.clone())
     });
 
     widgets::clay_card(ui, colors, Some(colors.background), |ui| {
@@ -498,14 +581,23 @@ fn output_panel(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
                         .color(colors.on_surface),
                 );
                 if busy {
-                    ui.label(RichText::new("▌").size(fs(ui, 12.0)).monospace().color(colors.accent));
+                    ui.label(
+                        RichText::new("▌")
+                            .size(fs(ui, 12.0))
+                            .monospace()
+                            .color(colors.accent),
+                    );
                 }
             });
 
         if let Some(line) = exit {
             ui.add_space(theme::SP_XS);
             ui.horizontal(|ui| {
-                let color = if line.ok() { colors.success } else { colors.danger };
+                let color = if line.ok() {
+                    colors.success
+                } else {
+                    colors.danger
+                };
                 widgets::clay_pill(ui, colors, &line.text(state.lang.short()), color);
             });
         }
@@ -514,7 +606,15 @@ fn output_panel(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
 
 fn agent_log(ui: &mut Ui, state: &mut AppState, colors: &ClayColors) {
     ui.horizontal(|ui| {
-        widgets::section(ui, colors, &state.tr("Log perintah agent", "Agent command log", "エージェントのコマンドログ"));
+        widgets::section(
+            ui,
+            colors,
+            &state.tr(
+                "Log perintah agent",
+                "Agent command log",
+                "エージェントのコマンドログ",
+            ),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::clay_pill_button(
                 ui,
@@ -575,7 +675,9 @@ mod tests {
     fn contoh_perintah_adalah_powershell_bukan_bash() {
         // Sama seperti penjaga prompt di M1: saran bash di aplikasi Windows
         // langsung gagal saat diklik, dan membuat pengguna bingung.
-        let bash_only = ["ls -la", "cat ", "apt-get", "sudo ", "chmod ", "grep ", "which "];
+        let bash_only = [
+            "ls -la", "cat ", "apt-get", "sudo ", "chmod ", "grep ", "which ",
+        ];
         for h in HINTS {
             for b in bash_only {
                 assert!(!h.contains(b), "hint `{h}` memakai perintah bash `{b}`");

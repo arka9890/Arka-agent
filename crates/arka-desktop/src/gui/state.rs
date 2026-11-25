@@ -14,12 +14,14 @@ use crate::preview::PreviewState;
 use crate::pwsh::Detected;
 
 use super::engine::Engine;
-use super::history::History;
-use super::jobs::NetJob;
-use super::term_job::{ExitLine, Job, JobState, StatsJob, TaskKind, WsStats};
 use super::fs_model::FilesCache;
+use super::history::History;
 use super::i18n::{tr, Lang};
+use super::jobs::NetJob;
+use super::prefs::Prefs;
+use super::term_job::{ExitLine, Job, JobState, StatsJob, TaskKind, WsStats};
 use super::theme::{FontScale, ThemeMode};
+use crate::sysinfo::SysInfo;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tab {
@@ -293,7 +295,11 @@ impl ProviderForm {
         Self {
             id: p.id.clone(),
             name: p.name.clone(),
-            kind: if p.kind == "anthropic" { "anthropic".into() } else { "openai".into() },
+            kind: if p.kind == "anthropic" {
+                "anthropic".into()
+            } else {
+                "openai".into()
+            },
             base_url: p.base_url.clone(),
             api_key: p.api_key.clone(),
             model: p.model.clone(),
@@ -337,10 +343,26 @@ impl ProviderForm {
     /// `None` = boleh disimpan.
     pub fn validate(&self, lang: Lang) -> Option<String> {
         if self.name.trim().is_empty() {
-            return Some(tr(lang, "Nama provider wajib diisi.", "Provider name is required.", "プロバイダー名は必須です。").to_string());
+            return Some(
+                tr(
+                    lang,
+                    "Nama provider wajib diisi.",
+                    "Provider name is required.",
+                    "プロバイダー名は必須です。",
+                )
+                .to_string(),
+            );
         }
         if self.kind != "anthropic" && self.kind != "openai" {
-            return Some(tr(lang, "Jenis provider tidak dikenal.", "Unknown provider type.", "不明なプロバイダー種別です。").to_string());
+            return Some(
+                tr(
+                    lang,
+                    "Jenis provider tidak dikenal.",
+                    "Unknown provider type.",
+                    "不明なプロバイダー種別です。",
+                )
+                .to_string(),
+            );
         }
         None
     }
@@ -356,7 +378,11 @@ impl ProviderForm {
         arka_core::provider::Provider {
             id: self.id.clone(),
             name: self.name.trim().to_string(),
-            kind: if self.kind == "anthropic" { "anthropic".into() } else { "openai".into() },
+            kind: if self.kind == "anthropic" {
+                "anthropic".into()
+            } else {
+                "openai".into()
+            },
             base_url: self.resolved_url(),
             api_key: self.api_key.clone(),
             model: self.model.trim().to_string(),
@@ -510,6 +536,14 @@ pub struct AppState {
     /// Kegagalan database terakhir; ditampilkan supaya "tidak ada sesi" tidak
     /// terlihat sama dengan "database rusak".
     pub db_error: Option<String>,
+    /// Setelan yang tersimpan di tabel `settings` (angka agent, prompt,
+    /// notifikasi, background, workspace). Dimuat sekali saat start.
+    pub prefs: Prefs,
+    /// Statistik mesin (RAM/disk/arsitektur), diambil di thread latar karena
+    /// `GetDiskFreeSpaceExW` bisa memblokir beberapa detik pada folder jaringan.
+    pub sysinfo: SysInfo,
+    /// Saluran hasil pembacaan statistik; `Some` = sedang menunggu thread.
+    pub sysinfo_rx: Option<std::sync::mpsc::Receiver<SysInfo>>,
     /// Saluran hasil deteksi PowerShell yang berjalan di thread latar.
     ///
     /// Deteksi **menjalankan proses** (`pwsh -v`, atau `powershell.exe`), jadi
@@ -632,10 +666,20 @@ impl AppState {
             term: TermState::default(),
             provider: ProviderState::default(),
             db_error: None,
+            prefs: Prefs::load(),
+            sysinfo: SysInfo::default(),
+            sysinfo_rx: None,
             shell_probe_rx: None,
         }
     }
 
+    /// Salinan untuk `eframe::Storage`.
+    ///
+    /// Tema/bahasa/ukuran teks ditulis apa adanya, tapi hanya dipakai sebagai
+    /// cadangan kalau tabel `settings` belum punya kunci
+    /// `theme`/`language`/`font_size` — lihat [`AppState::restore_display`].
+    /// Dengan begitu pilihan yang dibuat di Android tidak ditimpa nilai bawaan
+    /// desktop saat database dibuka.
     pub fn persist(&self) -> Persisted {
         Persisted {
             theme: self.theme,
@@ -644,6 +688,36 @@ impl AppState {
             sidebar_open: self.sidebar_open,
             tab: TabSerde(self.tab),
             auto_scroll: self.chat.auto_scroll,
+        }
+    }
+
+    /// Pulihkan tema/bahasa/ukuran teks dari tabel `settings` **per kunci**.
+    ///
+    /// Dipanggil `bootstrap_data` (setelah database terbuka), jadi jendela
+    /// tidak pernah berkedip ke tema lain: nilai awal dari `Persisted`, lalu
+    /// ditimpa nilai tersimpan sebelum frame pertama digambar.
+    ///
+    /// Kunci yang belum pernah ditulis tidak menyentuh nilai awal. Itu penting:
+    /// `Prefs::load` mengembalikan bawaan untuk kunci kosong, dan memakainya
+    /// akan menimpa pilihan pengguna (atau pilihan dari Android) dengan bawaan
+    /// desktop hanya karena kuncinya belum ada.
+    pub fn restore_display(&mut self) {
+        if let Some(v) = arka_core::settings::get("theme") {
+            self.theme = match v.trim() {
+                "dark" => ThemeMode::Dark,
+                "light" => ThemeMode::Light,
+                _ => ThemeMode::System,
+            };
+        }
+        if let Some(v) = arka_core::settings::get("font_size") {
+            self.font_scale = match v.trim() {
+                "small" => FontScale::Small,
+                "large" => FontScale::Large,
+                _ => FontScale::Medium,
+            };
+        }
+        if let Some(v) = arka_core::settings::get("language") {
+            self.lang = Lang::from_key(v.trim());
         }
     }
 
@@ -702,9 +776,74 @@ impl AppState {
         });
     }
 
-    /// Folder kerja agent. Di Windows: `%USERPROFILE%\ArkaAgent\workspace`.
+    /// Folder kerja yang **sedang berlaku**.
+    ///
+    /// Sumber kebenarannya adalah `paths::workspace_display()`: di situ
+    /// pilihan pengguna dari tab Setelan (`core::workspace_path`) diterapkan,
+    /// jadi prompt, `run_command`, tab File, dan tab Terminal tidak bisa
+    /// memakai folder yang berbeda. `self.paths.workspace` tetap disimpan
+    /// sebagai bawaan pabrik (kalau database gagal dibuka).
     pub fn workspace(&self) -> PathBuf {
-        self.paths.workspace.clone()
+        let shown = arka_core::paths::workspace_display();
+        if !shown.is_empty() {
+            PathBuf::from(shown)
+        } else {
+            self.paths.workspace.clone()
+        }
+    }
+
+    /// Terapkan `workspace_path` dari setelan ke path global, lalu buat
+    /// foldernya. Dipanggil saat start dan setelah tombol Simpan ditekan.
+    ///
+    /// Idempoten: kalau pilihan pengguna **sama** dengan bawaan `AppPaths`,
+    /// override-nya dilepas supaya `paths::workspace()` tetap mengikuti
+    /// `AppPaths` — penting untuk test yang menunjuk folder sementara, dan
+    /// membuat "kosong = folder bawaan" benar-benar berarti bawaan.
+    pub fn apply_workspace(&self) -> Result<PathBuf, String> {
+        let raw = self.prefs.workspace_path.trim();
+        let dir = if raw.is_empty() {
+            arka_core::paths::clear_workspace_override();
+            self.paths.workspace.clone()
+        } else {
+            let dir = PathBuf::from(raw);
+            if dir == self.paths.workspace {
+                arka_core::paths::clear_workspace_override();
+            } else {
+                arka_core::paths::override_workspace(dir.clone());
+            }
+            dir
+        };
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Gagal membuat workspace {}: {e}", dir.display()))?;
+        Ok(dir)
+    }
+
+    /// Ambil statistik mesin sekali di thread latar (tidak pernah dari `draw`).
+    pub fn ensure_sysinfo(&mut self, ctx: &eframe::egui::Context) {
+        if let Some(rx) = &self.sysinfo_rx {
+            match rx.try_recv() {
+                Ok(info) => {
+                    self.sysinfo = info;
+                    self.sysinfo_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.sysinfo_rx = None;
+                }
+            }
+        }
+        if !self.sysinfo_rx.is_none() || !self.sysinfo.arch.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.sysinfo_rx = Some(rx);
+        let ws = self.workspace();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let info = crate::sysinfo::collect(&ws);
+            let _ = tx.send(info);
+            ctx.request_repaint();
+        });
     }
 
     // ── Terminal ───────────────────────────────────────────────────────────
@@ -714,7 +853,7 @@ impl AppState {
     fn term_limits() -> crate::pump::Limits {
         crate::pump::Limits {
             max_chars: crate::pwsh::RAW_OUTPUT_CAP,
-            timeout: crate::pwsh::DEFAULT_TIMEOUT,
+            timeout: crate::pwsh::default_timeout(),
         }
     }
 
@@ -732,7 +871,11 @@ impl AppState {
                 let ws = self.workspace();
                 std::fs::create_dir_all(&ws)
                     .map_err(|e| format!("Gagal membuat workspace {}: {e}", ws.display()))?;
-                Ok(crate::pwsh::PwshShell::with(d.program.clone(), ws, Self::term_limits()))
+                Ok(crate::pwsh::PwshShell::with(
+                    d.program.clone(),
+                    ws,
+                    Self::term_limits(),
+                ))
             }
             ShellProbe::Missing(e) => Err(e.clone()),
             ShellProbe::Probing => Err("Shell masih diperiksa".into()),
@@ -764,7 +907,12 @@ impl AppState {
                 self.term.input.clear();
                 self.term.focus_input = true;
                 self.term.show_history = false;
-                self.term.job = Some(super::term_job::start(TaskKind::Run, cmd, shell, ctx.clone()));
+                self.term.job = Some(super::term_job::start(
+                    TaskKind::Run,
+                    cmd,
+                    shell,
+                    ctx.clone(),
+                ));
             }
             Err(e) => {
                 self.term.output = format!("! {e}");
@@ -793,8 +941,12 @@ impl AppState {
         self.term.info_attempted = true;
         match self.term_shell(ctx) {
             Ok(shell) => {
-                self.term.info_job =
-                    Some(super::term_job::start(TaskKind::Info, String::new(), shell, ctx.clone()));
+                self.term.info_job = Some(super::term_job::start(
+                    TaskKind::Info,
+                    String::new(),
+                    shell,
+                    ctx.clone(),
+                ));
             }
             Err(e) => self.term.info = InfoState::Missing(e),
         }
@@ -903,7 +1055,6 @@ impl AppState {
         self.term.diagnostic = None;
     }
 
-
     // ── Data (arka_core) ────────────────────────────────────────────────────
 
     /// Baca ulang daftar sesi & provider dari database.
@@ -947,7 +1098,12 @@ impl AppState {
             })
             .collect();
 
-        if self.chat.providers.iter().all(|p| p.id != self.chat.provider_id) {
+        if self
+            .chat
+            .providers
+            .iter()
+            .all(|p| p.id != self.chat.provider_id)
+        {
             let def = list.iter().find(|p| p.is_default).or_else(|| list.first());
             match def {
                 Some(p) => {
@@ -1082,7 +1238,10 @@ impl AppState {
         self.provider.rows = list
             .iter()
             .map(|p| {
-                let st = stats.iter().find(|(id, _)| id == &p.id).map(|(_, s)| s.clone());
+                let st = stats
+                    .iter()
+                    .find(|(id, _)| id == &p.id)
+                    .map(|(_, s)| s.clone());
                 ProvRow {
                     id: p.id.clone(),
                     name: p.name.clone(),
@@ -1159,7 +1318,11 @@ impl AppState {
             return;
         }
         self.refresh_provider_rows();
-        self.notify(self.tr("Provider dihapus.", "Provider deleted.", "プロバイダーを削除しました。"));
+        self.notify(self.tr(
+            "Provider dihapus.",
+            "Provider deleted.",
+            "プロバイダーを削除しました。",
+        ));
     }
 
     pub fn set_default_provider(&mut self, id: &str) {
@@ -1175,7 +1338,13 @@ impl AppState {
     /// Sengaja memakai **isi form** (bukan yang tersimpan) supaya pengguna bisa
     /// mengetes kunci sebelum menyimpannya.
     pub fn start_provider_job(&mut self, kind: super::jobs::JobKind, ctx: &eframe::egui::Context) {
-        if self.provider.job.as_ref().map(|j| j.running()).unwrap_or(false) {
+        if self
+            .provider
+            .job
+            .as_ref()
+            .map(|j| j.running())
+            .unwrap_or(false)
+        {
             return; // satu pekerjaan pada satu waktu
         }
         let Some(form) = self.provider.form.clone() else {
@@ -1213,7 +1382,13 @@ impl AppState {
                 // menambah pilihan.
                 form.available = models;
                 form.test_result = Some(
-                    tr(lang, "Daftar model diperbarui dari server.", "Model list refreshed from server.", "モデル一覧をサーバーから更新しました。").to_string(),
+                    tr(
+                        lang,
+                        "Daftar model diperbarui dari server.",
+                        "Model list refreshed from server.",
+                        "モデル一覧をサーバーから更新しました。",
+                    )
+                    .to_string(),
                 );
             }
             (_, Ok(_)) => {}

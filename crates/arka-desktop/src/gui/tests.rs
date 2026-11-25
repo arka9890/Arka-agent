@@ -18,8 +18,8 @@ use eframe::egui::{
 
 use arka_core::paths::AppPaths;
 
-use crate::gui::i18n::Lang;
 use crate::gui::engine::Msg;
+use crate::gui::i18n::Lang;
 use crate::gui::state::{
     AppState, ApprovalCard, Modal, MsgView, Persisted, ProvRow, ProviderForm, SessionRow, Tab,
 };
@@ -45,6 +45,10 @@ struct Harness {
     gui: ArkaGui,
     time: f64,
     screen: Rect,
+    /// Kirim `ViewportEvent::Close` pada frame berikutnya (tombol X).
+    close_requested: bool,
+    /// `CancelClose` dari frame terakhir (bukti permintaan tutup ditolak).
+    last_cancel_close: bool,
 }
 
 impl Harness {
@@ -56,6 +60,8 @@ impl Harness {
             gui: ArkaGui::from_state(state),
             time: 0.0,
             screen: Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 880.0)),
+            close_requested: false,
+            last_cancel_close: false,
         }
     }
 
@@ -77,16 +83,69 @@ impl Harness {
 
     fn frame_with(&mut self, events: Vec<Event>) -> Vec<Shape> {
         self.time += 1.0 / 60.0;
+        // `RawInput::default()` sudah memuat ROOT; menimpa peta dengan peta
+        // kosong membuat egui panik ("Failed to find current viewport").
+        let mut viewports = egui::ViewportIdMap::default();
+        viewports.insert(egui::ViewportId::ROOT, egui::ViewportInfo::default());
+        if std::mem::take(&mut self.close_requested) {
+            viewports.insert(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo {
+                    events: vec![egui::ViewportEvent::Close],
+                    ..Default::default()
+                },
+            );
+        }
         let input = RawInput {
             screen_rect: Some(self.screen),
             time: Some(self.time),
             events,
+            viewports,
             ..Default::default()
         };
         let ctx = self.ctx.clone();
         let gui = &mut self.gui;
         let out = ctx.run(input, |c| gui.draw(c));
+        self.last_cancel_close = out.viewport_output.values().any(|v| {
+            v.commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::CancelClose))
+        });
         flatten(&out.shapes)
+    }
+
+    /// Frame dengan permintaan tutup jendela (tombol X).
+    ///
+    /// `ViewportEvent::Close` adalah satu-satunya cara egui menandainya, dan
+    /// `handle_close` membacanya dari `input(|i| i.viewport().close_requested())`.
+    /// Balasan `CancelClose` diperiksa dari output — itu bukti aplikasi benar-
+    /// benar menolak ditutup, bukan hanya mengubah state sendiri.
+    fn frame_closing(&mut self) -> (Vec<Shape>, bool) {
+        self.frame();
+        self.close_requested = true;
+        self.time += 1.0 / 60.0;
+        let input = RawInput {
+            screen_rect: Some(self.screen),
+            time: Some(self.time),
+            viewports: std::iter::once((
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo {
+                    events: vec![egui::ViewportEvent::Close],
+                    ..Default::default()
+                },
+            ))
+            .collect(),
+            ..Default::default()
+        };
+        let ctx = self.ctx.clone();
+        let gui = &mut self.gui;
+        let out = ctx.run(input, |c| gui.step(c));
+        let canceled = out.viewport_output.values().any(|v| {
+            v.commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::CancelClose))
+        });
+        (flatten(&out.shapes), canceled)
     }
 
     fn frame(&mut self) -> Vec<Shape> {
@@ -218,12 +277,18 @@ fn tema_gelap_dan_terang_mengubah_warna_latar() {
 
     h.state_mut().theme = ThemeMode::Light;
     let shapes = h.frame();
-    assert!(fill_count(&shapes, theme::LIGHT.background) > 0, "latar terang tidak dilukis");
+    assert!(
+        fill_count(&shapes, theme::LIGHT.background) > 0,
+        "latar terang tidak dilukis"
+    );
     assert_eq!(fill_count(&shapes, theme::DARK.background), 0);
 
     h.state_mut().theme = ThemeMode::Dark;
     let shapes = h.frame();
-    assert!(fill_count(&shapes, theme::DARK.background) > 0, "latar gelap tidak dilukis");
+    assert!(
+        fill_count(&shapes, theme::DARK.background) > 0,
+        "latar gelap tidak dilukis"
+    );
     assert_eq!(fill_count(&shapes, theme::LIGHT.background), 0);
 }
 
@@ -244,8 +309,14 @@ fn ukuran_teks_benar_benar_membesar() {
     let medium = measure(FontScale::Medium);
     let large = measure(FontScale::Large);
 
-    assert!(small < medium, "Kecil ({small}) harus lebih kecil dari Sedang ({medium})");
-    assert!(medium < large, "Besar ({large}) harus lebih besar dari Sedang ({medium})");
+    assert!(
+        small < medium,
+        "Kecil ({small}) harus lebih kecil dari Sedang ({medium})"
+    );
+    assert!(
+        medium < large,
+        "Besar ({large}) harus lebih besar dari Sedang ({medium})"
+    );
 
     let ratio = large / small;
     let want = FontScale::Large.factor() / FontScale::Small.factor();
@@ -320,12 +391,22 @@ fn tab_file_membaca_folder_dan_memakai_cache() {
 
     let mut p = paths();
     p.workspace = dir.clone();
+    // `AppState::workspace()` membaca workspace global (`paths`), bukan hanya
+    // `AppPaths` milik state — arahkan keduanya ke folder sementara, lalu
+    // kembalikan supaya test lain yang berjalan paralel tidak terpengaruh.
+    arka_core::paths::override_workspace(dir.clone());
     let mut h = Harness::new(AppState::new(p, Persisted::default()));
     h.state_mut().tab = Tab::File;
 
     let shapes = h.frame();
     assert!(h.state().files.loaded);
-    let names: Vec<String> = h.state().files.entries.iter().map(|e| e.name.clone()).collect();
+    let names: Vec<String> = h
+        .state()
+        .files
+        .entries
+        .iter()
+        .map(|e| e.name.clone())
+        .collect();
     assert_eq!(names, ["sub", "catatan.txt"], "folder dulu, lalu nama");
     assert!(
         texts(&shapes).iter().any(|(_, t)| t == "catatan.txt"),
@@ -336,7 +417,11 @@ fn tab_file_membaca_folder_dan_memakai_cache() {
     // ulang: itulah gunanya cache.
     fs::write(dir.join("baru.txt"), b"x").unwrap();
     let shapes = h.frame();
-    assert_eq!(h.state().files.entries.len(), 2, "cache membaca ulang tiap frame");
+    assert_eq!(
+        h.state().files.entries.len(),
+        2,
+        "cache membaca ulang tiap frame"
+    );
     assert!(!texts(&shapes).iter().any(|(_, t)| t == "baru.txt"));
 
     // Tombol "Muat ulang" memaksa baca.
@@ -346,6 +431,7 @@ fn tab_file_membaca_folder_dan_memakai_cache() {
     assert_eq!(h.state().files.entries.len(), 3);
     assert!(h.state().files.entries.iter().any(|e| e.name == "baru.txt"));
 
+    arka_core::paths::clear_workspace_override();
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -575,7 +661,12 @@ fn kejadian_agent_mengalir_ke_state_chat() {
     );
     assert!(h.state().chat.approval.is_some());
 
-    h.gui.handle(Msg::Finished { session: "s1".into() }, &ctx);
+    h.gui.handle(
+        Msg::Finished {
+            session: "s1".into(),
+        },
+        &ctx,
+    );
     assert!(h.state().chat.streaming.is_empty());
 }
 
@@ -625,7 +716,9 @@ fn provider_daftar_menampilkan_status_kunci_dan_statistik() {
     // Di bawah seribu tetap apa adanya; nol tidak ditampilkan sama sekali.
     find_text(&shapes, "\u{1F4CA} 999 tokens \u{00B7} 1 req");
     assert!(
-        texts(&shapes).iter().all(|(_, t)| !t.contains("tokens") || !t.starts_with("\u{1F4CA} 0")),
+        texts(&shapes)
+            .iter()
+            .all(|(_, t)| !t.contains("tokens") || !t.starts_with("\u{1F4CA} 0")),
         "baris tanpa pemakaian tidak boleh menampilkan statistik nol"
     );
     assert!(
@@ -664,7 +757,10 @@ fn provider_simpan_tanpa_nama_tidak_menutup_form() {
     h.click(rect.center());
     h.frame();
 
-    assert!(h.state().provider.form.is_some(), "form tertutup tanpa nama");
+    assert!(
+        h.state().provider.form.is_some(),
+        "form tertutup tanpa nama"
+    );
     assert!(
         h.state().provider.error.is_none(),
         "tombol mati seharusnya tidak menyentuh database: {:?}",
@@ -699,7 +795,11 @@ fn provider_hapus_meminta_konfirmasi() {
     let shapes = h.frame();
 
     assert_eq!(
-        h.state().provider.confirm_delete.as_ref().map(|(id, _)| id.clone()),
+        h.state()
+            .provider
+            .confirm_delete
+            .as_ref()
+            .map(|(id, _)| id.clone()),
         Some("p1".to_string())
     );
     find_text(&shapes, "Hapus OpenAI?");
@@ -707,7 +807,10 @@ fn provider_hapus_meminta_konfirmasi() {
     let rect = find_text(&shapes, "Batal");
     h.click(rect.center());
     h.frame();
-    assert!(h.state().provider.confirm_delete.is_none(), "konfirmasi tidak batal");
+    assert!(
+        h.state().provider.confirm_delete.is_none(),
+        "konfirmasi tidak batal"
+    );
 }
 
 /// Kunci yang tidak bisa dibuka DPAPI di mesin ini diberi peringatan eksplisit
@@ -731,7 +834,10 @@ fn provider_form_memberi_peringatan_kunci_tak_terbaca() {
             .iter()
             .any(|(_, t)| t.contains("tidak bisa dibuka di mesin ini")),
         "peringatan DPAPI tidak tergambar. Yang ada: {:?}",
-        texts(&shapes).iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
+        texts(&shapes)
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -753,9 +859,17 @@ fn provider_tombol_simpan_mati_tanpa_nama() {
     h.click(rect.center());
     let shapes = h.frame();
     assert!(
-        h.state().provider.form.as_ref().and_then(|f| f.error.clone()).is_some(),
+        h.state()
+            .provider
+            .form
+            .as_ref()
+            .and_then(|f| f.error.clone())
+            .is_some(),
         "klik Simpan tidak melakukan apa pun. Tergambar: {:?}",
-        texts(&shapes).iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>()
+        texts(&shapes)
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -787,7 +901,9 @@ fn terminal_punya_kotak_perintah_dan_contoh_powershell() {
     // Hint dari daftar PowerShell; `ls -la` akan langsung gagal di Windows.
     find_text(&shapes, "git status");
     assert!(
-        texts(&shapes).iter().any(|(_, t)| t.contains("Get-ChildItem")),
+        texts(&shapes)
+            .iter()
+            .any(|(_, t)| t.contains("Get-ChildItem")),
         "contoh perintah PowerShell tidak tergambar"
     );
 }
@@ -815,7 +931,10 @@ fn panah_atas_dan_bawah_menelusuri_riwayat() {
     assert_eq!(h.state().term.input, "Get-ChildItem");
 
     h.frame_with(vec![key(egui::Key::ArrowDown)]);
-    assert!(h.state().term.input.is_empty(), "melewati yang terbaru = kembali ke draft");
+    assert!(
+        h.state().term.input.is_empty(),
+        "melewati yang terbaru = kembali ke draft"
+    );
     assert!(!h.state().term.history.is_navigating());
 }
 
@@ -838,9 +957,7 @@ fn tombol_stop_menggantikan_jalankan_saat_berjalan() {
         "tombol Jalankan harus hilang selama perintah berjalan"
     );
     // Perintah yang sedang berjalan ditampilkan sebagai gema `PS>`.
-    assert!(texts(&shapes)
-        .iter()
-        .any(|(_, t)| t.contains("git clone")));
+    assert!(texts(&shapes).iter().any(|(_, t)| t.contains("git clone")));
     // Output yang sudah keluar tetap terlihat selama berjalan.
     assert!(texts(&shapes).iter().any(|(_, t)| t == "setengah jalan"));
 }
@@ -905,7 +1022,11 @@ fn bersihkan_output_tidak_menghapus_riwayat() {
     h.frame();
 
     assert!(h.state().term.output.is_empty());
-    assert_eq!(h.state().term.history.len(), 1, "riwayat tidak boleh ikut terhapus");
+    assert_eq!(
+        h.state().term.history.len(),
+        1,
+        "riwayat tidak boleh ikut terhapus"
+    );
 }
 
 /// Dropdown riwayat: perintah terbaru tampil paling atas dan bisa diklik
@@ -926,7 +1047,10 @@ fn riwayat_bisa_dibuka_dan_dipilih() {
     h.frame();
 
     assert_eq!(h.state().term.input, "npm install");
-    assert!(!h.state().term.show_history, "dropdown menutup setelah dipilih");
+    assert!(
+        !h.state().term.show_history,
+        "dropdown menutup setelah dipilih"
+    );
 }
 
 /// Statistik workspace tampil setelah dihitung (di thread latar).
@@ -935,7 +1059,10 @@ fn isi_workspace_ditampilkan_setelah_dihitung() {
     let mut h = Harness::with_default_state();
     h.state_mut().tab = Tab::Terminal;
     h.screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 1800.0));
-    h.state_mut().term.ws = Some(crate::gui::term_job::WsStats { files: 3, bytes: 2048 });
+    h.state_mut().term.ws = Some(crate::gui::term_job::WsStats {
+        files: 3,
+        bytes: 2048,
+    });
 
     let shapes = h.frame();
     assert!(
@@ -1035,4 +1162,32 @@ fn tombol_ulangi_mengisi_perintah_terakhir() {
 
     h.click(tombol.0.center());
     assert_eq!(h.state().term.input, "git status");
+}
+
+/// Tombol X → tray hanya berlaku kalau setelan "jalan di latar belakang" aktif.
+#[test]
+fn jendela_disembunyikan_ke_tray_hanya_bila_diminta() {
+    let mut h = Harness::with_default_state();
+
+    h.state_mut().prefs.background_run = false;
+    let (_, canceled) = h.frame_closing();
+    assert!(
+        !canceled && !h.gui.hidden_for_test(),
+        "tanpa setelan background, X harus menutup aplikasi"
+    );
+
+    h.state_mut().prefs.background_run = true;
+    let (_, canceled) = h.frame_closing();
+    assert!(canceled, "X harus dibatalkan saat jalan di latar belakang");
+    assert!(
+        h.gui.hidden_for_test(),
+        "jendela harus ditandai tersembunyi"
+    );
+
+    let ctx = h.ctx.clone();
+    h.gui.show_window_for_test(&ctx);
+    assert!(
+        !h.gui.hidden_for_test(),
+        "tray Show harus memunculkan jendela"
+    );
 }

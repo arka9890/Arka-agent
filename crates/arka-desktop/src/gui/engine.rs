@@ -23,14 +23,39 @@ use serde_json::Value;
 /// Satu kejadian dari thread agent ke UI.
 #[derive(Clone, Debug)]
 pub enum Msg {
-    Delta { session: String, text: String },
-    Done { session: String, text: String },
-    Error { session: String, message: String },
-    Tool { session: String, label: String, display: String },
-    Approval { id: String, action: String, target: String, detail: String },
-    Question { id: String, question: String, options: Vec<String>, files: Vec<Value> },
+    Delta {
+        session: String,
+        text: String,
+    },
+    Done {
+        session: String,
+        text: String,
+    },
+    Error {
+        session: String,
+        message: String,
+    },
+    Tool {
+        session: String,
+        label: String,
+        display: String,
+    },
+    Approval {
+        id: String,
+        action: String,
+        target: String,
+        detail: String,
+    },
+    Question {
+        id: String,
+        question: String,
+        options: Vec<String>,
+        files: Vec<Value>,
+    },
     /// Sesi selesai (sukses, gagal, atau dibatalkan). Selalu dikirim terakhir.
-    Finished { session: String },
+    Finished {
+        session: String,
+    },
 }
 
 /// Jembatan `Events` → channel. Satu-satunya bagian yang menyentuh `Msg`.
@@ -133,6 +158,9 @@ impl Engine {
 
     /// Mulai satu sesi chat di thread latar. Kembali seketika.
     pub fn start(&mut self, req: ChatRequest, ctx: Context) {
+        // Cegah Windows tidur selama balasan mengalir. Reference-counted,
+        // jadi beberapa sesi paralel aman; pasangannya ada di `Msg::Finished`.
+        crate::keepawake::begin();
         let sid = req.session_id.clone();
         if let Ok(mut g) = self.running.lock() {
             g.insert(sid.clone());

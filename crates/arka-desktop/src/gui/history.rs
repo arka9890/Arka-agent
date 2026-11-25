@@ -120,7 +120,10 @@ mod tests {
     fn perintah_identik_berurutan_tidak_diduplikasi() {
         let mut h = History::default();
         assert!(h.push("git status"));
-        assert!(!h.push("git status"), "salinan identik tidak perlu disimpan");
+        assert!(
+            !h.push("git status"),
+            "salinan identik tidak perlu disimpan"
+        );
         assert!(h.push("git log"));
         assert!(h.push("git status"), "bukan berurutan → tetap disimpan");
         assert_eq!(h.len(), 3);
@@ -170,7 +173,11 @@ mod tests {
         assert_eq!(h.next().as_deref(), Some("b"));
         assert_eq!(h.next(), None, "melewati yang terbaru = kembali ke draft");
         assert!(!h.is_navigating());
-        assert_eq!(h.prev().as_deref(), Some("b"), "↑ sesudahnya mulai lagi dari terbaru");
+        assert_eq!(
+            h.prev().as_deref(),
+            Some("b"),
+            "↑ sesudahnya mulai lagi dari terbaru"
+        );
     }
 
     #[test]
@@ -190,6 +197,9 @@ mod tests {
         let mut h = History::default();
         h.push("a");
         h.push("b");
-        assert_eq!(h.items_newest_first(), vec!["b".to_string(), "a".to_string()]);
+        assert_eq!(
+            h.items_newest_first(),
+            vec!["b".to_string(), "a".to_string()]
+        );
     }
 }

@@ -113,9 +113,10 @@ mod imp {
         }
 
         pub fn wait(&mut self) -> Result<ExitStatus, String> {
-            self.child.wait().map_err(|e| format!("gagal menunggu proses: {e}"))
+            self.child
+                .wait()
+                .map_err(|e| format!("gagal menunggu proses: {e}"))
         }
-
     }
 
     /// Buat proses PowerShell tersembunyi dengan cwd tertentu.
@@ -134,7 +135,11 @@ mod imp {
         // kegagalan di sini tidak fatal (kill fallback tetap jalan).
         let job = Job::create();
         let attached = job.as_ref().map(|j| j.assign(&child)).unwrap_or(false);
-        Ok(Proc { child, job, attached })
+        Ok(Proc {
+            child,
+            job,
+            attached,
+        })
     }
 }
 

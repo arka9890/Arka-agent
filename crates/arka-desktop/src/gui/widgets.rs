@@ -67,8 +67,11 @@ pub fn clay_panel<R>(
 
 /// Galley satu baris untuk widget buatan sendiri (pill & tombol).
 fn galley(ui: &Ui, text: &str, size: f32, color: Color32) -> std::sync::Arc<egui::Galley> {
-    ui.painter()
-        .layout_no_wrap(text.to_owned(), FontId::new(fs(ui, size), FontFamily::Proportional), color)
+    ui.painter().layout_no_wrap(
+        text.to_owned(),
+        FontId::new(fs(ui, size), FontFamily::Proportional),
+        color,
+    )
 }
 
 /// `ClayPill` — label/status kecil berwarna lembut. Tidak bisa diklik.
@@ -124,8 +127,15 @@ pub fn clay_pill_button(ui: &mut Ui, _colors: &ClayColors, text: &str, color: Co
 /// **tidak** bereaksi, sama seperti `enabled = false` di Compose.
 pub fn clay_button(ui: &mut Ui, colors: &ClayColors, text: &str, enabled: bool) -> Response {
     let g = galley(ui, text, 15.0, Color32::WHITE);
-    let size = Vec2::new(g.size().x + 32.0 * scale_of(ui.ctx()), 36.0 * scale_of(ui.ctx()));
-    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let size = Vec2::new(
+        g.size().x + 32.0 * scale_of(ui.ctx()),
+        36.0 * scale_of(ui.ctx()),
+    );
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
     let (rect, response) = ui.allocate_exact_size(size, sense);
 
     if ui.is_rect_visible(rect) {
@@ -171,7 +181,11 @@ pub fn kv(ui: &mut Ui, colors: &ClayColors, key: &str, value: &str) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(key).size(fs(ui, 14.0)).color(colors.muted));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new(value).size(fs(ui, 14.0)).color(colors.on_surface));
+            ui.label(
+                RichText::new(value)
+                    .size(fs(ui, 14.0))
+                    .color(colors.on_surface),
+            );
         });
     });
 }

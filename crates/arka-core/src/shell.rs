@@ -91,7 +91,11 @@ mod tests {
 
     #[test]
     fn report_marks_canceled_and_timeout() {
-        let mut o = ExecOutcome { code: 1, output: "out".into(), ..Default::default() };
+        let mut o = ExecOutcome {
+            code: 1,
+            output: "out".into(),
+            ..Default::default()
+        };
         assert_eq!(o.report(), "exit 1\nout");
         o.canceled = true;
         assert!(o.report().contains("dihentikan pengguna"));

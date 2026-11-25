@@ -52,7 +52,11 @@ pub fn ask_approval(
     answer
 }
 
-fn wait_bool(rx: &mpsc::Receiver<bool>, cancel: &AtomicBool, timeout: Duration) -> Result<bool, String> {
+fn wait_bool(
+    rx: &mpsc::Receiver<bool>,
+    cancel: &AtomicBool,
+    timeout: Duration,
+) -> Result<bool, String> {
     let deadline = Instant::now() + timeout;
     loop {
         match rx.recv_timeout(Duration::from_secs(1)) {
@@ -149,7 +153,11 @@ pub fn host_path(raw: &str) -> Result<PathBuf, String> {
             if let Some(rest) = guest.strip_prefix("/root/storage/") {
                 Ok(p.workspace.join(rest))
             } else if let Some(rest) = guest.strip_prefix("/root/") {
-                Ok(p.rootfs_dir.clone().unwrap_or_default().join("root").join(rest))
+                Ok(p.rootfs_dir
+                    .clone()
+                    .unwrap_or_default()
+                    .join("root")
+                    .join(rest))
             } else {
                 Ok(PathBuf::from(guest))
             }

@@ -215,7 +215,11 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
         let percent = ((rounds * 100) / max_tool_rounds.max(1)).min(99) as i32;
         ev.progress(
             percent,
-            &format!("Putaran {}/{} — menunggu model…", rounds + 1, max_tool_rounds),
+            &format!(
+                "Putaran {}/{} — menunggu model…",
+                rounds + 1,
+                max_tool_rounds
+            ),
         );
 
         // Output tool dari putaran sebelumnya bisa membengkakkan konteks di
@@ -237,10 +241,7 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                 }
                 context_retries += 1;
                 effective_budget = (effective_budget / 2).max(settings::CONTEXT_BUDGET_MIN);
-                ev.progress(
-                    percent,
-                    "Konteks terlalu panjang — meringkas riwayat…",
-                );
+                ev.progress(percent, "Konteks terlalu panjang — meringkas riwayat…");
                 // `prepare` hanya menyaring pesan lama berdasarkan created_at
                 // dan menyimpan urutan relatif, jadi aman dipanggil ulang.
                 msgs = memory::prepare(
@@ -330,7 +331,10 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                             ev,
                             "Pasang skill",
                             &url,
-                            &format!("Unduh SKILL.md / repo dan simpan ke {}.", skill_location_hint()),
+                            &format!(
+                                "Unduh SKILL.md / repo dan simpan ke {}.",
+                                skill_location_hint()
+                            ),
                             &cancel,
                         ) {
                             Ok(true) => match skill::install_from_url(&url) {
@@ -370,7 +374,10 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                         ev,
                         "Ubah skill",
                         &name,
-                        &format!("Timpa SKILL.md. Isi baru:\n{}", tail_chars(content.clone(), 800)),
+                        &format!(
+                            "Timpa SKILL.md. Isi baru:\n{}",
+                            tail_chars(content.clone(), 800)
+                        ),
                         &cancel,
                     ) {
                         Ok(true) => match skill::edit(&name, &content) {
@@ -388,7 +395,13 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                     let value = arg("value");
                     let label = format!("set_skill_config {name} {key}={value}");
                     let config_hint = paths::get()
-                        .map(|p| p.skills_config_dir.join(&name).join("config.json").to_string_lossy().to_string())
+                        .map(|p| {
+                            p.skills_config_dir
+                                .join(&name)
+                                .join("config.json")
+                                .to_string_lossy()
+                                .to_string()
+                        })
                         .unwrap_or_else(|_| format!("{name}/config.json"));
                     let msg = match ui::ask_approval(
                         ev,
@@ -531,7 +544,11 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                     created_at: None,
                 });
             } else {
-                let name = if call.name.is_empty() { "run_command" } else { &call.name };
+                let name = if call.name.is_empty() {
+                    "run_command"
+                } else {
+                    &call.name
+                };
                 msgs.push(ChatMsg {
                     role: "assistant".into(),
                     // Sama seperti cabang Anthropic: kalimat dari putaran ini
@@ -773,8 +790,7 @@ fn skill_location_hint() -> String {
 /// Resolve provider + riwayat pesan dari permintaan UI.
 fn prepare(req: &ChatRequest, _session_id: &str) -> Result<(AiProvider, Vec<ChatMsg>), String> {
     let p = if req.provider_id.trim().is_empty() {
-        provider::default_provider()?
-            .ok_or("Belum ada provider AI. Tambahkan di tab Provider.")?
+        provider::default_provider()?.ok_or("Belum ada provider AI. Tambahkan di tab Provider.")?
     } else {
         provider::get(&req.provider_id)?
     };

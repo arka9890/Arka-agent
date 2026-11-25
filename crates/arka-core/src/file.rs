@@ -146,9 +146,7 @@ fn norm_rel(rel: &str) -> String {
 /// dan `resolve_at(root, ".")` mengembalikan akar itu sendiri — dulu itu
 /// membuat workspace disalin ke dalam dirinya sendiri sampai stack habis.
 fn is_root_rel(rel: &str) -> bool {
-    norm_rel(rel)
-        .split('/')
-        .all(|c| c.is_empty() || c == ".")
+    norm_rel(rel).split('/').all(|c| c.is_empty() || c == ".")
 }
 
 /// Apakah `child` berada di dalam `parent` (atau sama dengan)?
@@ -197,7 +195,11 @@ fn info_of(path: &Path, rel: String) -> Option<FileInfo> {
         is_dir: meta.is_dir(),
         size: meta.len() as i64,
         modified,
-        kind: if meta.is_dir() { "dir".into() } else { kind_of(&name).into() },
+        kind: if meta.is_dir() {
+            "dir".into()
+        } else {
+            kind_of(&name).into()
+        },
     })
 }
 
@@ -243,7 +245,11 @@ pub fn read_text_at(root: &Path, rel: &str) -> Result<String, String> {
 
 pub fn delete_at(root: &Path, rel: &str) -> Result<(), String> {
     let path = resolve_at(root, rel)?;
-    if path == long_path(root).canonicalize().unwrap_or_else(|_| root.to_path_buf()) {
+    if path
+        == long_path(root)
+            .canonicalize()
+            .unwrap_or_else(|_| root.to_path_buf())
+    {
         return Err("Folder workspace tidak bisa dihapus".into());
     }
     if is_root_rel(rel) {
@@ -359,7 +365,15 @@ pub fn unique_name(dir: &Path, name: &str) -> String {
             return candidate;
         }
     }
-    format!("{stem}-{}{}", unique_stamp(), if ext.is_empty() { String::new() } else { format!(".{ext}") })
+    format!(
+        "{stem}-{}{}",
+        unique_stamp(),
+        if ext.is_empty() {
+            String::new()
+        } else {
+            format!(".{ext}")
+        }
+    )
 }
 
 fn unique_stamp() -> u128 {
@@ -441,7 +455,9 @@ pub fn workspace_size_at(root: &Path) -> Result<i64, String> {
     let mut total = 0i64;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             let Ok(meta) = e.metadata() else { continue };
             if meta.is_dir() {
@@ -570,7 +586,10 @@ mod tests {
         fs::create_dir_all(root.join(".arka/trash")).unwrap();
         fs::create_dir_all(root.join("sub/.arka")).unwrap();
         let akar = list_at(&root, "").unwrap();
-        assert!(akar.iter().all(|f| f.name != ".arka"), "sampah tidak boleh tampil");
+        assert!(
+            akar.iter().all(|f| f.name != ".arka"),
+            "sampah tidak boleh tampil"
+        );
         let sub = list_at(&root, "sub").unwrap();
         assert_eq!(sub.len(), 1, "di dalam subfolder namanya sah-sah saja");
         let _ = fs::remove_dir_all(&root);
@@ -673,17 +692,18 @@ mod tests {
         fs::create_dir_all(root.join("a/b")).unwrap();
         fs::write(root.join("a/b/berkas.txt"), b"x").unwrap();
         let err = copy_tree(&root.join("a"), &root.join("a/b/tujuan")).unwrap_err();
-        assert!(
-            err.contains("dirinya sendiri"),
-            "pesan tidak jelas: {err}"
-        );
+        assert!(err.contains("dirinya sendiri"), "pesan tidak jelas: {err}");
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn teks_besar_ditolak() {
         let root = tmp("besar");
-        fs::write(root.join("besar.txt"), vec![b'a'; (MAX_TEXT_BYTES + 1) as usize]).unwrap();
+        fs::write(
+            root.join("besar.txt"),
+            vec![b'a'; (MAX_TEXT_BYTES + 1) as usize],
+        )
+        .unwrap();
         let err = read_text_at(&root, "besar.txt").unwrap_err();
         assert!(err.contains("terlalu besar"), "{err}");
         let _ = fs::remove_dir_all(&root);
@@ -708,7 +728,11 @@ mod tests {
             rel = join_rel(&rel, &format!("folder-panjang-{i:02}"));
         }
         rel = join_rel(&rel, "catatan.txt");
-        assert!(rel.len() > 260, "path uji harus > 260 char, dapat {}", rel.len());
+        assert!(
+            rel.len() > 260,
+            "path uji harus > 260 char, dapat {}",
+            rel.len()
+        );
         let dir = rel.rsplit_once('/').unwrap().0;
         mkdir_at(&root, dir).unwrap_or_else(|e| panic!("mkdir_at gagal: {e}"));
         write_bytes_at(&root, &rel, b"panjang").unwrap_or_else(|e| panic!("tulis gagal: {e}"));
