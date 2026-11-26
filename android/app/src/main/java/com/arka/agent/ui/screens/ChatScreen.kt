@@ -202,6 +202,7 @@ fun ChatScreen(vm: MainViewModel) {
                         .fillMaxWidth(),
                 ) {
                     MessageList(
+                        sessionId = currentId,
                         messages = messages,
                         streaming = streaming,
                         busy = busy,
@@ -468,6 +469,7 @@ private fun EmptyChat(onStart: () -> Unit) {
 
 @Composable
 private fun MessageList(
+    sessionId: String?,
     messages: List<Message>,
     streaming: String,
     busy: Boolean,
@@ -482,10 +484,18 @@ private fun MessageList(
     val listState = rememberLazyListState()
     val lastContent = streaming.ifEmpty { messages.lastOrNull()?.content.orEmpty() }
 
+    // Lompatan INSTAN, bukan animasi: saat sesi dibuka / diganti, riwayat
+    // langsung berada di pesan terakhir. Tidak perlu menunggu scroll berjalan.
+    LaunchedEffect(sessionId) {
+        if (!autoScroll) return@LaunchedEffect
+        val target = if (streaming.isNotEmpty()) messages.size else messages.lastIndex.coerceAtLeast(0)
+        if (target >= 0) listState.scrollToItem(target)
+    }
+
     LaunchedEffect(messages.size, lastContent.length, autoScroll) {
         if (!autoScroll) return@LaunchedEffect
         val target = if (streaming.isNotEmpty()) messages.size else messages.lastIndex.coerceAtLeast(0)
-        if (target >= 0) listState.animateScrollToItem(target)
+        if (target >= 0) listState.scrollToItem(target)
     }
 
     // SelectionContainer: teks bisa dipilih/dicopy dengan long-press sistem,
