@@ -274,16 +274,16 @@ private fun VideoPreview(preview: FilePreview, autoplay: Boolean) {
                 .clip(RoundedCornerShape(10.dp)),
         )
     } else {
-        val thumbnail = remember(preview.hostPath) {
-            runCatching {
-                val retriever = MediaMetadataRetriever()
-                try {
-                    retriever.setDataSource(preview.hostPath)
-                    retriever.frameAtTime(1_000_000L) // ~1 detik, bukan frame hitam
-                } finally {
-                    retriever.release()
-                }
-            }.getOrNull()
+        val thumbnail: android.graphics.Bitmap? = remember(preview.hostPath) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(preview.hostPath)
+                retriever.frameAtTime(1_000_000L) // ~1 detik, bukan frame hitam
+            } catch (_: Exception) {
+                null
+            } finally {
+                retriever.release()
+            }
         }
         Box(
             modifier = Modifier
