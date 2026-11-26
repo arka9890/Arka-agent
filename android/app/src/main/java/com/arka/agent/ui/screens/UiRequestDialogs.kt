@@ -278,7 +278,9 @@ private fun VideoPreview(preview: FilePreview, autoplay: Boolean) {
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(preview.hostPath)
-                retriever.frameAtTime(1_000_000L) // ~1 detik, bukan frame hitam
+                // Panggil nama method Java eksplisit: Kotlin menganggap
+                // `frameAtTime` (tanpa argumen) sebagai property Bitmap?.
+                retriever.getFrameAtTime(1_000_000L) // ~1 detik, bukan frame hitam
             } catch (_: Exception) {
                 null
             } finally {
