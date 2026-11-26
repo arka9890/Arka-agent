@@ -412,15 +412,10 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                     let key = arg("key");
                     let value = arg("value");
                     let label = format!("set_skill_config {name} {key}={value}");
-                    let config_hint = paths::get()
-                        .map(|p| {
-                            p.skills_config_dir
-                                .join(&name)
-                                .join("config.json")
-                                .to_string_lossy()
-                                .to_string()
-                        })
-                        .unwrap_or_else(|_| format!("{name}/config.json"));
+                    let config_hint = format!(
+                        "{}/{name}/config.json",
+                        paths::agent_config_dir_display()
+                    );
                     let msg = match ui::ask_approval(
                         ev,
                         "Ubah konfigurasi skill",
@@ -809,9 +804,7 @@ fn effective_context_budget(p: &AiProvider, model: &str) -> usize {
 }
 
 fn skill_location_hint() -> String {
-    paths::get()
-        .map(|p| p.skills_dir.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "folder skill".to_string())
+    paths::agent_skills_dir_display()
 }
 
 /// Resolve provider + riwayat pesan dari permintaan UI.

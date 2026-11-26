@@ -309,13 +309,9 @@ pub fn context_section_with(
 /// hilang saat pesan lama diringkas.
 pub fn context_section(history: &[ChatMsg], budget: usize) -> String {
     let platform = paths::platform().unwrap_or(Platform::Android);
-    let workspace = paths::workspace_display();
-    let skills_dir = paths::skills_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "~/.claude/skills".to_string());
-    let config_dir = paths::skills_config_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "~/.claude/skills/<nama>/config.json".to_string());
+    let workspace = paths::agent_workspace_display();
+    let skills_dir = paths::agent_skills_dir_display();
+    let config_dir = paths::agent_config_dir_display();
     let installed: Vec<(String, String)> = skill::list()
         .into_iter()
         .map(|s| (s.name, s.description))

@@ -176,6 +176,40 @@ pub fn workspace_display() -> String {
     workspace_current().to_string_lossy().to_string()
 }
 
+/// Path workspace yang terlihat oleh AGENT saat menjalankan tool.
+///
+/// Di Android tool berjalan di dalam proot Ubuntu, jadi workspace yang sama
+/// terlihat sebagai `/root/storage` — bukan path host `/data/user/0/...`.
+/// Sebelumnya prompt menyebut path host, sehingga model mencari file di path
+/// yang tidak ada di Ubuntu sementara tab File menampilkan isi workspace yang
+/// sama lewat path host.
+pub fn agent_workspace_display() -> String {
+    match platform() {
+        Some(Platform::Android) => "/root/storage".to_string(),
+        _ => workspace_display(),
+    }
+}
+
+/// Folder skill seperti yang terlihat agent di dalam OS tempat tool jalan.
+pub fn agent_skills_dir_display() -> String {
+    match platform() {
+        Some(Platform::Android) => "/root/.claude/skills".to_string(),
+        _ => skills_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    }
+}
+
+/// Folder konfigurasi skill seperti yang terlihat agent.
+pub fn agent_config_dir_display() -> String {
+    match platform() {
+        Some(Platform::Android) => "/root/.config".to_string(),
+        _ => skills_config_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    }
+}
+
 pub fn skills_dir() -> Result<PathBuf, String> {
     Ok(get()?.skills_dir.clone())
 }

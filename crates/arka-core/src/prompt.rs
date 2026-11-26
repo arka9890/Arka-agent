@@ -48,9 +48,9 @@ pub fn active_system_prompt() -> String {
     match paths::get() {
         Ok(p) => system_prompt(
             p.platform,
-            &p.workspace.to_string_lossy(),
-            &p.skills_dir.to_string_lossy(),
-            &p.skills_config_dir.to_string_lossy(),
+            &paths::agent_workspace_display(),
+            &paths::agent_skills_dir_display(),
+            &paths::agent_config_dir_display(),
         ),
         Err(_) => system_prompt(Platform::Android, "", "", ""),
     }
@@ -95,7 +95,7 @@ fn skills_location_desc(platform: Platform) -> &'static str {
 
 /// Skema tool format OpenAI (dipakai provider `openai`-compatible).
 pub fn tools_schema(platform: Platform) -> Value {
-    let workspace = paths::workspace_display();
+    let workspace = paths::agent_workspace_display();
     let workspace_hint = if workspace.is_empty() {
         "workspace".to_string()
     } else {
@@ -226,7 +226,7 @@ pub fn tools_schema(platform: Platform) -> Value {
 
 /// Skema tool format Anthropic.
 pub fn anthropic_tools_schema(platform: Platform) -> Value {
-    let workspace = paths::workspace_display();
+    let workspace = paths::agent_workspace_display();
     let workspace_hint = if workspace.is_empty() {
         "workspace".to_string()
     } else {

@@ -198,9 +198,7 @@ pub fn system_prompt_section() -> String {
     if skills.is_empty() {
         return String::new();
     }
-    let dir = paths::get()
-        .map(|p| p.skills_dir.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "~/.claude/skills".to_string());
+    let dir = paths::agent_skills_dir_display();
     let mut out = format!(
         "## Skill agen\nSkill berikut tersimpan di `{dir}`. Gunakan yang relevan dengan permintaan pengguna dan ikuti instruksinya.\n"
     );
