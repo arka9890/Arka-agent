@@ -1,6 +1,7 @@
 package com.arka.agent.ui.screens
 
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.MediaController
@@ -18,11 +19,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -227,22 +232,7 @@ private fun FilePreviewBlock(preview: FilePreview, autoplay: Boolean = false) {
                     )
                 }
             }
-            "video" -> {
-                val uri = remember(preview.hostPath) { uriFor(context, preview.hostPath) }
-                AndroidView(
-                    factory = { ctx ->
-                        VideoView(ctx).apply {
-                            setVideoURI(uri)
-                            setMediaController(MediaController(ctx))
-                            if (autoplay) setOnPreparedListener { start() }
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 260.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                )
-            }
+            "video" -> VideoPreview(preview, autoplay = autoplay)
             "audio" -> {
                 val uri = remember(preview.hostPath) { uriFor(context, preview.hostPath) }
                 AudioPreview(uri)
@@ -251,6 +241,72 @@ private fun FilePreviewBlock(preview: FilePreview, autoplay: Boolean = false) {
                 tr("File: ", "File: ", "ファイル: ") + preview.name,
                 style = MaterialTheme.typography.labelSmall,
                 color = clay.accent,
+            )
+        }
+    }
+}
+
+/**
+ * Pratinjau video: tampilkan frame pertama + tombol putar, lalu ganti dengan
+ * VideoView saat diputar. VideoView tanpa tinggi pasti bisa terukur 0 dp,
+ * itulah sebabnya pratinjau lama terlihat kosong.
+ */
+@Composable
+private fun VideoPreview(preview: FilePreview, autoplay: Boolean) {
+    val context = LocalContext.current
+    var playing by remember(preview.hostPath) { mutableStateOf(autoplay) }
+    val uri = remember(preview.hostPath) { uriFor(context, preview.hostPath) }
+
+    if (playing) {
+        AndroidView(
+            factory = { ctx ->
+                VideoView(ctx).apply {
+                    val controller = MediaController(ctx)
+                    controller.setAnchorView(this)
+                    setMediaController(controller)
+                    setVideoURI(uri)
+                    setOnPreparedListener { start() }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(10.dp)),
+        )
+    } else {
+        val thumbnail = remember(preview.hostPath) {
+            runCatching {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(preview.hostPath)
+                    retriever.frameAtTime(1_000_000L) // ~1 detik, bukan frame hitam
+                } finally {
+                    retriever.release()
+                }
+            }.getOrNull()
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0x99000000))
+                .clickable { playing = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (thumbnail != null) {
+                Image(
+                    bitmap = thumbnail.asImageBitmap(),
+                    contentDescription = preview.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Icon(
+                imageVector = Icons.Outlined.PlayCircle,
+                contentDescription = tr("Putar video", "Play video", "動画を再生"),
+                tint = Color.White,
+                modifier = Modifier.size(52.dp),
             )
         }
     }
@@ -279,8 +335,15 @@ private fun AudioPreview(uri: Uri) {
 }
 
 private fun uriFor(context: android.content.Context, hostPath: String): Uri =
-    FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.files",
-        java.io.File(hostPath),
-    )
+    runCatching {
+        FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.files",
+            java.io.File(hostPath),
+        )
+    }.getOrElse {
+        // File di rootfs Ubuntu memang di bawah filesDir, tapi kalau path
+        // belum terdaftar di file_paths.xml, jangan sampai kartu question
+        // crash — VideoView masih bisa membaca file milik aplikasi sendiri.
+        Uri.fromFile(java.io.File(hostPath))
+    }
