@@ -844,3 +844,15 @@ mod tests {
         let _: fn() -> Result<&'static dyn arka_core::Shell, String> = arka_core::shell::active;
     }
 }
+
+// --------------------------------------------------------------- skill
+#[no_mangle]
+pub extern "system" fn Java_com_arka_agent_core_Arka_skillsJson<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> JString<'local> {
+    json_result(&mut env, || {
+        let skills = arka_core::skill::list_names();
+        serde_json::to_string(&skills).map_err(|e| e.to_string())
+    })
+}
