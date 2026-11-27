@@ -895,4 +895,3 @@ private fun InputBar(
             }
         }
     }
-}
