@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.maxHeightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -765,7 +766,7 @@ private fun SkillSuggestions(
             
             Divider(color = clay.muted.copy(alpha = 0.2f))
             
-            LazyColumn {
+            LazyColumn(Modifier.heightIn(max = 220.dp)) {
                 items(suggestions) { skill ->
                     Text(
                         text = skill,
@@ -882,12 +883,13 @@ private fun InputBar(
                 }
             }
             
-            // Tampilkan suggestions di atas input bar
+            // Tampilkan suggestions tepat di atas input bar (rata kiri),
+            // menempel pada bagian bawah Box sehingga muncul "ke atas" dari input.
             if (showSuggestions && filteredSkills.isNotEmpty()) {
                 Box(
                     Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(bottom = 60.dp)
+                        .align(Alignment.BottomStart)
+                        .padding(bottom = 64.dp)
                 ) {
                     SkillSuggestions(
                         suggestions = filteredSkills,
