@@ -525,6 +525,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadModels(providerId: String, onResult: (List<String>) -> Unit) = viewModelScope.launch {
+
+    /** Muat daftar skill untuk command suggestions. */
+    fun loadSkills() = viewModelScope.launch {
+        try {
+            _skills.value = repo.skills()
+        } catch (e: Exception) {
+            // Jika gagal, tetap tampilkan daftar kosong
+            _skills.value = emptyList()
+        }
+    }
         val models = runCatching { repo.models(providerId) }.getOrDefault(emptyList())
         onResult(models)
     }

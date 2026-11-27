@@ -415,6 +415,10 @@ pub fn set_config(name: &str, key: &str, value: &str) -> Result<String, String> 
     Ok(format!("{key} = {value}"))
 }
 
+/// Daftar nama skill saja (untuk UI autocomplete).
+pub fn list_names() -> Vec<String> {
+    list().into_iter().map(|s| s.name).collect()
+}
 #[cfg(test)]
 mod tests {
     use super::*;

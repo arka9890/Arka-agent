@@ -99,6 +99,9 @@ object Arka {
     external fun cancelExec()
     external fun diagnostic(): String
 
+    /** Daftar nama skill untuk command suggestions. */
+    external fun skillsJson(): String
+
     // --------------------------------------------------- desktop / VNC
     external fun desktopStatusJson(): String
     external fun installDesktop(cb: InstallCallback)

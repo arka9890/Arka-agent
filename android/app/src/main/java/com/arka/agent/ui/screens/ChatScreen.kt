@@ -99,6 +99,7 @@ fun ChatScreen(vm: MainViewModel) {
     val providers by vm.providers.collectAsState()
     val approval by vm.approval.collectAsState()
     val question by vm.question.collectAsState()
+    val skills by vm.skills.collectAsState()
 
     var drawer by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
@@ -579,105 +580,6 @@ private fun MessageList(
 }
 
 @Composable
-private fun InputBar(
-    input: String,
-    attachments: List<AttachmentRef>,
-    busy: Boolean,
-    onInputChange: (String) -> Unit,
-    onAttach: () -> Unit,
-    onRemoveAttachment: (AttachmentRef) -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit,
-) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            // Keyboard (IME) sudah ditangani imePadding di Scaffold (AppScreen),
-            // jadi di sini cukup padding biasa — kalau ditambah imePadding lagi,
-            // kolom input melayang jauh di atas keyboard.
-            .padding(horizontal = Space.md, vertical = Space.sm),
-    ) {
-        if (attachments.isNotEmpty()) {
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = Space.xs),
-                horizontalArrangement = Arrangement.spacedBy(Space.xs),
-            ) {
-                attachments.take(3).forEach { ref ->
-                    // Ketuk pill untuk melepas satu lampiran.
-                    ClayPill(
-                        text = ref.name,
-                        color = clay.accent,
-                        onClick = { onRemoveAttachment(ref) },
-                    )
-                }
-                if (attachments.size > 3) {
-                    ClayPill("+${attachments.size - 3}", clay.muted)
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { attachments.forEach { onRemoveAttachment(it) } }) {
-                    Icon(Icons.Outlined.Close, tr("Hapus lampiran", "Remove attachment", "添付を削除"), tint = clay.muted)
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ClayCard(
-                Modifier.weight(1f),
-                shape = RoundedCornerShape(20.dp),
-                elevation = 2.dp,
-                contentPadding = 0.dp,
-            ) {
-                Row(
-                    Modifier.padding(horizontal = Space.sm, vertical = Space.xs),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onAttach) {
-                        Icon(Icons.Outlined.AttachFile, tr("Lampirkan", "Attach", "添付"), tint = clay.muted)
-                    }
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = onInputChange,
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text(tr("Kirim pesan…", "Type a message…", "メッセージを入力…"), color = clay.muted) },
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        maxLines = 4,
-                        // Enter di keyboard = kirim (Shift+Enter tetap baris baru
-                        // di keyboard fisik).
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = {
-                            if (!busy && input.isNotBlank()) onSend()
-                        }),
-                    )
-                }
-            }
-            Spacer(Modifier.width(Space.sm))
-            Box(
-                Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (busy) clay.danger else clay.accent)
-                    .clickable { if (busy) onStop() else onSend() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = if (busy) Icons.Outlined.Stop else Icons.Outlined.Send,
-                    contentDescription = if (busy) tr("Hentikan", "Stop", "停止") else tr("Kirim", "Send", "送信"),
-                    tint = Color.White,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SessionDrawer(
-    sessions: List<Session>,
-    currentId: String?,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit,
-    onNew: () -> Unit,
-    onRename: (String, String) -> Unit,
-    onDelete: (String) -> Unit,
-    onCompact: (String) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
         // Latar tembus pandang: klik di luar panel menutup.
@@ -810,6 +712,171 @@ private fun SessionRow(
                         onDelete()
                     },
                 )
+            }
+        }
+    }
+}
+/**
+ * Dropdown suggestions untuk skill commands.
+ */
+@Composable
+private fun SkillSuggestions(
+    suggestions: List<String>,
+    query: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (suggestions.isEmpty()) return
+
+    Box(
+        modifier = modifier
+            .widthIn(min = 200.dp, max = 300.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .shadow(8.dp, RoundedCornerShape(12.dp))
+            .background(Color.White)
+    ) {
+        Column {
+            Text(
+                text = "Skill suggestions",
+                fontSize = 12.sp,
+                color = clay.muted,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = Space.md, vertical = Space.sm)
+            )
+            
+            Divider(color = clay.muted.copy(alpha = 0.2f))
+            
+            LazyColumn {
+                items(suggestions) { skill ->
+                    Text(
+                        text = skill,
+                        fontSize = 14.sp,
+                        color = Color.Black,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(skill) }
+                            .padding(horizontal = Space.md, vertical = Space.sm)
+                    )
+                    
+                    if (skill != suggestions.last()) {
+                        Divider(
+                            color = clay.muted.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(horizontal = Space.sm)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun InputBar(
+    input: String,
+    attachments: List<AttachmentRef>,
+    busy: Boolean,
+    skills: List<String>,
+    onInputChange: (String) -> Unit,
+    onAttach: () -> Unit,
+    onRemoveAttachment: (AttachmentRef) -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val showSuggestions = input.startsWith("/") && skills.isNotEmpty()
+    val filteredSkills = if (showSuggestions) {
+        val query = input.drop(1).lowercase()
+        skills.filter { it.lowercase().contains(query) }
+    } else {
+        emptyList()
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.md, vertical = Space.sm),
+    ) {
+        if (attachments.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = Space.xs),
+                horizontalArrangement = Arrangement.spacedBy(Space.xs),
+            ) {
+                attachments.take(3).forEach { ref ->
+                    ClayPill(
+                        text = ref.name,
+                        color = clay.accent,
+                        onClick = { onRemoveAttachment(ref) },
+                    )
+                }
+                if (attachments.size > 3) {
+                    ClayPill("+${attachments.size - 3}", clay.muted)
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { attachments.forEach { onRemoveAttachment(it) } }) {
+                    Icon(Icons.Outlined.Close, tr("Hapus lampiran", "Remove attachment", "添付を削除"), tint = clay.muted)
+                }
+            }
+        }
+        
+        Box {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ClayCard(
+                    Modifier.weight(1f),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = 2.dp,
+                    contentPadding = 0.dp,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = Space.sm, vertical = Space.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onAttach) {
+                            Icon(Icons.Outlined.AttachFile, tr("Lampirkan", "Attach", "添付"), tint = clay.muted)
+                        }
+                        OutlinedTextField(
+                            value = input,
+                            onValueChange = onInputChange,
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text(tr("Kirim pesan…", "Type a message…", "メッセージを入力…"), color = clay.muted) },
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            maxLines = 4,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = {
+                                if (!busy && input.isNotBlank()) onSend()
+                            }),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(Space.sm))
+                Box(
+                    Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (busy) clay.danger else clay.accent)
+                        .clickable { if (busy) onStop() else onSend() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (busy) Icons.Outlined.Stop else Icons.Outlined.Send,
+                        contentDescription = if (busy) tr("Hentikan", "Stop", "停止") else tr("Kirim", "Send", "送信"),
+                        tint = Color.White,
+                    )
+                }
+            }
+            
+            // Tampilkan suggestions di atas input bar
+            if (showSuggestions && filteredSkills.isNotEmpty()) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(bottom = 60.dp)
+                ) {
+                    SkillSuggestions(
+                        suggestions = filteredSkills,
+                        query = input.drop(1),
+                        onSelect = { skill ->
+                            onInputChange("/$skill ")
+                        }
+                    )
+                }
             }
         }
     }
