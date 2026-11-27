@@ -9,7 +9,7 @@
 //! lain yang berjalan bersamaan.
 
 use crate::ai::{self, ChatMsg};
-use crate::events::Events;
+use crate::events::{drain, ChannelEvents, Events};
 use crate::paths::Platform;
 use crate::provider::Provider as AiProvider;
 use crate::shell;
@@ -320,6 +320,65 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
         }
         rounds += 1;
 
+        // Sub agent dijalankan lebih dulu dan paralel, maksimal empat per
+        // sesi per putaran. Event mereka dikumpulkan dulu, lalu disalurkan ke
+        // UI dari thread utama (JNIEnv/state UI tidak boleh dipakai lintas
+        // thread). Tool biasa tetap berjalan berurutan seperti sebelumnya.
+        let (chan_events, chan_rx) = ChannelEvents::new();
+        let mut sub_results: HashMap<usize, (String, String, String)> = HashMap::new();
+        let sub_indices: Vec<usize> = calls
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.name == "subagent")
+            .map(|(i, _)| i)
+            .collect();
+        for batch in sub_indices.chunks(MAX_PARALLEL_SUBAGENTS) {
+            std::thread::scope(|scope| {
+                let mut handles = Vec::new();
+                for &idx in batch {
+                    if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                        break;
+                    }
+                    let call = calls[idx].clone();
+                    let cev = chan_events.clone();
+                    let cancel2 = cancel.clone();
+                    let p2 = p.clone();
+                    let model2 = model.clone();
+                    let session2 = session_id.clone();
+                    let depth2 = depth;
+                    let out_chars = tool_output_chars;
+                    handles.push((
+                        idx,
+                        scope.spawn(move || {
+                            let args: serde_json::Value = serde_json::from_str(&call.arguments)
+                                .unwrap_or_else(|_| json!({}));
+                            let task = args
+                                .get("task")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let label = format!("subagent {}", tail_chars(task.clone(), 100));
+                            let msg = if task.trim().is_empty() {
+                                "Tugas sub agent kosong.".to_string()
+                            } else {
+                                run_subagent(
+                                    &session2, &p2, &model2, &task, depth2, &cancel2, &cev,
+                                    out_chars,
+                                )
+                            };
+                            (label, msg.clone(), msg)
+                        }),
+                    ));
+                }
+                for (idx, handle) in handles {
+                    if let Ok(result) = handle.join() {
+                        sub_results.insert(idx, result);
+                    }
+                }
+            });
+        }
+        drain(&chan_rx, ev);
+
         let call_count = calls.len();
         for (tool_index, call) in calls.into_iter().enumerate() {
             if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
@@ -476,19 +535,13 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
                     };
                     (label, msg.clone(), msg)
                 }
-                "subagent" => {
-                    let task = arg("task");
-                    let label = format!("subagent {}", tail_chars(task.clone(), 100));
-                    if task.trim().is_empty() {
-                        let msg = "Tugas sub agent kosong.".to_string();
+                "subagent" => sub_results
+                    .remove(&tool_index)
+                    .unwrap_or_else(|| {
+                        let msg = "Sub agent tidak berjalan (dibatalkan atau melewati batas waktu)."
+                            .to_string();
                         ("subagent".to_string(), msg.clone(), msg)
-                    } else {
-                        let msg = run_subagent(
-                            &session_id, &p, &model, &task, depth, &cancel, ev, tool_output_chars,
-                        );
-                        (label, msg.clone(), msg)
-                    }
-                }
+                    }),
                 _ => {
                     let command = arg("command");
                     if command.trim().is_empty() {
@@ -635,6 +688,12 @@ fn run_chat(req: ChatRequest, ev: &dyn Events, opts: RunOpts) -> Result<String, 
 /// Tanpa batas ini model bisa membuat sub agent yang membuat sub agent lagi
 /// sampai stack/kuota provider habis.
 const MAX_SUBAGENT_DEPTH: u32 = 2;
+
+/// Maksimal sub agent yang berjalan bersamaan dalam satu sesi.
+///
+/// Proot di Android tetap serial lewat `TOOL_LOCK`, tapi riset/analisis yang
+/// tidak memakai tool bisa berjalan bersamaan dan jauh lebih cepat.
+const MAX_PARALLEL_SUBAGENTS: usize = 4;
 
 /// Penomoran sesi sub agent supaya dua sub agent tidak pernah bentrok.
 static SUBAGENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

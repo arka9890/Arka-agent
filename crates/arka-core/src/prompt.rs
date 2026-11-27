@@ -209,7 +209,7 @@ pub fn tools_schema(platform: Platform) -> Value {
         "type": "function",
         "function": {
             "name": "subagent",
-            "description": "Jalankan agent AI kedua secara paralel untuk satu tugas yang terpisah dan mandiri (mis. riset, telusuri repo besar, kerjakan bagian lain). Ia punya tool sendiri (run_command, skill, ask_user) dan mengembalikan ringkasan hasil + verifikasinya. Pakai untuk tugas yang bisa dikerjakan terpisah; tugas kecil cukup pakai run_command langsung.",
+            "description": "Jalankan agent AI kedua secara paralel untuk satu tugas yang terpisah dan mandiri (mis. riset, telusuri repo besar, kerjakan bagian lain). Ia punya tool sendiri (run_command, skill, ask_user) dan mengembalikan ringkasan hasil + verifikasinya. Boleh dipanggil beberapa sekaligus; maksimal 4 berjalan paralel per sesi. Pakai untuk tugas yang bisa dikerjakan terpisah; tugas kecil cukup pakai run_command langsung.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -314,7 +314,7 @@ pub fn anthropic_tools_schema(platform: Platform) -> Value {
         }
     }, {
         "name": "subagent",
-        "description": "Jalankan agent AI kedua secara paralel untuk satu tugas yang terpisah dan mandiri (mis. riset, telusuri repo besar, kerjakan bagian lain). Ia punya tool sendiri dan mengembalikan ringkasan hasil + verifikasinya. Tugas kecil cukup pakai run_command langsung.",
+        "description": "Jalankan agent AI kedua secara paralel untuk satu tugas yang terpisah dan mandiri (mis. riset, telusuri repo besar, kerjakan bagian lain). Ia punya tool sendiri dan mengembalikan ringkasan hasil + verifikasinya. Boleh dipanggil beberapa sekaligus; maksimal 4 berjalan paralel per sesi. Tugas kecil cukup pakai run_command langsung.",
         "input_schema": {
             "type": "object",
             "properties": {
