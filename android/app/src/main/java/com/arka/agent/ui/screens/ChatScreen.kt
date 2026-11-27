@@ -836,8 +836,20 @@ private fun InputBar(
             }
         }
         
-        Box {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        // Suggestions ditempatkan SEBELUM input bar di dalam Column ini.
+        // Karena MessageList di atas pakai weight(1f), saat suggestions muncul,
+        // yang menyusut adalah daftar pesan — input bar tetap menempel di bawah
+        // layar dan tidak "ngangkat".
+        if (showSuggestions && filteredSkills.isNotEmpty()) {
+            SkillSuggestions(
+                suggestions = filteredSkills,
+                query = input.drop(1),
+                onSelect = { skill -> onInputChange("/$skill ") },
+                modifier = Modifier.padding(bottom = Space.xs),
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
                 ClayCard(
                     Modifier.weight(1f),
                     shape = RoundedCornerShape(20.dp),
@@ -878,24 +890,6 @@ private fun InputBar(
                         imageVector = if (busy) Icons.Outlined.Stop else Icons.Outlined.Send,
                         contentDescription = if (busy) tr("Hentikan", "Stop", "停止") else tr("Kirim", "Send", "送信"),
                         tint = Color.White,
-                    )
-                }
-            }
-            
-            // Tampilkan suggestions tepat di atas input bar (rata kiri),
-            // menempel pada bagian bawah Box sehingga muncul "ke atas" dari input.
-            if (showSuggestions && filteredSkills.isNotEmpty()) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(bottom = 64.dp)
-                ) {
-                    SkillSuggestions(
-                        suggestions = filteredSkills,
-                        query = input.drop(1),
-                        onSelect = { skill ->
-                            onInputChange("/$skill ")
-                        }
                     )
                 }
             }
