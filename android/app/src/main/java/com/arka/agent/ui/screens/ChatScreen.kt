@@ -154,6 +154,11 @@ fun ChatScreen(vm: MainViewModel) {
         }
     }
 
+    // Muat daftar skill sekali saat layar tampil untuk command suggestions.
+    LaunchedEffect(Unit) {
+        vm.loadSkills()
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             ChatTopBar(
@@ -225,6 +230,7 @@ fun ChatScreen(vm: MainViewModel) {
                 }
                 InputBar(
                     input = input,
+                    skills = skills,
                     attachments = attachments,
                     busy = busy,
                     onInputChange = { input = it },
@@ -580,6 +586,15 @@ private fun MessageList(
 }
 
 @Composable
+private fun SessionDrawer(
+    sessions: List<Session>,
+    currentId: String?,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onNew: () -> Unit,
+    onRename: (String, String) -> Unit,
+    onDelete: (String) -> Unit,
+    onCompact: (String) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
         // Latar tembus pandang: klik di luar panel menutup.
@@ -770,6 +785,7 @@ private fun SkillSuggestions(
     }
 }
 
+@Composable
 private fun InputBar(
     input: String,
     attachments: List<AttachmentRef>,

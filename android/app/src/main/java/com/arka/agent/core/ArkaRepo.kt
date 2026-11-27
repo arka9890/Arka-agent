@@ -498,5 +498,11 @@ class ArkaRepo(private val context: Context) {
 
     suspend fun clearTerminalHistory() = io { Arka.clearTerminalHistory() }
 
+    /** Daftar nama skill (untuk command suggestions di UI). */
+    suspend fun skills(): List<String> = io {
+        runCatching { json.decodeFromString<List<String>>(Arka.skillsJson()) }
+            .getOrDefault(emptyList())
+    }
+
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 }

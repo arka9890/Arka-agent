@@ -77,6 +77,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _providerStats = MutableStateFlow<List<ProviderStats>>(emptyList())
     val providerStats: StateFlow<List<ProviderStats>> = _providerStats.asStateFlow()
 
+    private val _skills = MutableStateFlow<List<String>>(emptyList())
+    val skills: StateFlow<List<String>> = _skills.asStateFlow()
+
     private val _files = MutableStateFlow<List<FileInfo>>(emptyList())
     val files: StateFlow<List<FileInfo>> = _files.asStateFlow()
 
@@ -525,6 +528,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadModels(providerId: String, onResult: (List<String>) -> Unit) = viewModelScope.launch {
+        val models = runCatching { repo.models(providerId) }.getOrDefault(emptyList())
+        onResult(models)
+    }
 
     /** Muat daftar skill untuk command suggestions. */
     fun loadSkills() = viewModelScope.launch {
@@ -534,9 +540,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Jika gagal, tetap tampilkan daftar kosong
             _skills.value = emptyList()
         }
-    }
-        val models = runCatching { repo.models(providerId) }.getOrDefault(emptyList())
-        onResult(models)
     }
 
     /** Cek model dari server hanya saat tombol refresh ditekan. */
