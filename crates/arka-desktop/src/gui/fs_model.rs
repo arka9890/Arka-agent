@@ -160,6 +160,7 @@ pub fn icon(kind: &str, is_dir: bool) -> &'static str {
     match kind {
         "image" => "\u{1F5BC}",
         "video" => "\u{1F3AC}",
+        "audio" => "\u{1F3B5}",
         "pdf" => "\u{1F4D5}",
         "text" => "\u{1F4C4}",
         _ => "\u{1F4E6}",

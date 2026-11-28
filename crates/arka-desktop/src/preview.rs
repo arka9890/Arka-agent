@@ -79,6 +79,9 @@ impl PreviewState {
             "video" => Content::External(
                 "Video dan audio tidak diputar di dalam aplikasi ini.".to_string(),
             ),
+            "audio" => Content::External(
+                "Audio tidak diputar di dalam aplikasi ini.".to_string(),
+            ),
             _ => Content::External("Berkas biner tidak bisa dipratinjau.".to_string()),
         };
 

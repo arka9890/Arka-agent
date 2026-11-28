@@ -47,8 +47,8 @@ pub fn kind_of(name: &str) -> &'static str {
         | "ps1" | "psm1" | "bat" | "cmd" | "sql" | "conf" | "gradle" | "kts" | "dockerfile"
         | "gitignore" | "env" | "svg" => "text",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => "image",
-        "mp4" | "mkv" | "avi" | "mov" | "webm" | "3gp" | "mp3" | "wav" | "flac" | "ogg" | "m4a"
-        | "aac" => "video",
+        "mp4" | "mkv" | "avi" | "mov" | "webm" | "3gp" => "video",
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => "audio",
         "pdf" => "pdf",
         _ => "binary",
     }
@@ -711,7 +711,8 @@ mod tests {
 
     #[test]
     fn jenis_berkas_mengenali_audio_dan_skrip_ps() {
-        assert_eq!(kind_of("lagu.mp3"), "video");
+        assert_eq!(kind_of("lagu.mp3"), "audio");
+        assert_eq!(kind_of("film.mp4"), "video");
         assert_eq!(kind_of("skrip.ps1"), "text");
         assert_eq!(kind_of("foto.JPEG"), "image");
         assert_eq!(kind_of("data.bin"), "binary");

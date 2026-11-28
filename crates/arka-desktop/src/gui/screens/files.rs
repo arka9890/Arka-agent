@@ -904,10 +904,10 @@ fn export_now(state: &mut AppState, rel: &str) {
 }
 
 fn kind_label_id(kind: &str) -> String {
-    label(kind, "Folder", "Teks", "Gambar", "Video", "PDF", "Biner")
+    label(kind, "Folder", "Teks", "Gambar", "Video", "Audio", "PDF", "Biner")
 }
 fn kind_label_en(kind: &str) -> String {
-    label(kind, "Folder", "Text", "Image", "Video", "PDF", "Binary")
+    label(kind, "Folder", "Text", "Image", "Video", "Audio", "PDF", "Binary")
 }
 fn kind_label_ja(kind: &str) -> String {
     label(
@@ -916,6 +916,7 @@ fn kind_label_ja(kind: &str) -> String {
         "テキスト",
         "画像",
         "動画",
+        "音声",
         "PDF",
         "バイナリ",
     )
@@ -927,6 +928,7 @@ fn label(
     text: &str,
     image: &str,
     video: &str,
+    audio: &str,
     pdf: &str,
     binary: &str,
 ) -> String {
@@ -935,6 +937,7 @@ fn label(
         "text" => text,
         "image" => image,
         "video" => video,
+        "audio" => audio,
         "pdf" => pdf,
         _ => binary,
     }
